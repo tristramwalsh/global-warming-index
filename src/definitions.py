@@ -60,7 +60,7 @@ def load_ERF_CMIP6():
     # rename the variable columns
     df_ERF = df_ERF.rename(columns={'wmghg': 'GHG',
                                     'other_ant': 'OHF',
-                                    'natural':'Nat'})
+                                    'natural': 'Nat'})
     # move the multi-index 'ensemble' level to a column,
     # and then set the 'ensemble' column to second column level
     df_ERF = df_ERF.reset_index(level='ensemble')
