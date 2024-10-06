@@ -758,7 +758,13 @@ if __name__ == "__main__":
     # For multiple runs, we want to save the results with a unique identifier.
     # Use the current date and time of calculation for simplicity.
     current_time = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    iteration = current_time
+    iteration_id = current_time
+
+    variation = (
+        f'ENSEMBLE-SIZE--{n}_' +
+        f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
+        f'DATE-CALCULATED--{iteration_id}'
+    )
 
     # NOTE TO SELF: multidimensional np.percentile() changes the order of
     # the axes, so that the axis along which you took the percentiles is
@@ -775,7 +781,7 @@ if __name__ == "__main__":
     df_Results = pd.DataFrame(dict_Results, index=temp_Yrs)
     df_Results.columns.names = ['variable', 'percentile']
     df_Results.index.name = 'Year'
-    df_Results.to_csv(f'results/GWI_results_timeseries_{n}_{iteration}.csv')
+    df_Results.to_csv(f'results/GWI_results_timeseries_{variation}.csv')
     T3 = dt.datetime.now()
     print(f'... took {T3 - T2}')
 
@@ -851,7 +857,7 @@ if __name__ == "__main__":
     # TODO: change the name of the files to include additional metatdata, inc:
     # Regression range
     # Truncation range
-    df_headlines.to_csv(f'results/GWI_results_headlines_{n}_{iteration}.csv')
+    df_headlines.to_csv(f'results/GWI_results_headlines_{variation}.csv')
     T5 = dt.datetime.now()
     print(f'... took {T5 - T4}')
 
@@ -893,7 +899,7 @@ if __name__ == "__main__":
             dfs_rates.append(df_rates_i)
 
         df_rates = pd.concat(dfs_rates, axis=0)
-        df_rates.to_csv(f'results/GWI_results_rates_{n}_{iteration}.csv')
+        df_rates.to_csv(f'results/GWI_results_rates_{variation}.csv')
         T7 = dt.datetime.now()
         print('')
         print(f'... took {T7 - T6}')
