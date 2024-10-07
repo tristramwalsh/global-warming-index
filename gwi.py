@@ -506,6 +506,16 @@ if __name__ == "__main__":
         rate_toggle = input('Calculate rates? (y/n): ')
         rate_toggle = True if rate_toggle == 'y' else False
 
+    # Determine whether to include headline calculations in the output.
+    # If no, then only the timeseries are calculated, and not the SR1.5 and
+    # AR6 definitions that are used for the IGCC assessments.
+    if '--include-headlines' in argv_dict:
+        headline_toggle = argv_dict['--include-headlines']
+        headline_toggle = True if headline_toggle == 'y' else False
+    else:
+        headline_toggle = input('Include headlines? (y/n): ')
+        headline_toggle = True if headline_toggle == 'y' else False
+
     # Create a folder to store the plots
     plot_folder = 'plots/'
     if not os.path.exists(plot_folder):
@@ -816,80 +826,78 @@ if __name__ == "__main__":
     print(f'... took {T3 - T2}')
 
     # HEADLINE RESULTS
-    print('Calculating headlines')
+    if headline_toggle:
+        print('Calculating headlines')
 
-    # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR)
-    dfs = [df_Results.loc[[2017]], df_Results.loc[[end_trunc]]]
+        # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
+        dfs = [df_Results.loc[[2017]], df_Results.loc[[end_trunc]]]
 
-    # SR15 DEFINITION (CENTRE OF 30-YEAR TREND)
-    # Calculate the linear trend of the final 15 years of the timeseries
-    # and use this to calculate the present-day warming
-    print('Calculating SR15-definition temps', end=' ')
+        # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
+        # Calculate the linear trend of the final 15 years of the timeseries
+        # and use this to calculate the present-day warming
+        print('Calculating SR15-definition temps', end=' ')
 
-    for year in [2017, end_trunc]:
-        years_SR15 = ((year-15 <= temp_Yrs) * (temp_Yrs <= year))
-        temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
+        for year in [2017, end_trunc]:
+            years_SR15 = ((year-15 <= temp_Yrs) * (temp_Yrs <= year))
+            temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
-        # Calculate SR15-definition warming for each var-ens combination
-        # See SR15 Ch1 1.2.1
-        # temp_Att_Results_SR15 = np.apply_along_axis(
-        #     final_value_of_trend, 0, temp_Att_Results_SR15_recent)
-        temp_Att_Results_SR15 = np.empty(
-            temp_Att_Results_SR15_recent.shape[1:])
-        for vv in range(temp_Att_Results_SR15_recent.shape[1]):
-            # print(vv)
-            with mp.Pool(os.cpu_count()) as p:
-                times = [temp_Att_Results_SR15_recent[:, vv, ii]
-                         for ii
-                         in range(temp_Att_Results_SR15_recent.shape[2])]
-                # final_value_of_trend is from src/definitions.py
-                results = p.map(defs.final_value_of_trend, times)
-            temp_Att_Results_SR15[vv, :] = np.array(results)
+            # Calculate SR15-definition warming for each var-ens combination
+            # See SR15 Ch1 1.2.1
+            # temp_Att_Results_SR15 = np.apply_along_axis(
+            #     final_value_of_trend, 0, temp_Att_Results_SR15_recent)
+            temp_Att_Results_SR15 = np.empty(
+                temp_Att_Results_SR15_recent.shape[1:])
+            for vv in range(temp_Att_Results_SR15_recent.shape[1]):
+                # print(vv)
+                with mp.Pool(os.cpu_count()) as p:
+                    times = [temp_Att_Results_SR15_recent[:, vv, ii]
+                            for ii
+                            in range(temp_Att_Results_SR15_recent.shape[2])]
+                    # final_value_of_trend is from src/definitions.py
+                    results = p.map(defs.final_value_of_trend, times)
+                temp_Att_Results_SR15[vv, :] = np.array(results)
 
-        # Obtain statistics
-        gwi_headline_array = np.percentile(
-            temp_Att_Results_SR15, sigmas_all, axis=1)
-        dict_Results = {
-            (var, sigma):
-            gwi_headline_array[sigmas_all.index(sigma), vars.index(var)]
-            for var in vars for sigma in sigmas_all
-        }
-        df_headlines_i = pd.DataFrame(
-            dict_Results, index=[f'{year} (SR15 definition)'])
-        df_headlines_i.columns.names = ['variable', 'percentile']
-        df_headlines_i.index.name = 'Year'
-        dfs.append(df_headlines_i)
+            # Obtain statistics
+            gwi_headline_array = np.percentile(
+                temp_Att_Results_SR15, sigmas_all, axis=1)
+            dict_Results = {
+                (var, sigma):
+                gwi_headline_array[sigmas_all.index(sigma), vars.index(var)]
+                for var in vars for sigma in sigmas_all
+            }
+            df_headlines_i = pd.DataFrame(
+                dict_Results, index=[f'{year} (SR15 definition)'])
+            df_headlines_i.columns.names = ['variable', 'percentile']
+            df_headlines_i.index.name = 'Year'
+            dfs.append(df_headlines_i)
 
-    T4 = dt.datetime.now()
-    print(f'... took {T4 - T3}')
+        T4 = dt.datetime.now()
+        print(f'... took {T4 - T3}')
 
-    # AR6 DEFINITION (DECADE MEAN)
-    print('Calculating AR6-definition temps', end=' ')
-    for years in [[2010, 2019], [end_trunc-9, end_trunc]]:
-        recent_years = ((years[0] <= temp_Yrs) * (temp_Yrs <= years[1]))
-        temp_Att_Results_AR6 = \
-            temp_Att_Results[recent_years, :, :].mean(axis=0)
-        # Obtain statistics
-        gwi_headline_array = np.percentile(
-            temp_Att_Results_AR6, sigmas_all, axis=1)
-        dict_Results = {
-            (var, sigma):
-            gwi_headline_array[sigmas_all.index(sigma), vars.index(var)]
-            for var in vars for sigma in sigmas_all
-        }
-        df_headlines_i = pd.DataFrame(
-            dict_Results, index=['-'.join([str(y) for y in years])])
-        df_headlines_i.columns.names = ['variable', 'percentile']
-        df_headlines_i.index.name = 'Year'
-        dfs.append(df_headlines_i)
+        # AR6 DEFINITION (DECADE MEAN) ########################################
+        print('Calculating AR6-definition temps', end=' ')
+        for years in [[2010, 2019], [end_trunc-9, end_trunc]]:
+            recent_years = ((years[0] <= temp_Yrs) * (temp_Yrs <= years[1]))
+            temp_Att_Results_AR6 = \
+                temp_Att_Results[recent_years, :, :].mean(axis=0)
+            # Obtain statistics
+            gwi_headline_array = np.percentile(
+                temp_Att_Results_AR6, sigmas_all, axis=1)
+            dict_Results = {
+                (var, sigma):
+                gwi_headline_array[sigmas_all.index(sigma), vars.index(var)]
+                for var in vars for sigma in sigmas_all
+            }
+            df_headlines_i = pd.DataFrame(
+                dict_Results, index=['-'.join([str(y) for y in years])])
+            df_headlines_i.columns.names = ['variable', 'percentile']
+            df_headlines_i.index.name = 'Year'
+            dfs.append(df_headlines_i)
 
-    df_headlines = pd.concat(dfs, axis=0)
-    # TODO: change the name of the files to include additional metatdata, inc:
-    # Regression range
-    # Truncation range
-    df_headlines.to_csv(f'results/GWI_results_headlines_{variation}.csv')
-    T5 = dt.datetime.now()
-    print(f'... took {T5 - T4}')
+        df_headlines = pd.concat(dfs, axis=0)
+        df_headlines.to_csv(f'results/GWI_results_headlines_{variation}.csv')
+        T5 = dt.datetime.now()
+        print(f'... took {T5 - T4}')
 
     # RATE: AR6 DEFINITION
     if rate_toggle:
@@ -909,7 +917,7 @@ if __name__ == "__main__":
                 # Parallelise over ensemble members
                 with mp.Pool(os.cpu_count()) as p:
                     single_series = [ten_slice[:, vv, ii]
-                                     for ii in range(ten_slice.shape[2])]
+                                    for ii in range(ten_slice.shape[2])]
                     # final_value_of_trend is from src/definitions.py
                     results = p.map(defs.rate_func, single_series)
                 temp_Rate_Results[vv, :] = np.array(results)

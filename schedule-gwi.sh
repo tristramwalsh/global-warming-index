@@ -11,11 +11,11 @@ array_values=`seq 2000 2023`  # This sequence only includes 2023
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(100 100 100)  # Size of subsampling
+array_samples=(90 90 90)  # Size of subsampling
 
 ### Generate a Slurm file for each Job ID
 
-WALLTIME=05:00:00
+WALLTIME=12:00:00
 SIM_NAME=gwi-hist
 SIM_CPUS=28
 SLURM_FILE_NAME=${SIM_NAME}_1850-
@@ -48,7 +48,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=${SIM_NAME}_1850-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=1850-${i} --include-rate=n
+python gwi.py --samples=${j} --regress-range=1850-${i} --include-rate=n --include-headlines=n
 
 EOF
 
