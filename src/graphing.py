@@ -200,6 +200,8 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
     # Shade the pre-industrial period
     ax.fill_between([1850, 1900], [-5, -5], [+5, +5],
                     color='#f4f2f1')
+    ax.text(1875, -0.85, '1850\N{EN DASH}1900\nPreindustrial Baseline',
+            ha='center')
 
     # Plot the observations
     if df_temp_Obs is not None:

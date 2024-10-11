@@ -173,7 +173,7 @@ if re_calculate:
         fig.savefig(f'plots/Compare_iterations_{regressed_years}.png')
 
 
-# Generate the historical-only timeseries
+
 
 # Get a list of all files with 'AVERAGE' in them:
 results_files = {f.split('_')[-2].split('--')[-1]: f'{results_folder}/{f}'
@@ -184,6 +184,48 @@ for iteration in results_files.keys():
     df_iteration = pd.read_csv(
             results_files[iteration], index_col=0,  header=[0, 1], skiprows=0)
     results_dfs[iteration] = df_iteration
+
+
+min_regressed_range = min(list(results_files.keys()))
+max_regressed_range = max(list(results_files.keys()))
+start_pi = 1850
+end_pi = 1900
+start_yr = int(max_regressed_range.split('-')[0])
+end_yr = int(max_regressed_range.split('-')[1])
+
+df_temp_Obs = defs.load_HadCRUT(start_pi, end_pi, start_yr, end_yr)
+
+
+# Plot the timeseries for each iteration
+plot_vars = ['Tot', 'GHG', 'Nat', 'OHF']
+for reg_years in results_dfs.keys():
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
+    reg_start = int(reg_years.split('-')[0])
+    reg_end = int(reg_years.split('-')[1])
+    gr.gwi_timeseries(
+        ax, df_temp_Obs, None,
+        results_dfs[reg_years].loc[reg_end:, :],
+        plot_vars, var_colours,
+        hatch='x',
+        linestyle='dashed')
+    gr.gwi_timeseries(
+        ax, df_temp_Obs, None,
+        results_dfs[reg_years].loc[reg_start:reg_end, :],
+        plot_vars, var_colours)
+
+    # Plot a box around the regressed years
+    ax.axvline(int(reg_years.split('-')[1]),
+               color='darkslategray', linestyle='--')
+
+    ax.set_ylim(-1, 2)
+    ax.set_xlim(1850, 2023)
+    gr.overall_legend(fig, 'lower center', 6)
+    fig.suptitle(f'Regressed--{reg_years} Timeseries Plot')
+    fig.savefig(f'plots/Regressed--{reg_years}_timeseries.png')
+
+
+# Generate the historical-only timeseries #####################################
 
 # Create a new empty dataframe to store the historical-only results:
 df_hist = results_dfs['1850-2023'].copy()
@@ -201,8 +243,6 @@ end_years = [int(iteration.split('-')[1]) for iteration in results_dfs.keys()]
 smallest_end_year = min(end_years)
 largest_end_year = max(end_years)
 
-min_regressed_range = min(list(results_files.keys()))
-max_regressed_range = max(list(results_files.keys()))
 
 df_hist = df_hist.loc[smallest_end_year:, :]
 df_hist.to_csv(
@@ -210,12 +250,6 @@ df_hist.to_csv(
     f'__REGRESSED-YEARS--{min_regressed_range}_to_{max_regressed_range}.csv')
 
 # Plot the dataset using gr.gwi_timeseries
-start_pi = 1850
-end_pi = 1900
-start_yr = int(max_regressed_range.split('-')[0])
-end_yr = int(max_regressed_range.split('-')[1])
-
-df_temp_Obs = defs.load_HadCRUT(start_pi, end_pi, start_yr, end_yr)
 
 plot_vars = ['Ant', 'GHG', 'Nat', 'OHF']
 fig = plt.figure(figsize=(12, 8))
