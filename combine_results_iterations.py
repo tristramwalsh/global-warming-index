@@ -121,7 +121,6 @@ if re_calculate:
         if 'AVERAGE' not in f
         and 'HISTORICAL-ONLY' not in f])))
 
-    print(regressed_years_all)
     for regressed_years in regressed_years_all:
         print(f'Regressed years: {regressed_years}')
         # Timeseries averaging
@@ -185,7 +184,7 @@ for iteration in results_files.keys():
     df_iteration = pd.read_csv(
             results_files[iteration], index_col=0,  header=[0, 1], skiprows=0)
     results_dfs[iteration] = df_iteration
-print(results_dfs.keys())
+
 # Create a new empty dataframe to store the historical-only results:
 df_hist = results_dfs['1850-2023'].copy()
 df_hist[:] = 0
@@ -275,7 +274,7 @@ df_constrained = df_constrained.loc[smallest_end_year:, :]
 fig = plt.figure(figsize=(12, 8))
 ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
 gr.gwi_timeseries(
-    ax, df_temp_Obs, None, df_constrained,
+    ax, None, None, df_constrained,
     plot_vars, var_colours, sigmas=['5', '95', '50'])
 
 ax.set_ylim(-1, 3)
@@ -288,5 +287,172 @@ gr.overall_legend(fig, 'lower center', 6)
 fig.suptitle(f'Projected warming in year {constrained_year}, ' +
              'constrained by differing regressed years')
 fig.savefig(
-    f'plots/Projected_warming_{constrained_year}' +
-    '_constrained_by_regressed_years.png')
+    f'plots/Projected_warming_in_{constrained_year}' +
+    '_constrained_by_regressed_years' +
+    f'_{min_regressed_range}_to_{max_regressed_range}.png')
+
+
+# Generate timeseries that shows how each component of the GWI changes each
+# year. From year Y to year Y+1, you have contributions from:
+# 1. the change in temp in year Y in the old dataset to year Y in the new
+# dataset
+# 2. the change in temp in year Y+1 in the old dataset to the temp in year Y in
+# the new dataset.
+# 3. any changes in historical forcing in the new dataset
+# 4. any changes in HadCRUT temperatures in the new dataset
+# Only factor 1 and 2 are considered in this calcualtion. The other factors may
+# be added later, but sourcing historical T and ERF data is significantly
+# more wrangling.
+
+# Create a new empty dataframe copied from before:
+df_delta_additional_forcing_year = df_constrained.copy()
+df_delta_revised_previous_year = df_constrained.copy()
+df_delta_additional_forcing_year[:] = 0
+df_delta_revised_previous_year[:] = 0
+
+differ_years = sorted([r.split('-')[1] for r in list(results_files.keys())])
+# switch the sorted order of the list years
+differ_years = differ_years[::-1]
+# remove the smallest year
+differ_years = differ_years[:-1]
+
+for y in differ_years:
+    delta_new = (results_dfs[f'1850-{y}'].loc[int(y)] -
+                 results_dfs[f'1850-{y}'].loc[int(y)-1])
+    delta_rev = (results_dfs[f'1850-{y}'].loc[int(y)-1] -
+                 results_dfs[f'1850-{int(y)-1}'].loc[int(y)-1])
+    df_delta_revised_previous_year.loc[int(y)] = delta_rev
+    df_delta_additional_forcing_year.loc[int(y)] = delta_new
+
+# Plot the results
+# The red line is the additional warming in year Y+1 relative to year Y in the
+# new dataset.
+# The blue line is the revised warming in year Y calculated in the year Y+1
+# dataset relative to the year Y calculated in the year Y dataset.
+# The green dashed line is the residual warming in year Y relative in the
+# dataset for year Y. That is so say, this line comes from the historical-only
+# dataset.
+
+
+line_alpha = 0.9
+
+fig = plt.figure(figsize=(12, 8))
+ax1 = plt.subplot2grid(shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
+
+ax1.fill_between(df_delta_additional_forcing_year.index,
+                 df_hist.loc[smallest_end_year:, ('Res', '5')].values,
+                 df_hist.loc[smallest_end_year:, ('Res', '95')].values,
+                 color='seagreen', alpha=0.1, lw=0)
+ax1.fill_between(df_delta_revised_previous_year.index,
+                 df_delta_revised_previous_year.loc[:, ('Ant', '5')].values,
+                 df_delta_revised_previous_year.loc[:, ('Ant', '95')].values,
+                 color='steelblue', alpha=0.3, lw=0)
+ax1.fill_between(df_delta_additional_forcing_year.index,
+                 df_delta_additional_forcing_year.loc[:, ('Ant', '5')].values,
+                 df_delta_additional_forcing_year.loc[:, ('Ant', '95')].values,
+                 color='indianred', alpha=0.3, lw=0)
+ax1.plot(df_delta_additional_forcing_year.index,
+         df_hist.loc[smallest_end_year:, ('Res', '50')].values,
+         label='Residual (internal variability) in year Y+1',
+         color='seagreen', ls='dashed', alpha=line_alpha)
+ax1.plot(df_delta_revised_previous_year.index,
+         df_delta_revised_previous_year.loc[:, ('Ant', '50')].values,
+         label='Revised warming in year Y',
+         color='steelblue', alpha=line_alpha)
+ax1.plot(df_delta_additional_forcing_year.index,
+         df_delta_additional_forcing_year.loc[:, ('Ant', '50')].values,
+         label='Additional warming from year Y to Y+1 in new dataset',
+         color='indianred', alpha=line_alpha)
+
+# Add a zero line for reference
+ax1.axhline(0, color='black', linestyle='solid')
+# xticks = list(np.arange(int(min(differ_years)), int(max(differ_years)) + 1, 5))
+# xticks.append(int(max(differ_years)))
+xticks.append(int(min(differ_years)))
+ax1.set_xticks(xticks, xticks)
+ax1.set_xlim(int(min(differ_years)), int(max(differ_years))+0.5)
+ax1.set_ylim(-0.3, +0.3)
+ax1.set_ylabel('Interannual warming delta, ⁰C')
+
+# Plot schematic diagram
+ax2 = plt.subplot2grid(shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
+years = [2023, 2022, 2021, 2020]
+for year in years:
+    df_new = results_dfs[f'1850-{year}']
+    ax2.plot(df_new.loc[:year, :].index,
+             df_new.loc[:year, ('Ant', '50')],
+             label=f'1850-{year}',
+             color='darkslategray', linestyle='solid',
+             marker='o', markeredgewidth=0,
+             alpha=(year-min(years)+1)/len(years),
+             lw=2
+             #  lw=(year-min(years))/len(years) * 2 + 0.5
+             )
+    if year == max(years):
+        # Plot the red lines for the new year's extra year of forcing
+        ax2.plot([year-1, year],
+                 [df_new.loc[year-1, ('Ant', '50')],
+                  df_new.loc[year-1, ('Ant', '50')]],
+                 color='indianred', linestyle='dashed', lw=2,
+                 alpha=(year-min(years)+1)/len(years))
+        ax2.plot([year, year],
+                 [df_new.loc[year-1, ('Ant', '50')],
+                  df_new.loc[year, ('Ant', '50')]],
+                 color='indianred', linestyle='solid', lw=2,
+                 alpha=(year-min(years)+1)/len(years))
+        # Plot the blue line for the previous year's revision
+        df_old = results_dfs[f'1850-{year-1}']
+
+        ax2.plot([year-1, year],
+                 [df_old.loc[year-1, ('Ant', '50')],
+                  df_old.loc[year-1, ('Ant', '50')]],
+                 color='steelblue', linestyle='dashed', lw=2,
+                 alpha=(year-min(years)+1)/len(years))
+        ax2.plot([year, year],
+                 [df_new.loc[year-1, ('Ant', '50')],
+                  df_old.loc[year-1, ('Ant', '50')]],
+                 color='steelblue', linestyle='solid', lw=2,
+                 alpha=(year-min(years)+1)/len(years))
+
+ax2.plot(df_hist.index,
+         df_hist.loc[:, ('Ant', '50')].values,
+         label='Historical-only GWI',
+         color='slateblue', ls='dashed', alpha=line_alpha, lw=1.5,
+         marker='o', markeredgewidth=0)
+
+# Plot observations scatter with error:
+# Plot the observations
+err_pos = (df_temp_Obs.quantile(q=0.95, axis=1) -
+           df_temp_Obs.quantile(q=0.5, axis=1))
+err_neg = (df_temp_Obs.quantile(q=0.5, axis=1) -
+           df_temp_Obs.quantile(q=0.05, axis=1))
+ax2.errorbar(df_temp_Obs.index, df_temp_Obs.quantile(q=0.5, axis=1),
+             yerr=(err_neg, err_pos),
+             fmt='o', color=var_colours['Obs'], ms=2.5, lw=1,
+             label='Reference Temp: HadCRUT5')
+
+ax2.set_ylabel('Global Warming, ⁰C')
+ax2.set_xticks(years, years)
+ax2.set_xlim(2019.5, 2023.5)
+ax2.set_ylim(1.1, 1.5)
+
+fig.suptitle('Contributions to the change in Ant warming each year Y → Y+1')
+gr.overall_legend(fig, 'lower center', 3)
+fig.tight_layout(rect=[0.05, 0.15, 0.95, 0.95])
+fig.savefig(
+    'plots/Historical_delta_contributions_' +
+    f'{min_regressed_range}_to_{max_regressed_range}.png')
+
+
+# Find out how much the historical residual is as a fraction of the regression
+# residual in that year. This is to say, how sensitive is the GWI to end
+# effects of adding an additional year? If in year Y we have a very hot year,
+# (the internal variability is taken to be the regression residual, since this
+# is the amount of warming in the observations that is not accounted for by
+# forced warming of any variety), how much does the 'Tot' warming change?
+fractional_change = (
+    df_delta_revised_previous_year.loc[:, ('Ant', '50')].values /
+    df_hist.loc[smallest_end_year:, ('Res', '50')].values
+    )
+print('Revision / Residual:', fractional_change)
+print('Average:', np.mean(fractional_change))

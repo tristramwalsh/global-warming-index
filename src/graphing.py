@@ -187,7 +187,8 @@ def plot_internal_variability_sample(
 
 
 def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
-                   plot_vars, plot_cols, sigmas='all', labels=True):
+                   plot_vars, plot_cols, sigmas='all', labels=True,
+                   hatch=None, linestyle='solid'):
     """Plot the GWI timeseries for the given variables."""
     ax.set_ylabel(
         'Attributable change in surface temperature since 1850\N{EN DASH}1900 (°C)'
@@ -201,23 +202,24 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                     color='#f4f2f1')
 
     # Plot the observations
-    err_pos = (df_temp_Obs.quantile(q=0.95, axis=1) -
-               df_temp_Obs.quantile(q=0.5, axis=1))
-    err_neg = (df_temp_Obs.quantile(q=0.5, axis=1) -
-               df_temp_Obs.quantile(q=0.05, axis=1))
-    ax.errorbar(df_temp_Obs.index, df_temp_Obs.quantile(q=0.5, axis=1),
-                yerr=(err_neg, err_pos),
-                fmt='o', color=plot_cols['Obs'], ms=2.5, lw=1,
-                label=labels*'Reference Temp: HadCRUT5')
+    if df_temp_Obs is not None:
+        err_pos = (df_temp_Obs.quantile(q=0.95, axis=1) -
+                   df_temp_Obs.quantile(q=0.5, axis=1))
+        err_neg = (df_temp_Obs.quantile(q=0.5, axis=1) -
+                   df_temp_Obs.quantile(q=0.05, axis=1))
+        ax.errorbar(df_temp_Obs.index, df_temp_Obs.quantile(q=0.5, axis=1),
+                    yerr=(err_neg, err_pos),
+                    fmt='o', color=plot_cols['Obs'], ms=2.5, lw=1,
+                    label=labels*'Reference Temp: HadCRUT5')
     if df_temp_PiC is not None:
         if len(sigmas) > 1:
             for s in range(len(sigmas)//2):
                 # Plot the PiControl ensemble
                 ax.fill_between(
-                        df_temp_PiC.index,
-                        df_temp_PiC.quantile(q=float(sigmas[s])/100, axis=1),
-                        df_temp_PiC.quantile(q=float(sigmas[-(s+2)])/100, axis=1),
-                        color=plot_cols['PiC'], alpha=fill_alpha, linewidth=0.0)
+                    df_temp_PiC.index,
+                    df_temp_PiC.quantile(q=float(sigmas[s])/100, axis=1),
+                    df_temp_PiC.quantile(q=float(sigmas[-(s+2)])/100, axis=1),
+                    color=plot_cols['PiC'], alpha=fill_alpha, linewidth=0.0)
         ax.plot(df_temp_PiC.index, df_temp_PiC.quantile(q=0.5, axis=1),
                 color=plot_cols['PiC'], alpha=line_alpha,
                 label=labels*'CMIP6 piControl')
@@ -237,13 +239,15 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                     df_Results_ts.index,
                     df_Results_ts.loc[:, (var, sigmas[s])].values,
                     df_Results_ts.loc[:, (var, sigmas[-(s+2)])].values,
-                    color=plot_cols[var], alpha=fill_alpha, linewidth=0.0)
+                    color=plot_cols[var], alpha=fill_alpha, linewidth=0.0,
+                    hatch=hatch, linestyle=linestyle)
             ax.plot(df_Results_ts.index,
                     df_Results_ts.loc[:, (var, sigmas[-1])].values,
-                    color=plot_cols[var], alpha=line_alpha, label=labels*var)
+                    color=plot_cols[var], alpha=line_alpha, label=labels*var,
+                    linestyle=linestyle)
 
-    ax.set_xticks([1850, 1900, 1950, 2000, df_temp_Obs.index[-1]],
-                  [1850, 1900, 1950, 2000, df_temp_Obs.index[-1]])
+    ax.set_xticks([1850, 1900, 1950, 2000, df_Results_ts.index[-1]],
+                  [1850, 1900, 1950, 2000, df_Results_ts.index[-1]])
 
 
 def gwi_residuals(ax, df_Results_ts):
