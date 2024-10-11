@@ -61,6 +61,13 @@ else:
     headline_toggle = input('Include headlines? (y/n): ')
     headline_toggle = True if headline_toggle == 'y' else False
 
+if '--re-calculate' in argv_dict:
+    re_calculate = argv_dict['--re-calculate']
+    re_calculate = True if re_calculate == 'y' else False
+else:
+    re_calculate = input('Re-calculate? (y/n): ')
+    re_calculate = True if re_calculate == 'y' else False
+
 
 # AVERAGE THE TIMESERIES AND HEADLINES ITERATIONS #############################
 def combine_repeats(result_type, regressed_years):
@@ -70,10 +77,12 @@ def combine_repeats(result_type, regressed_years):
     iterations = [f.split('_')[-1].split('.')[0]
                   for f in os.listdir(results_folder)
                   if result_type in f
-                  and f"REGRESSED-YEARS--{regressed_years}" in f]
+                  and f"REGRESSED-YEARS--{regressed_years}" in f
+                  and 'AVERAGE' not in f
+                  and 'HISTORICAL-ONLY' not in f]
     # Remove previously averaged dataset in case it already exists
     iterations = sorted(list(set(iterations) - set(['AVERAGE'])))
-    print('iterations: ', iterations)
+    # print('iterations: ', iterations)
 
     for iteration in iterations:
         fname = [f for f in os.listdir(results_folder)
@@ -81,7 +90,7 @@ def combine_repeats(result_type, regressed_years):
                  and f"REGRESSED-YEARS--{regressed_years}" in f
                  and iteration in f][0]
         fname = f"{results_folder}/{fname}"
-        print(fname)
+        # print(fname)
         ens_size = int(fname.split('ENSEMBLE-SIZE--')[-1].split('_')[0])
         df_iteration = pd.read_csv(
             fname, index_col=0,  header=[0, 1], skiprows=0)
@@ -106,62 +115,63 @@ def combine_repeats(result_type, regressed_years):
 
 
 # Loop through all regressed years that are available.
-regressed_years_all = sorted(list(set([
-    f.split('_')[-2].split('--')[-1] for f in os.listdir(results_folder)])))
+if re_calculate:
+    regressed_years_all = sorted(list(set([
+        f.split('_')[-2].split('--')[-1] for f in os.listdir(results_folder)
+        if 'AVERAGE' not in f
+        and 'HISTORICAL-ONLY' not in f])))
 
+    print(regressed_years_all)
+    for regressed_years in regressed_years_all:
+        print(f'Regressed years: {regressed_years}')
+        # Timeseries averaging
+        df_avg, dict_iterations, size_iterations = combine_repeats(
+            'timeseries', regressed_years)
+        # Headlines may not have been calculated if only timeseries were needed
+        if headline_toggle:
+            combine_repeats('headlines', regressed_years)
 
-# for regressed_years in regressed_years_all:
-#     print(f'Regressed years: {regressed_years}')
-#     # Timeseries averaging
-#     df_avg, dict_iterations, size_iterations = combine_repeats(
-#         'timeseries', regressed_years)
-#     # Headlines may not have been calculated if only timeseries were needed
-#     if headline_toggle:
-#         combine_repeats('headlines', regressed_years)
+        # Plot each iteration of the data to check
+        fig = plt.figure(figsize=(15, 10))
+        ax1 = plt.subplot2grid(shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
+        ax2 = plt.subplot2grid(shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
+        for sigma in ['5', '95', '50']:
+            for var in ['Ant', 'Nat', 'GHG', 'OHF', 'Tot']:
+                for iteration in dict_iterations.keys():
+                    ax1.plot(df_avg.index,
+                             dict_iterations[iteration][(var, sigma)],
+                             label=f'{iteration} {var}',
+                             color=var_colours[var],
+                             alpha=1 if sigma == '50' else 0.5
+                             #  linestyle=linestyles[iteration]
+                             )
+                ax1.plot(df_avg.index, df_avg[(var, sigma)],
+                         label=f'Avg {var}', color='black')
+        # plt.legend()
+        ax1.set_ylabel('Iteration results, ⁰C')
+        ax1.set_title('Multiple iterations of samples,' +
+                      '5th, 50th, 95th percentiles\n' +
+                      str(size_iterations.values()))
 
-#     # Plot each iteration of the data to check
-#     fig = plt.figure(figsize=(15, 10))
-#     ax1 = plt.subplot2grid(shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
-#     ax2 = plt.subplot2grid(shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
-#     for sigma in ['5', '95', '50']:
-#         for var in ['Ant', 'Nat', 'GHG', 'OHF', 'Tot']:
-#             for iteration in dict_iterations.keys():
-#                 ax1.plot(df_avg.index,
-#                          dict_iterations[iteration][(var, sigma)],
-#                          label=f'{iteration} {var}',
-#                          color=var_colours[var],
-#                          alpha=1 if sigma == '50' else 0.5
-#                          #  linestyle=linestyles[iteration]
-#                          )
-#             ax1.plot(df_avg.index, df_avg[(var, sigma)],
-#                      label=f'Avg {var}',
-#                      color='black',
-#                      #  linestyle='--'
-#                      )
-#     # plt.legend()
-#     ax1.set_ylabel(f'Iteration results, ⁰C')
-#     ax1.set_title('Multiple iterations of samples,' +
-#                   '5th, 50th, 95th percentiles\n' +
-#                   str(size_iterations.values()))
-
-#     # Plot the difference between the data in each iteration and the average
-#     for iteration in dict_iterations.keys():
-#         for sigma in ['5', '95', '50']:
-#             for var in ['Ant', 'Nat', 'GHG', 'OHF', 'Tot']:
-#                 ax2.plot(
-#                     df_avg.index,
-#                     dict_iterations[iteration][(var, sigma)] - df_avg[(var, sigma)],
-#                     label=f'{iteration} {var}',
-#                     color=var_colours[var],
-#                     alpha=1 if sigma == '50' else 0.5
-#                     #  linestyle=linestyles[iteration]
-#                     )
-#     # plt.legend()
-#     ax2.set_ylabel(f'Iteration minus average, ⁰C')
-#     ax2.set_title('Difference between iterations and average, ' +
-#                   '5th, 50th, 95th percentiles')
-#     fig.suptitle(f'Iterations for regressed years: {regressed_years}')
-#     fig.savefig(f'plots/Compare_iterations_{regressed_years}.png')
+        # Plot difference between the data in each iteration and the average
+        for iteration in dict_iterations.keys():
+            for sigma in ['5', '95', '50']:
+                for var in ['Ant', 'Nat', 'GHG', 'OHF', 'Tot']:
+                    ax2.plot(
+                        df_avg.index,
+                        (dict_iterations[iteration][(var, sigma)]
+                         - df_avg[(var, sigma)]),
+                        label=f'{iteration} {var}',
+                        color=var_colours[var],
+                        alpha=1 if sigma == '50' else 0.5
+                        #  linestyle=linestyles[iteration]
+                        )
+        # plt.legend()
+        ax2.set_ylabel('Iteration minus average, ⁰C')
+        ax2.set_title('Difference between iterations and average, ' +
+                      '5th, 50th, 95th percentiles')
+        fig.suptitle(f'Iterations for regressed years: {regressed_years}')
+        fig.savefig(f'plots/Compare_iterations_{regressed_years}.png')
 
 
 # Generate the historical-only timeseries
@@ -224,17 +234,59 @@ ax.set_xlim(smallest_end_year, largest_end_year)
 ax.text(1875, -0.85, f'{start_pi}\N{EN DASH}{end_pi}\nPreindustrial Baseline',
         ha='center')
 
-xticks = list(np.arange(smallest_end_year, largest_end_year + 1, 10))
+xticks = list(np.arange(smallest_end_year, largest_end_year + 1, 5))
 xticks.append(largest_end_year)
-print(xticks)
 ax.set_xticks(xticks, xticks)
 
-ax.set_title(f'Regressed years range: {min_regressed_range} to {max_regressed_range}')
+ax.set_title(
+    f'Regressed years range: {min_regressed_range} to {max_regressed_range}')
 gr.overall_legend(fig, 'lower center', 6)
 
 
 fig.suptitle('Historical-only (dashed) versus Full-information (solid)')
 
 fig.savefig(
-    f'plots/Historical_vs_Full_timeseries_{min_regressed_range}_to_{max_regressed_range}.png')
+    'plots/Historical_vs_Full_timeseries_' +
+    f'{min_regressed_range}_to_{max_regressed_range}.png')
 
+
+# Calculate how the expected final year of the timeseries changes depending on
+# the years that are regressed. Expect that the attributed values in 2023 (end
+# year of the full timeseries) will have larger uncertainties, the
+# earlier/shorter the range of regressed years is.
+
+# Create new empty dataframes to store the constrained results:
+constrained_year = end_yr
+df_constrained = results_dfs['1850-2023'].copy()
+df_constrained[:] = 0
+
+# For each iterstion, add the final row of the dataframe to the new df_hist.
+# The row index it should be inserted at is the same as the second year in
+# the iteration name.
+for iteration in results_dfs.keys():
+    # print(iteration, iteration.split('-')[1], constrained_year)
+    df_constrained.loc[int(iteration.split('-')[1])] = \
+        results_dfs[iteration].loc[constrained_year]
+# Remove all years that are not the end of an attribution period to avoid
+# confusion.
+
+df_constrained = df_constrained.loc[smallest_end_year:, :]
+# Plot this dataframe df_constrined in the same way as df_hist
+fig = plt.figure(figsize=(12, 8))
+ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
+gr.gwi_timeseries(
+    ax, df_temp_Obs, None, df_constrained,
+    plot_vars, var_colours, sigmas=['5', '95', '50'])
+
+ax.set_ylim(-1, 3)
+ax.set_xlim(smallest_end_year, largest_end_year)
+ax.set_ylabel('Warming in 2023 ⁰C')
+ax.set_xlabel('Regressed years: 1850-<year>')
+ax.set_xticks(xticks, xticks)
+gr.overall_legend(fig, 'lower center', 6)
+
+fig.suptitle(f'Projected warming in year {constrained_year}, ' +
+             'constrained by differing regressed years')
+fig.savefig(
+    f'plots/Projected_warming_{constrained_year}' +
+    '_constrained_by_regressed_years.png')
