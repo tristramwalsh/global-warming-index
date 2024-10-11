@@ -210,14 +210,17 @@ def GWI_faster(
                             temp_Att[:, variables.index('OHF')])
                 temp_Att_Results[:, -3, i] = temp_Ant
 
-                # Visual display of pregress through calculation
-                if i % 1000 == 0:
-                    percentage = int((i+1)/n*100)
-                    loading_bar = (percentage // 5*'.' +
-                                   (20 - percentage // 5)*' ')
-                    print(f'calculating {loading_bar} {percentage}%', end='\r')
+                # Visual display of progress through calculation ##############
+                # Turned off for now to avoid cluttering the slurm output,
+                # which seems not to be able to do carriage return.
+                # if i % 1000 == 0:
+                #     percentage = int((i+1)/n*100)
+                #     loading_bar = (percentage // 5*'.' +
+                #                    (20 - percentage // 5)*' ')
+                #     print(f'calculating {loading_bar} {percentage}%',
+                #           end='\r')
                 i += 1
-
+                # #############################################################
     return temp_Att_Results
 
 
@@ -384,27 +387,10 @@ def GWI_faster(
 if __name__ == "__main__":
 
     # Request whether to include pre-industrial offset and constant term in
-    # regression
-
-    allowed_options = ['y', 'n']
-    ao = '/'.join(allowed_options)
-
-    # inc_pi_offset = input(f'Subtract 1850-1900 PI baseline? {ao}: ')
-    # inc_reg_const = input(f'Include a constant term in regression? {ao}: ')
-    # Following discussion with Myles, fix the regression options as the
-    # following:
-    inc_pi_offset = 'y'
-    inc_reg_const = 'y'
-
-    if inc_pi_offset not in allowed_options:
-        print(f'{inc_pi_offset} not one of {ao}')
-        sys.exit()
-    elif inc_reg_const not in allowed_options:
-        print(f'{inc_reg_const} not one of {ao}')
-        sys.exit()
-
-    inc_pi_offset = True if inc_pi_offset == 'y' else False
-    inc_reg_const = True if inc_reg_const == 'y' else False
+    # regression. Following discussion with Myles, fix the regression options
+    # as the following (there is no user selection any more):
+    inc_pi_offset = True
+    inc_reg_const = True
 
     # Percentiles to calculate and use throughout analysis.
     # sigmas = [[32, 68], [5, 95], [0.3, 99.7]]
@@ -533,6 +519,19 @@ if __name__ == "__main__":
     forc_Yrs = np.array(df_forc.index)
     forc_Yrs_min = forc_Yrs.min()
     forc_Yrs_max = forc_Yrs.max()
+
+
+    # # Select the variable 'OHF' from the dataframe, and get the ensemble names.
+    # forc_subset = df_forc.loc[:, ('OHF', slice(None))]
+    # # print(forc_subset.head())
+    # forc_ens_names_OHF = sorted(list(forc_subset.columns.get_level_values("ensemble").unique()))
+    # print(forc_ens_names_OHF)
+    # forc_subset = df_forc.loc[:, ('GHG', slice(None))]
+    # forc_ens_names_GHG = sorted((forc_subset.columns.get_level_values("ensemble").unique()))
+    # print(forc_ens_names_GHG)
+    # # Find the overlap of those two sets:
+    # print(forc_ens_names_GHG == forc_ens_names_OHF)
+    # sys.exit()
 
     # Check that the truncation years are within the ERF data range.
     # TODO: write down how and when the truncation happens (i.e. after the
@@ -810,7 +809,7 @@ if __name__ == "__main__":
     # the axes, so that the axis along which you took the percentiles is
     # now the first axis, and the other axes are the remaining axes...
 
-    # TIMESERIES RESULTS
+    # TIMESERIES RESULTS ######################################################
     print('Calculating percentiles', end=' ')
     gwi_timeseries_array = np.percentile(temp_Att_Results, sigmas_all, axis=2)
     dict_Results = {
@@ -825,7 +824,7 @@ if __name__ == "__main__":
     T3 = dt.datetime.now()
     print(f'... took {T3 - T2}')
 
-    # HEADLINE RESULTS
+    # HEADLINE RESULTS ########################################################
     if headline_toggle:
         print('Calculating headlines')
 
@@ -917,7 +916,7 @@ if __name__ == "__main__":
                 # Parallelise over ensemble members
                 with mp.Pool(os.cpu_count()) as p:
                     single_series = [ten_slice[:, vv, ii]
-                                    for ii in range(ten_slice.shape[2])]
+                                     for ii in range(ten_slice.shape[2])]
                     # final_value_of_trend is from src/definitions.py
                     results = p.map(defs.rate_func, single_series)
                 temp_Rate_Results[vv, :] = np.array(results)
