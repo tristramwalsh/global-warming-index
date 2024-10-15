@@ -46,7 +46,7 @@ import pymagicc
 #     return forc_Group
 
 
-def load_ERF_CMIP6():
+def load_ERF_CMIP6(regress_vars=['GHG', 'OHF', 'Nat']):
     """Load the ERFs from Chris."""
     # ERF location
     here = Path(__file__).parent
@@ -66,6 +66,61 @@ def load_ERF_CMIP6():
     df_ERF = df_ERF.reset_index(level='ensemble')
     df_ERF['ensemble'] = 'ens' + df_ERF['ensemble'].astype(str)
     df_ERF = df_ERF.pivot(columns='ensemble')
+
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+
+    # Check that the ensemble names are the same for all variables.
+    dict_ensemble_names = {}
+    for var in forc_var_names:
+        # Select the variable 'OHF' from the dataframe, and get ensemble names.
+        forc_subset = df_ERF.loc[:, (var, slice(None))]
+        # print(forc_subset.head())
+        forc_ens_names = sorted(
+            list(forc_subset.columns.get_level_values("ensemble").unique()))
+        dict_ensemble_names[var] = forc_ens_names
+
+    check_ens = all(
+        [dict_ensemble_names[var] == dict_ensemble_names[forc_var_names[0]]
+         for var in forc_var_names]
+         )
+
+    if not check_ens:
+        raise ValueError('Ensemble names are not the same for all variables.')
+
+    # Check whether the regress_vars is the same as the columns of df_ERF
+    check_vars = sorted(regress_vars) == sorted(forc_var_names)
+
+    # If regress_vars and forc_vars are the same, no need to do anything.
+    # If they are not the same, aggregate into requried variables:
+    if check_vars:
+        pass
+
+    elif not check_vars and regress_vars == ['Tot']:
+        # If 'Tot' is the only variable to regress, combine all variables:
+        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
+                                ].copy().rename(columns={'GHG': 'Tot'})
+        # Group df_ERF by ensemble name, and sum across variable names
+        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
+                               ].groupby(level='ensemble', axis=1
+                                         ).sum()
+        df_ERF = df_ERF_Tot
+
+    elif not check_vars and regress_vars == ['Ant', 'Nat']:
+        # If 'Ant' and 'Nat' are the only variables to regress, combine
+        # 'GHG' and 'OHF' into 'Ant':
+        df_ERF_Ant = df_ERF.loc[:, ('GHG', slice(None))
+                                ].copy().rename(columns={'GHG': 'Ant'})
+        # Group df_ERF by ensemble name, and sum across variable names
+        df_ERF_Ant[:] = df_ERF[['GHG', 'OHF']
+                               ].groupby(level='ensemble', axis=1
+                                         ).sum()
+        # Concatenate 'Ant' with 'Nat':
+        df_ERF_Nat = df_ERF.loc[:, ('Nat', slice(None))]
+        df_ERF = pd.concat([df_ERF_Ant, df_ERF_Nat], axis=1)
+
+    else:
+        raise ValueError('Invalid combination of variables for regression.')
 
     return df_ERF
 
@@ -408,3 +463,24 @@ def un_en_dash_ify(df):
         index={r: r.replace('\N{EN DASH}', '-') for r in rows_to_rename},
         inplace=True)
     return df
+
+
+def extra_vars(forc_vars):
+    r"""Return diagnosable variables for a set of regressed variables."""
+    # 1-way regression of Tot against Obs
+    if 'Tot' in forc_vars and len(forc_vars) == 1:
+        extra_vars = ['Res']
+
+    # 2-way regression of Ant and Nat against Obs
+    elif 'Ant' in forc_vars and 'Nat' in forc_vars and len(forc_vars) == 2:
+        extra_vars = ['Tot', 'Res']
+
+    # 3-way regression
+    elif 'Ant' not in forc_vars and len(forc_vars) == 3:
+        extra_vars = ['Ant', 'Tot', 'Res']
+
+    else:
+        # Raise error:
+        raise ValueError('Invalid combination of variables for regression.')
+
+    return extra_vars
