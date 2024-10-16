@@ -255,6 +255,7 @@ df_temp_Obs = defs.load_HadCRUT(start_pi, end_pi, start_yr, end_yr)
 
 for reg_vars in sorted(results_dfs.keys()):
     reg_years_all = sorted(list(results_dfs[reg_vars].keys()))
+    plot_names = []
     for reg_years in reg_years_all:
         print('Creating timeseries plots for:', reg_vars, reg_years, end='\r')
         plot_vars = results_dfs[
@@ -293,8 +294,32 @@ for reg_vars in sorted(results_dfs.keys()):
         fig.suptitle(f'Regressed--{reg_vars}_{reg_years} Timeseries Plot')
         fig.savefig(f'plots/Regressed--{reg_vars}_{reg_years}_timeseries.png')
         plt.close(fig)
+        plot_names.append(
+            f'plots/Regressed--{reg_vars}_{reg_years}_timeseries.png')
     print('')
     print('All years complete: ', reg_years_all)
+
+    print('Creating gif of timeseries plots for:', reg_vars)
+    # Create a gif of the timeseries plots
+    images_list = [Image.open(plot) for plot in plot_names]
+    # calculate the frame number of the last frame (ie the number of images)
+
+    # # create 2 extra copies of the last frame (to make the gif spend longer on
+    # # the most recent image)
+    # for x in range(0, 2):
+    #     images_list.append(images_list[-1])
+
+    # Copy and revserse the list of images, so that the gif goes back and forth
+    # between the first and last image.
+    images_list += images_list[::-1]
+
+    # save as a gif
+    images_list[0].save(
+        f'plots/Regressed--{reg_vars}_animation_' +
+        f'{min(reg_years_all)}_to_{max(reg_years_all)}' +
+        '_timeseries.gif',
+        save_all=True, append_images=images_list[1:],
+        optimize=False, duration=500, loop=0)
 
 ###############################################################################
 # Generate the historical-only timeseries #####################################
