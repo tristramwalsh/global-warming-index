@@ -544,6 +544,17 @@ if __name__ == "__main__":
     else:
         regress_vars = sorted(['GHG', 'Nat', 'OHF'])
 
+    # Specify the scenario
+    if '--scenario' in argv_dict:
+        scenario = argv_dict['--scenario']
+    else:
+        # PLACEHOLDER #########################################################
+        # # available scenarios:
+        # available = os.listdir('data/')
+        # scenario = input(f'Scenario (e.g. {available}: ')
+        #######################################################################
+        scenario = 'observed'
+    
     # Create a folder to store the plots
     plot_folder = 'plots/'
     if not os.path.exists(plot_folder):
@@ -822,13 +833,6 @@ if __name__ == "__main__":
         print('Shape of masked attribution results:', temp_Att_Results.shape)
 
     # PRODUCE FINAL RESULTS DATASETS ######################################
-    # Remove old results first
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    files = os.listdir('results')
-    # csvs = [f for f in files if f.endswith('.csv')]
-    # for csv in csvs:
-    #     os.remove('results/' + csv)
 
     # For multiple runs, we want to save the results with a unique identifier.
     # Use the current date and time of calculation for simplicity.
@@ -836,11 +840,29 @@ if __name__ == "__main__":
     iteration_id = current_time
 
     variation = (
-        f'VARIABLES--{",".join(regress_vars)}_' +
+        f'SCENARIO--{scenario}_' +
+        f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{n}_' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
         f'DATE-CALCULATED--{iteration_id}'
     )
+    output_path = (
+        f'SCENARIO--{scenario}/' +
+        f'VARIABLES--{"-".join(regress_vars)}/' +
+        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
+    )
+
+    # Create new path for results if it doesn't exist.
+    if not os.path.exists(f'results/iterations/{output_path}'):
+        os.makedirs(f'results/iterations/{output_path}')
+
+    # if not os.path.exists('results/iterations'):
+    #     os.makedirs('results/iterations')
+    # files = os.listdir('results')
+    # csvs = [f for f in files if f.endswith('.csv')]
+    # for csv in csvs:
+    #     os.remove('results/' + csv)
+
 
     # NOTE TO SELF: multidimensional np.percentile() changes the order of
     # the axes, so that the axis along which you took the percentiles is
@@ -857,7 +879,9 @@ if __name__ == "__main__":
     df_Results = pd.DataFrame(dict_Results, index=temp_Yrs)
     df_Results.columns.names = ['variable', 'percentile']
     df_Results.index.name = 'Year'
-    df_Results.to_csv(f'results/GWI_results_timeseries_{variation}.csv')
+    df_Results.to_csv(f'results/iterations/{output_path}' +
+                      f'GWI_results_timeseries_{variation}.csv')
+    
     T3 = dt.datetime.now()
     print(f'... took {T3 - T2}')
 
@@ -933,7 +957,8 @@ if __name__ == "__main__":
             dfs.append(df_headlines_i)
 
         df_headlines = pd.concat(dfs, axis=0)
-        df_headlines.to_csv(f'results/GWI_results_headlines_{variation}.csv')
+        df_headlines.to_csv(f'results/iterations/{output_path}' +
+                            f'GWI_results_headlines_{variation}.csv')
         T5 = dt.datetime.now()
         print(f'... took {T5 - T4}')
 
@@ -975,7 +1000,8 @@ if __name__ == "__main__":
             dfs_rates.append(df_rates_i)
 
         df_rates = pd.concat(dfs_rates, axis=0)
-        df_rates.to_csv(f'results/GWI_results_rates_{variation}.csv')
+        df_rates.to_csv(f'results/iterations/{output_path}' +
+                        f'GWI_results_rates_{variation}.csv')
         T7 = dt.datetime.now()
         print('')
         print(f'... took {T7 - T6}')

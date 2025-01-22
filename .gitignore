@@ -1,6 +1,13 @@
 # FaIR Climate Model
 models/FaIR_V2
 
+# slurm logs
+slurm_logs/
+
+# outputs: results and plots
+results/
+plots/
+
 # VS Code
 .vscode
 
