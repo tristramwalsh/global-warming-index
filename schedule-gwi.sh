@@ -6,19 +6,19 @@
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 1990 2023`
+array_values=`seq 2010 2023`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(60 60 60)  # Size of subsampling
+array_samples=(5 5 5)  # Size of subsampling
 
 # Select which variables to regress on.
 # e.g. VARS=GHG,OHF,Nat
 # e.g. VARS=Ant,Nat
 # e.g. VARS=Tot
-VARS=Tot
+VARS=Nat,GHG,OHF
 
 ### Generate a Slurm file for each Job ID #####################################
 
@@ -56,7 +56,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${VARS}_1850-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=1850-${i} --include-rate=n --include-headlines=n --regress-variables=${VARS}
+python gwi.py --samples=${j} --regress-range=1850-${i} --truncate=1850-2023 --include-rate=n --include-headlines=n --regress-variables=${VARS} --scenario=observed
 EOF
 
 # Submit a single job to slurm.

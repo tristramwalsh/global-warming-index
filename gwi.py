@@ -44,7 +44,7 @@ def GWI_faster(
         "ensemble").unique().to_list()
     ens_list_Obs = df_temp_Obs.columns.to_list()
     ens_list_PiC = df_temp_PiC.columns.to_list()
-    # NOTE: we get passes a list of variables.
+    # NOTE: we get passed a list of variables.
 
     # Prepare results #########################################################
     # Total sub-ensemble size: multiple number of ensemble members for each of:
@@ -77,12 +77,17 @@ def GWI_faster(
 
     # slice df_temp_obs dataframe to include years *inclusively* between
     # start_trunc and end_trunc
-    df_temp_Obs = df_temp_Obs.loc[start_trunc:end_trunc]
+    df_temp_Obs_trunc = df_temp_Obs.loc[start_trunc:end_trunc]
+
     # slice df_temp_PiC dataframe to include years *inclusively* between
     # start_trunc and end_trunc
-    df_temp_PiC = df_temp_PiC.loc[start_trunc:end_trunc]
-    temp_Yrs = df_temp_Obs.index.to_numpy()
-    forc_Yrs = df_forc.index.to_numpy()
+    PiC_Yrs = df_temp_PiC.index.to_numpy()
+    df_temp_PiC_trunc = df_temp_PiC.loc[start_trunc:end_trunc]
+    # Get full forcings, and truncated years timeseries
+    temp_Yrs = df_temp_Obs.index.to_numpy()  # Full temperature years
+
+    trunc_Yrs = df_temp_Obs_trunc.index.to_numpy()  # Truncation years
+    forc_Yrs = df_forc.index.to_numpy()  # Full forcing years
 
     # Prepare FaIR parameters for this particular model.
     params_FaIR = df_params[model_choice]
@@ -102,18 +107,18 @@ def GWI_faster(
         # members available from the random subsample.
         # TODO: check the date range when specifying separate truncation years
         # in future versions.
-        forc_var_All = df_forc.loc[:end_trunc, (var, slice(None))]
+        forc_var_All = df_forc.loc[:, (var, slice(None))]
 
         # FaIR won't run without emissions or concentrations, so specify
         # no zero emissions for input.
         emis_FAIR = fair.return_empty_emissions(
             df_to_copy=False,
-            start_year=min(forc_Yrs), end_year=end_trunc, timestep=1,
+            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
             scen_names=ens_list_ERF)
         # Prepare a FaIR-compatible forcing dataframe
         forc_FaIR = fair.return_empty_forcing(
             df_to_copy=False,
-            start_year=min(forc_Yrs), end_year=end_trunc, timestep=1,
+            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
             scen_names=ens_list_ERF)
         for ens in ens_list_ERF:
             forc_FaIR[ens] = forc_var_All[(var, ens)].to_numpy()
@@ -127,26 +132,24 @@ def GWI_faster(
 
     i = 0
     for ens in range(len(ens_list_ERF)):
-        # Cut the full-forcing-length temperatures (that were calculated from
-        # ERF) down to the same length as the reference temperature data
-        # TODO: distinguish between reference temperature range, and the
-        # truncation range.
-        yr_mask = ((forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc))
-        temp_Mod = temp_Mod_array_all_years[yr_mask, :, ens]
+        # Select just the one ensemble member:
+        temp_Mod_array_all_years_ens = temp_Mod_array_all_years[:, :, ens]
 
         # Remove pre-industrial offset before regression if specified.
         if inc_pi_offset:
-            _offset = temp_Mod[(temp_Yrs >= start_pi) &
-                               (temp_Yrs <= end_pi), :
-                               ].mean(axis=0)
-            temp_Mod = temp_Mod - _offset
+            ens_offset = temp_Mod_array_all_years_ens[(forc_Yrs >= start_pi) &
+                                                      (forc_Yrs <= end_pi), :
+                                                      ].mean(axis=0)
+            temp_Mod_array_all_years_ens = (temp_Mod_array_all_years_ens -
+                                            ens_offset)
 
         # Add a constant offset term to the regression if specified.
         if inc_reg_const:
-            temp_Mod = np.append(temp_Mod,
-                                 np.ones((temp_Mod.shape[0], 1)),
-                                 axis=1)
-        n_reg_vars = temp_Mod.shape[1]
+            temp_Mod_array_all_years_ens = np.append(
+                temp_Mod_array_all_years_ens,
+                np.ones((temp_Mod_array_all_years_ens.shape[0], 1)),
+                axis=1)
+        n_reg_vars = temp_Mod_array_all_years_ens.shape[1]
 
         # Prepare arrays to store regression coefficients.
         # Dimensions correspond to:
@@ -163,15 +166,17 @@ def GWI_faster(
         c_i = 0
         # Iterate over the samples of the observed temperature ensemble
         for temp_Obs_Ens in ens_list_Obs:
+            # Select the required reference temperature ensemble timeseries
             temp_Obs_i = df_temp_Obs[temp_Obs_Ens].to_numpy()
-            # Select only the year range for temp_Mod and temp_Obs_i that
-            # corresponds to the regression range.
-            temp_Mod_regress = temp_Mod[(temp_Yrs >= start_regress) &
-                                        (temp_Yrs <= end_regress)]
+            # Select only the year range for temp_Mod_array_all_years_ens and
+            # temp_Obs_i that corresponds to the regression range.
+            temp_Mod_regress_yrs = temp_Mod_array_all_years_ens[
+                                        (forc_Yrs >= start_regress) &
+                                        (forc_Yrs <= end_regress)]
             temp_Obs_i_regress = temp_Obs_i[(temp_Yrs >= start_regress) &
                                             (temp_Yrs <= end_regress)]
             coef_Obs_i = np.linalg.lstsq(
-                temp_Mod_regress, temp_Obs_i_regress, rcond=None)[0]
+                temp_Mod_regress_yrs, temp_Obs_i_regress, rcond=None)[0]
             coef_Obs_Results[:, c_i] = coef_Obs_i
             c_i += 1
 
@@ -179,19 +184,28 @@ def GWI_faster(
         c_j = 0
         # Iterate over the samples of the piControl temperature ensemble
         for temp_PiC_Ens in ens_list_PiC:
+            # Select the required piControl temperature ensemble timeseries
             temp_PiC_j = df_temp_PiC[temp_PiC_Ens].to_numpy()
-            # Select only the year range for temp_Mod and temp_PiC_j that
-            # corresponds to the regression range.
-            temp_Mod_regress = temp_Mod[(temp_Yrs >= start_regress) &
-                                        (temp_Yrs <= end_regress)]
-            temp_PiC_j_regress = temp_PiC_j[(temp_Yrs >= start_regress) &
-                                            (temp_Yrs <= end_regress)]
+            # Select only the year range for temp_Mod_array_all_years_ens and
+            # temp_PiC_j that corresponds to the regression range.
+            temp_Mod_regress_yrs = temp_Mod_array_all_years_ens[
+                                        (forc_Yrs >= start_regress) &
+                                        (forc_Yrs <= end_regress)]
+            temp_PiC_j_regress = temp_PiC_j[(PiC_Yrs >= start_regress) &
+                                            (PiC_Yrs <= end_regress)]
             coef_PiC_j = np.linalg.lstsq(
-                temp_Mod_regress, temp_PiC_j_regress, rcond=None)[0]
+                temp_Mod_regress_yrs, temp_PiC_j_regress, rcond=None)[0]
             coef_PiC_Results[:, c_j] = coef_PiC_j
             c_j += 1
 
         # Combine regression coefficients from observations and piControl
+
+        # Cut the full-length temperatures (that were calculated from ERF) down
+        # to the truncation length.
+        yr_mask = ((forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc))
+        temp_Mod_trunc_yrs_ens = temp_Mod_array_all_years_ens[yr_mask, :]
+
+        # Now combine the coeffieicnts with the truncated model outputs:
         for c_k in range(coef_Obs_Results.shape[1]):
             for c_l in range(coef_PiC_Results.shape[1]):
                 # Regression coefficients
@@ -199,11 +213,11 @@ def GWI_faster(
                             coef_PiC_Results[:, c_l])
 
                 # Attributed warming for each component
-                temp_Att = temp_Mod * coef_Reg
+                temp_Att = temp_Mod_trunc_yrs_ens * coef_Reg
 
                 # Extract T_Obs and T_PiC data for this c_i, c_j combo.
-                temp_Obs_kl = df_temp_Obs[ens_list_Obs[c_k]
-                                          ].to_numpy()
+                temp_Obs_kl = df_temp_Obs_trunc[ens_list_Obs[c_k]
+                                                ].to_numpy()
                 # temp_PiC_kl = df_temp_PiC[ens_list_PiC[c_l]
                 #                           ].to_numpy()
 
@@ -479,21 +493,6 @@ if __name__ == "__main__":
     else:
         start_pi, end_pi = 1850, 1900  # As in IPCC AR6 Ch.3
 
-    # Determine truncation year range for the analysis.
-    # Typically, for the full GWI calculation, we use the entire regressable
-    # range of the HadCRUT observations, which is 1850-current. This could
-    # be taken from the HadCRUT dataframe, but for flexibility, we hard-code
-    # the range here.
-    if '--truncate' in argv_dict:
-        # start_trunc = int(argv_dict['--truncate'].split('-')[0])
-        # end_trunc = int(argv_dict['--truncate'].split('-')[1])
-        print('WARNING: Truncation is not currently implemented.')
-        print('Using full observed temperature range 1850-2023.')
-        start_trunc, end_trunc = 1850, 2023
-        # TODO: Implement optional truncation of the temperature data.
-    else:
-        start_trunc, end_trunc = 1850, 2023  # HadCRUT5 data ends in 2023
-
     # Define the regression year range for the temperature attribution.
     # This is the range over which the regression coefficients are calculated.
     # For the full GWI, the regression range is the same as the length of the
@@ -505,8 +504,28 @@ if __name__ == "__main__":
         start_regress = int(argv_dict['--regress-range'].split('-')[0])
         end_regress = int(argv_dict['--regress-range'].split('-')[1])
     else:
-        # Fallback to using the full range if no command line argument passed.
-        start_regress, end_regress = start_trunc, end_trunc
+        # Fallback to requesting (interactive) input from user. This is safer
+        # than hardcoding a fallback such as 1850-2023
+        regress_input = input('Regression range (start-end): ')
+        start_regress, end_regress = regress_input.split('-')
+
+    # Determine truncation year range for the analysis.
+    # Typically, for the full GWI calculation, we use the entire regressable
+    # range of the HadCRUT observations, which is 1850-current.
+    # Truncation has multiple benefits:
+    # 1. It reduces the memory requirements of the analysis, which is the main
+    #    bottleneck in the analysis.
+    # 2. It allows for a separation between the output dataset and the
+    #    regressed range, which is useful for using GWI to constrain future
+    #    projections (using longer ERF inputs) using a shorter reference
+    #    period for temperatures.
+    if '--truncate' in argv_dict:
+        start_trunc = int(argv_dict['--truncate'].split('-')[0])
+        end_trunc = int(argv_dict['--truncate'].split('-')[1])
+    else:
+        # Fallback to clipping the data to the range of the regression.
+        start_trunc = start_regress
+        end_trunc = end_regress
 
     # Determine the number of samples to take for each source.
     # This is the number of ensemble members to subsample from the available
@@ -548,24 +567,31 @@ if __name__ == "__main__":
     if '--scenario' in argv_dict:
         scenario = argv_dict['--scenario']
     else:
-        # PLACEHOLDER #########################################################
-        # # available scenarios:
-        # available = os.listdir('data/')
-        # scenario = input(f'Scenario (e.g. {available}: ')
-        #######################################################################
-        scenario = 'observed'
-    
+        # available scenarios:
+        available = os.listdir('data/')
+        scenario = input(f'Scenario (e.g. {available}: ')
+
+    # Create directory structure based on the input parameters.
+    output_path = (
+        f'SCENARIO--{scenario}/' +
+        f'VARIABLES--{"-".join(regress_vars)}/' +
+        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
+    )
+
     # Create a folder to store the plots
-    plot_folder = 'plots/'
-    if not os.path.exists(plot_folder):
-        os.makedirs(plot_folder)
+    results_folder = 'results/iterations/'
+    if not os.path.exists(f'{results_folder}{output_path}'):
+        os.makedirs(f'{results_folder}{output_path}')
+    plot_folder = 'plots/iterations/'
+    if not os.path.exists(f'{plot_folder}{output_path}'):
+        os.makedirs(f'{plot_folder}{output_path}')
 
     ###########################################################################
     # READ IN THE DATA ########################################################
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF_CMIP6(regress_vars)
+    df_forc = defs.load_ERF(scenario, regress_vars)
     forc_var_names = sorted(
         df_forc.columns.get_level_values('variable').unique())
     # Obtain the ERF_start and ERF_end from the dataframe.
@@ -585,29 +611,39 @@ if __name__ == "__main__":
               'setting end year to ERF data maximum.')
         end_trunc = forc_Yrs_max
 
+    trunc_Yrs = np.arange(start_trunc, end_trunc+1)
+
     # TEMPERATURE
-    df_temp_Obs = defs.load_HadCRUT(start_pi, end_pi, start_trunc, end_trunc)
+    df_temp_Obs = defs.load_Temp(scenario, start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
-    temp_Yrs_min = temp_Yrs.min()
-    temp_Yrs_max = temp_Yrs.max()
 
     # Check that the regression years are within the temperature data range.
-    if start_regress < temp_Yrs_min:
+    if start_regress < temp_Yrs.min():
         print(
             'Regression start year is before reference temperature data range,'
             ' setting start year to temperature data minimum.')
-        start_regress = temp_Yrs_min
-    if end_regress > temp_Yrs_max:
+        start_regress = temp_Yrs.min()
+    if end_regress > temp_Yrs.max():
         print('Regression end year is after reference temperature data range,'
               ' setting end year to temperature data maximum.')
-        end_regress = temp_Yrs_max
+        end_regress = temp_Yrs.max()
+
+    # Check that the regression years are within the forcing data range
+    if start_regress < forc_Yrs_min:
+        print('Regression start year is before forcing data range,'
+              ' setting start year to forcing data minimum.')
+        start_regress = forc_Yrs_min
+    if end_regress > forc_Yrs_max:
+        print('Regression end year is after forcing data range,'
+              ' setting end year to forcing data maximum.')
+        end_regress = forc_Yrs_max
 
     print('Calculating GWI with the following parameters:')
     print(f'Regressed variables: {regress_vars}')
     print(f'Forcing range: {forc_Yrs_min}-{forc_Yrs_max}')
-    print(f'Reference temperature range: {temp_Yrs_min}-{temp_Yrs_max}')
+    print(f'Reference temperature range: {temp_Yrs.min()}-{temp_Yrs.max()}')
     print(f'Pre-industrial era: {start_pi}-{end_pi}')
     print(f'Truncation range: {start_trunc}-{end_trunc}')
     print(f'Regression range: {start_regress}-{end_regress}')
@@ -620,12 +656,11 @@ if __name__ == "__main__":
 
     # CMIP6 PI-CONTROL
     timeframes = [1, 3, 30]
-    # df_temp_PiC = load_PiC_Stuart(n_yrs)
-    df_temp_PiC = defs.load_PiC_CMIP6(n_yrs, start_pi, end_pi)
+    df_temp_PiC = defs.load_PiC(scenario, n_yrs, start_pi, end_pi)
     df_temp_PiC = defs.filter_PiControl(df_temp_PiC, timeframes)
     df_temp_PiC.set_index(np.arange(n_yrs)+start_trunc, inplace=True)
-    # NOTE: For end_trunc=2022, we get 183 realisations for piControl
-    # NOTE: For end_trunc=2023, we get 181 realisations for piControl
+    # NOTE: For 1850-2022, we get 183 realisations for piControl
+    # NOTE: For 1850-2023, we get 181 realisations for piControl
 
     # Create a very rough estimate of the internal variability for the HadCRUT5
     # best estimate. This is used to roughly compare the piControl internal
@@ -646,7 +681,8 @@ if __name__ == "__main__":
         gr.overall_legend(fig, loc='lower center', ncol=2, nrow=False)
         fig.suptitle(
             'Selected Sample of Internal Variability from CMIP6 PiControl')
-        fig.savefig(f'{plot_folder}0_Selected_CMIP6_Ensembles.png')
+        fig.savefig(f'{plot_folder}{output_path}' +
+                    '0_Selected_CMIP6_Ensembles.png')
 
         # PLOT THE ENSEMBLE ###################################################
         fig = plt.figure(figsize=(15, 10))
@@ -658,7 +694,9 @@ if __name__ == "__main__":
         gr.overall_legend(fig, loc='lower center', ncol=3, nrow=False)
         fig.suptitle(
             'Selected Sample of Internal Variability from CMIP6 pi-control')
-        fig.savefig(f'{plot_folder}1_Distribution_Internal_Variability.png')
+        fig.savefig(f'{plot_folder}{output_path}' +
+                    '1_Distribution_Internal_Variability.png')
+
 
     ###########################################################################
     # CARRY OUT GWI CALCULATION ###############################################
@@ -846,23 +884,6 @@ if __name__ == "__main__":
         f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
         f'DATE-CALCULATED--{iteration_id}'
     )
-    output_path = (
-        f'SCENARIO--{scenario}/' +
-        f'VARIABLES--{"-".join(regress_vars)}/' +
-        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
-    )
-
-    # Create new path for results if it doesn't exist.
-    if not os.path.exists(f'results/iterations/{output_path}'):
-        os.makedirs(f'results/iterations/{output_path}')
-
-    # if not os.path.exists('results/iterations'):
-    #     os.makedirs('results/iterations')
-    # files = os.listdir('results')
-    # csvs = [f for f in files if f.endswith('.csv')]
-    # for csv in csvs:
-    #     os.remove('results/' + csv)
-
 
     # NOTE TO SELF: multidimensional np.percentile() changes the order of
     # the axes, so that the axis along which you took the percentiles is
@@ -876,16 +897,21 @@ if __name__ == "__main__":
         gwi_timeseries_array[sigmas_all.index(sigma), :, vars_list.index(var)]
         for var in vars_list for sigma in sigmas_all
     }
-    df_Results = pd.DataFrame(dict_Results, index=temp_Yrs)
+    df_Results = pd.DataFrame(dict_Results, index=trunc_Yrs)
     df_Results.columns.names = ['variable', 'percentile']
     df_Results.index.name = 'Year'
-    df_Results.to_csv(f'results/iterations/{output_path}' +
+    df_Results.to_csv(f'{results_folder}{output_path}' +
                       f'GWI_results_timeseries_{variation}.csv')
-    
+
     T3 = dt.datetime.now()
     print(f'... took {T3 - T2}')
 
     # HEADLINE RESULTS ########################################################
+    # NOTE: Currently, the headline results are calculated for two periods:
+    # 1. The same years as the most recent IPCC reports (2017, and 2010-2019)
+    # 2. The end of the truncation period, NOT the end of the regressed range.
+    # The preferred range dependes on usage context, and can be changed later.
+
     if headline_toggle:
         print('Calculating headlines')
 
@@ -898,7 +924,7 @@ if __name__ == "__main__":
         print('Calculating SR15-definition temps', end=' ')
 
         for year in [2017, end_trunc]:
-            years_SR15 = ((year-15 <= temp_Yrs) * (temp_Yrs <= year))
+            years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
             # Calculate SR15-definition warming for each var-ens combination
@@ -938,7 +964,7 @@ if __name__ == "__main__":
         # AR6 DEFINITION (DECADE MEAN) ########################################
         print('Calculating AR6-definition temps', end=' ')
         for years in [[2010, 2019], [end_trunc-9, end_trunc]]:
-            recent_years = ((years[0] <= temp_Yrs) * (temp_Yrs <= years[1]))
+            recent_years = ((years[0] <= trunc_Yrs) * (trunc_Yrs <= years[1]))
             temp_Att_Results_AR6 = \
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
             # Obtain statistics
@@ -957,7 +983,7 @@ if __name__ == "__main__":
             dfs.append(df_headlines_i)
 
         df_headlines = pd.concat(dfs, axis=0)
-        df_headlines.to_csv(f'results/iterations/{output_path}' +
+        df_headlines.to_csv(f'{results_folder}{output_path}' +
                             f'GWI_results_headlines_{variation}.csv')
         T5 = dt.datetime.now()
         print(f'... took {T5 - T4}')
@@ -968,7 +994,7 @@ if __name__ == "__main__":
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
             print(f'Calculating AR6-definition warming rate: {year}', end='\r')
-            recent_years = ((year-9 <= temp_Yrs) * (temp_Yrs <= year))
+            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             ten_slice = temp_Att_Results[recent_years, :, :]
 
             # Calculate AR6-definition warming rate for each var-ens
@@ -1000,7 +1026,7 @@ if __name__ == "__main__":
             dfs_rates.append(df_rates_i)
 
         df_rates = pd.concat(dfs_rates, axis=0)
-        df_rates.to_csv(f'results/iterations/{output_path}' +
+        df_rates.to_csv(f'{results_folder}{output_path}' +
                         f'GWI_results_rates_{variation}.csv')
         T7 = dt.datetime.now()
         print('')
