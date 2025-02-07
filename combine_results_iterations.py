@@ -7,6 +7,8 @@ from PIL import Image
 import src.graphing as gr
 import src.definitions as defs
 import json
+import multiprocessing as mp
+import functools
 
 # Get the command line arguments for which iterations to average across.
 # argv format: --ensemble-size=ensemble_size --regressed-years=regressed_years
@@ -93,7 +95,8 @@ def combine_repeats(result_type, scenario, regressed_years, regressed_vars):
     # Remove previously averaged dataset in case it already exists
     iterations_dates = [f.split('_DATE-CALCULATED--')[-1].split('.')[0]
                         for f in iteration_files]
-    print(f'{regressed_vars} {regressed_years} iterations: {iterations_dates}')
+    print(f'{scenario} {regressed_vars} {regressed_years} iterations: ' +
+          f'{iterations_dates}')
 
     for iteration in iteration_files:
 
@@ -290,68 +293,83 @@ for reg_scen in results_files.keys():
 # Plot results ################################################################
 ###############################################################################
 
-df_temp_Obs = defs.load_Temp(scenario=scenario, start_pi=1850, end_pi=1900)
+def single_timeseries(reg_range, scen, reg_vars):
+    """Plot single timeseries plots."""
+    print('Creating single timeseries plots for:',
+          scen, reg_vars, reg_range, end='\r')
+    plot_vars = results_dfs[
+        scen][reg_vars][reg_range].columns.get_level_values(
+            0).unique().to_list()
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
+
+    reg_start = int(reg_range.split('-')[0])
+    reg_end = int(reg_range.split('-')[1])
+    trunc_start = results_dfs[scen][reg_vars][reg_range].index.min()
+    trunc_end = results_dfs[scen][reg_vars][reg_range].index.max()
+
+    gr.gwi_timeseries(
+        ax, df_temp_Obs, None,
+        results_dfs[scen][reg_vars][reg_range].loc[reg_end:, :],
+        plot_vars, var_colours, hatch='x', linestyle='dashed')
+
+    # PLACEHOLDER: 20-year mean sketch
+
+    gr.gwi_timeseries(
+        ax, df_temp_Obs, None,
+        results_dfs[scen][reg_vars][reg_range].loc[
+            reg_start:reg_end, :],
+        plot_vars, var_colours)
+
+    ax.set_ylim(-1, np.ceil(np.max(df_temp_Obs.values) * 2) / 2)
+    ax.set_xlim(trunc_start, trunc_end)
+    gr.overall_legend(fig, 'lower center', 6)
+
+    # Plot a box around the regressed years
+    ax.axvline(int(reg_range.split('-')[1]),
+                color='darkslategray', linestyle='--')
+
+    fig.suptitle(f'Scenario--{scen} Regressed--{reg_vars}_{reg_range}'
+                    + 'Timeseries Plot')
+
+    plot_path = ('plots/aggregated/' +
+                    f'SCENARIO--{scen}/' +
+                    f'VARIABLES--{reg_vars}/' +
+                    f'REGRESSED-YEARS--{reg_range}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path)
+
+    plot_name = (f'{plot_path}/' +
+                    f'Timeseries_Scenario--{scen}_' +
+                    f'Regressed--{reg_vars}_{reg_range}.png')
+    # plot_names.append(plot_name)
+    fig.savefig(plot_name)
+    plt.close(fig)
+    return plot_name
+
 
 for scen in results_dfs.keys():
+    df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1850, end_pi=1900)
     for reg_vars in sorted(results_dfs[scen].keys()):
-        plot_names = []  # Collect plots in anticipation of creating a gif
+        ###################################################################
+        # Plot the timeseries for each iteration ##########################
+        ###################################################################
+
+        # plot_names = []  # Collect plots in anticipation of creating a gif
 
         reg_ranges_all = sorted(list(results_dfs[scen][reg_vars].keys()))
-        for reg_range in reg_ranges_all:
 
-            ###################################################################
-            # Plot the timeseries for each iteration ##########################
-            ###################################################################
-            print('Creating single timeseries plots for:',
-                  scen, reg_vars, reg_range, end='\r')
-            plot_vars = results_dfs[
-                scen][reg_vars][reg_range].columns.get_level_values(
-                    0).unique().to_list()
-
-            fig = plt.figure(figsize=(12, 8))
-            ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
-                                  rowspan=1, colspan=1)
-
-            reg_start = int(reg_range.split('-')[0])
-            reg_end = int(reg_range.split('-')[1])
-            trunc_start = results_dfs[scen][reg_vars][reg_range].index.min()
-            trunc_end = results_dfs[scen][reg_vars][reg_range].index.max()
-
-            gr.gwi_timeseries(
-                ax, df_temp_Obs, None,
-                results_dfs[scen][reg_vars][reg_range].loc[reg_end:, :],
-                plot_vars, var_colours, hatch='x', linestyle='dashed')
-
-            gr.gwi_timeseries(
-                ax, df_temp_Obs, None,
-                results_dfs[scen][reg_vars][reg_range].loc[
-                    reg_start:reg_end, :],
-                plot_vars, var_colours)
-
-            ax.set_ylim(-1, 2)
-            ax.set_xlim(trunc_start, trunc_end)
-            gr.overall_legend(fig, 'lower center', 6)
-
-            # Plot a box around the regressed years
-            ax.axvline(int(reg_range.split('-')[1]),
-                       color='darkslategray', linestyle='--')
-
-            fig.suptitle(f'Scenario--{scen} Regressed--{reg_vars}_{reg_range}'
-                         + 'Timeseries Plot')
-
-            plot_path = ('plots/aggregated/' +
-                         f'SCENARIO--{scen}/' +
-                         f'VARIABLES--{reg_vars}/' +
-                         f'REGRESSED-YEARS--{reg_range}/')
-            if not os.path.exists(plot_path):
-                os.makedirs(plot_path)
-
-            plot_name = (f'{plot_path}/' +
-                         f'Timeseries_Scenario--{scen}_' +
-                         f'Regressed--{reg_vars}_{reg_range}.png')
-            plot_names.append(plot_name)
-            fig.savefig(plot_name)
-            plt.close(fig)
+        # for reg_range in reg_ranges_all:
+        # This code was just the code inside the single_timeseries function
+        # above, separated in order to parallelise to speed up code.
+        with mp.Pool(os.cpu_count()) as p:
+            print('multiprocessing for:', scen, reg_vars)
+            plot_names = p.map(
+                functools.partial(
+                    single_timeseries, scen=scen, reg_vars=reg_vars),
+                reg_ranges_all)
+        
         print('')
         print('All years complete: ', reg_ranges_all)
 
@@ -387,6 +405,7 @@ for scen in results_dfs.keys():
 ###############################################################################
 
 for scen in sorted(results_dfs.keys()):
+    df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1850, end_pi=1900)
     for reg_vars in sorted(results_dfs[scen].keys()):
         # Create a new empty dataframe to store the historical-only results:
         reg_ranges_all = sorted(list(results_dfs[scen][reg_vars].keys()))
@@ -447,7 +466,7 @@ for scen in sorted(results_dfs.keys()):
             plot_vars, var_colours, sigmas=['5', '95', '50'],
             hatch=None, linestyle='solid')
 
-        ax.set_ylim(-1, 2)
+        ax.set_ylim(-1, np.ceil(np.max(df_temp_Obs.values) * 2) / 2)
         ax.set_xlim(smallest_end_year, largest_end_year)
         xticks = list(np.arange(smallest_end_year, largest_end_year + 1, 5))
         xticks.append(largest_end_year)
@@ -467,6 +486,10 @@ for scen in sorted(results_dfs.keys()):
             f'{scen}_{reg_vars}_' +
             f'{min_regressed_range}_to_{max_regressed_range}.png')
         plt.close(fig)
+
+        #######################################################################
+        # Plot the 20-year behaviour of the historical-only dataset
+        # PLACEHOLDER
 
 ###############################################################################
 # Generate the projected warming for final constrained year ###################
@@ -508,7 +531,7 @@ for scen in sorted(results_dfs.keys()):
             ax, None, None, df_constrained,
             plot_vars, var_colours, sigmas=['5', '95', '50'])
 
-        ax.set_ylim(-1, 3)
+        ax.set_ylim(-1, np.ceil(np.max(df_constrained.loc[:, ('Tot', '50')].values) * 2) / 2)
         ax.set_xlim(smallest_end_year, largest_end_year)
         ax.set_ylabel(f'Warming in {constrained_year} ⁰C')
         ax.set_xlabel(f'Regressed years: {start_regress}-<year>')
@@ -716,7 +739,11 @@ for scen in sorted(results_dfs.keys()):
         ax2.set_xticks(years, years)
         # ax2.set_xlim(2019.5, 2023.5)
         ax2.set_xlim(largest_end_year-4+0.5, largest_end_year+0.5)
-        ax2.set_ylim(1.1, 1.5)
+        # ax2.set_ylim(
+        #     np.floor(df_temp_Obs.loc[largest_end_year-4:, :].min().min() * 10) / 10,
+        #     np.ceil(df_temp_Obs.loc[largest_end_year-4:, :].min().min() * 10) / 10
+        #     # 1.1, 1.5
+        #     )
 
         fig.suptitle(
             f'Contributions to the change in {changing_var} warming ' +

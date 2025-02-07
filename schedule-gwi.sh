@@ -1,25 +1,53 @@
 #!/bin/bash
 
+###############################################################################
 ## Build the job index ########################################################
 
-# Create a sequential range for the range of regressed years.
+# Define the GWI method argv inputs.
+
+# Select the date to start the regression range from
+START_REGRESS=1850
+
+# Select the date to end the regression range at. Create a sequential range
+# for the range of regressed years.
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 2010 2023`
+array_values=`seq 1950 2100`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(5 5 5)  # Size of subsampling
+array_samples=(50 50 50)  # Size of subsampling
 
 # Select which variables to regress on.
 # e.g. VARS=GHG,OHF,Nat
 # e.g. VARS=Ant,Nat
 # e.g. VARS=Tot
-VARS=Nat,GHG,OHF
+VARS=GHG,OHF,Nat
 
+# Select which scenario to analyse
+# e.g. SCENARIO=observed
+# e.g. SCENARIO=SMILE_ESM-SSP370
+# e.g. SCENARIO=SMILE_ESM-SSP245
+# e.g. SCENARIO=SMILE_ESM-SSP126
+SCENARIO=SMILE_ESM-SSP370
+
+# Select truncation range
+TRUNCATION=1850-2100
+
+# Select whether to include the rate of change in the regression
+# e.g. INCLUDE_RATE=y
+# e.g. INCLUDE_RATE=n
+INCLUDE_RATE=n
+
+# Select whether to include the headlines in the regression
+# e.g. INCLUDE_HEADLINES=y
+# e.g. INCLUDE_HEADLINES=n
+INCLUDE_HEADLINES=n
+
+###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
 WALLTIME=2:00:00
@@ -56,7 +84,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${VARS}_1850-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=1850-${i} --truncate=1850-2023 --include-rate=n --include-headlines=n --regress-variables=${VARS} --scenario=observed
+python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO}
 EOF
 
 # Submit a single job to slurm.

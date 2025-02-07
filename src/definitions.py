@@ -2,7 +2,7 @@ import os
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
-import functools
+# import functools
 import xarray as xr
 import glob
 from pathlib import Path
@@ -48,6 +48,8 @@ import pymagicc
 def load_ERF(scenario, regress_vars):
     if scenario == 'observed':
         return load_ERF_CMIP6(regress_vars)
+    elif 'SMILE_ESM' in scenario:
+        return load_ERF_SMILE(scenario, regress_vars)
     else:
         raise ValueError('Invalid scenario for ERF data.')
 
@@ -131,9 +133,70 @@ def load_ERF_CMIP6(regress_vars=['GHG', 'OHF', 'Nat']):
     return df_ERF
 
 
+def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
+    """Load the data from John Nicklas for Thorne et al., analyis."""
+
+    # ERF location
+    here = Path(__file__).parent
+    lower_scen = scenario.split('-')[-1].lower()
+    file_ERF = here / f'../data/{scenario}/ERF_ESM1-2-LR_{lower_scen}.csv'
+
+    df_ERF = pd.read_csv(file_ERF
+                         ).rename(columns={'year': 'Year',
+                                           'ERF_anthro': 'Ant',
+                                           'ERF_natural': 'Nat',
+                                           'ERF_other_human': 'OHF',
+                                           'ERF_wmghg': 'GHG'
+                                           }
+                                  ).set_index('Year')
+
+    # Add a second level to the column names ,and set the name of the second
+    # level to 'ensemble'. Make the value of this 'single' for all of the
+    # columns. This keeps the data structure the same as the multi-ensemble
+    # data.
+
+    if sorted(regress_vars) == sorted(['Ant', 'Nat']):
+        # Remove all columns not named 'Ant' or 'Nat':
+        df_ERF = df_ERF[['Ant', 'Nat']]
+    elif sorted(regress_vars) == sorted(['GHG', 'OHF', 'Nat']):
+        df_ERF = df_ERF[['GHG', 'OHF', 'Nat']]
+
+    df_ERF.columns = pd.MultiIndex.from_tuples(
+        [(col, 'single') for col in df_ERF.columns],
+        names=['variable', 'ensemble'])
+
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+
+    # Check whether the regress_vars is the same as the columns of df_ERF
+    check_vars = sorted(regress_vars) == sorted(forc_var_names)
+
+    # If regress_vars and forc_vars are the same, no need to do anything.
+    # If they are not the same, aggregate into requried variables:
+    if check_vars:
+        pass
+
+    elif not check_vars and regress_vars == ['Tot']:
+        # If 'Tot' is the only variable to regress, combine all variables:
+        df_ERF_Tot = df_ERF.loc[:, ('Ant', slice(None))
+                                ].copy().rename(columns={'Ant': 'Tot'})
+        # Group df_ERF by ensemble name, and sum across variable names
+        df_ERF_Tot[:] = df_ERF[['Ant', 'Nat']
+                               ].groupby(level='ensemble', axis=1
+                                         ).sum()
+        df_ERF = df_ERF_Tot
+
+    else:
+        raise ValueError('Invalid combination of variables for this scenario.')
+
+    return df_ERF
+
+
 def load_Temp(scenario, start_pi, end_pi):
     if scenario == 'observed':
         return load_HadCRUT(start_pi, end_pi)
+    elif 'SMILE_ESM' in scenario:
+        return load_Temp_SMILE(scenario, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for temperature data.')
 
@@ -209,10 +272,37 @@ def load_HadCRUT(start_pi, end_pi):
 #     return pd.DataFrame(temp_IV_Group)
 
 
+def load_Temp_SMILE(scenario, start_pi, end_pi):
+    """Load the temperature data from John Nicklas for Thorne et al., analyis."""
+    # Temp location
+    here = Path(__file__).parent
+    lower_scen = scenario.split('-')[-1].lower()
+    file_temp = here / f'../data/{scenario}/ts_ESM1-2-LR_{lower_scen}.csv'
+
+    df_temp = pd.read_csv(file_temp, index_col=0)
+
+    # Rename index to 'Year'
+    df_temp.index.name = 'Year'
+
+    # Find PI offset that is the PI-mean of the median (HadCRUT best estimate)
+    # of the ensemble and substract this from entire ensemble. Importantly,
+    # the same offset is applied to the entire ensemble to maintain accurate
+    # spread of HadCRUT (ie it is wrong to subtract the PI-mean for each
+    # ensemble member from itself).
+    ofst_Obs = df_temp.median(axis=1).loc[
+        (df_temp.index >= start_pi) &
+        (df_temp.index <= end_pi),
+        ].mean(axis=0)
+    df_temp -= ofst_Obs
+
+    return df_temp
+
+
 def load_PiC(scenario, n_yrs, start_pi, end_pi):
     if scenario == 'observed':
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
-
+    elif 'SMILE_ESM' in scenario:
+        return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for piControl data.')
 
