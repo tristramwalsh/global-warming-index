@@ -314,8 +314,6 @@ def single_timeseries(reg_range, scen, reg_vars):
         results_dfs[scen][reg_vars][reg_range].loc[reg_end:, :],
         plot_vars, var_colours, hatch='x', linestyle='dashed')
 
-    # PLACEHOLDER: 20-year mean sketch
-
     gr.gwi_timeseries(
         ax, df_temp_Obs, None,
         results_dfs[scen][reg_vars][reg_range].loc[
@@ -489,7 +487,133 @@ for scen in sorted(results_dfs.keys()):
 
         #######################################################################
         # Plot the 20-year behaviour of the historical-only dataset
-        # PLACEHOLDER
+        print('Plotting 20-year running mean for historical-only dataset')
+
+        fig = plt.figure(figsize=(20, 10))
+        ax1 = plt.subplot2grid(shape=(4, 2), loc=(0, 0), rowspan=3, colspan=1)
+        ax2 = plt.subplot2grid(shape=(4, 2), loc=(3, 0), rowspan=1, colspan=1)
+        ax3 = plt.subplot2grid(shape=(4, 2), loc=(0, 1), rowspan=3, colspan=1)
+        ax4 = plt.subplot2grid(shape=(4, 2), loc=(3, 1), rowspan=1, colspan=1)
+
+        # Recombine the historical-only timeseries with the full dataset
+        # timeseries to create a single dataframe for plotting.
+        df_combined = pd.concat([
+            results_dfs[scen][reg_vars]['HISTORICAL-ONLY'],
+            results_dfs[scen][reg_vars][min_regressed_range].loc[
+                :int(min_regressed_range.split('-')[1])-1]
+            ], axis=0).sort_index()
+
+        # Check whether there are any rows that are duplicates (if overlapping)
+        if df_combined.index.duplicated().any():
+            df_combined = df_combined.drop_duplicates()
+
+        # Plot the historical-only timeseries
+        gr.gwi_timeseries(
+            ax1, df_temp_Obs, None,
+            df_combined,
+            ['Ant', 'Nat', 'Tot'], var_colours, sigmas=['5', '95', '50'],
+            hatch='\\', linestyle='dashed')
+
+        # Calculate the centered 20-year running mean for the historical-only
+        # dataset
+        df_hist_20yr = df_combined.loc[
+            :, ('Tot', '50')].rolling(window=20, center=True).mean()
+        ax1.plot(
+            df_hist_20yr.index,
+            df_hist_20yr,
+            label='Forced 20-year running mean',
+            color='#3e8fb0', lw=2)
+        ax1.set_ylim(-1, np.ceil(np.max(df_temp_Obs.quantile(q=0.95, axis=1).values) * 2) / 2)
+
+        # Calculate the centered 20-year running mean for the observed
+        # temperatures
+        df_temp_Obs_20yr = df_temp_Obs.rolling(
+            window=20, center=True, axis=0).mean()
+        # Plot the 20-year running mean of the observations using a
+        # fill_between for the 5th-95th percentiles and a solid line for
+        # the 50th percentile.
+        ax1.fill_between(
+            df_temp_Obs_20yr.index,
+            df_temp_Obs_20yr.quantile(q=0.05, axis=1),
+            df_temp_Obs_20yr.quantile(q=0.95, axis=1),
+            color='#3e8fb0', alpha=0.1, lw=0)
+        ax1.plot(
+            df_temp_Obs_20yr.index,
+            df_temp_Obs_20yr.quantile(q=0.5, axis=1),
+            label='Observed 20-year running mean',
+            color='black', lw=2)
+        ax1.set_xlim(min(df_temp_Obs.index), max(df_temp_Obs.index))
+
+        ax2.plot(
+            df_temp_Obs_20yr.quantile(q=0.5, axis=1) - df_hist_20yr,
+            color='#3e8fb0'
+        )
+        # ax2.fill_between(
+        #     df_temp_Obs_20yr.index,
+        #     df_temp_Obs_20yr.quantile(q=0.05, axis=1) - df_hist_20yr,
+        #     df_temp_Obs_20yr.quantile(q=0.95, axis=1) - df_hist_20yr,
+        #     alpha=0.2
+        # )
+        ax2.set_ylim(-0.1, 0.1)
+
+        # Plot the full-information timeseries
+        gr.gwi_timeseries(
+            ax3, df_temp_Obs, None,
+            results_dfs[scen][reg_vars][max_regressed_range],
+            ['Ant', 'Nat', 'Tot'], var_colours, sigmas=['5', '95', '50'])
+
+        # Calculate the same type of 20-year mean on the total forced
+        # response in the regressed dataset
+        df_total_20yr = results_dfs[scen][reg_vars][max_regressed_range].loc[
+            :, ('Tot', '50')].rolling(
+                window=20, center=True).mean()
+        ax3.plot(
+            df_total_20yr.index,
+            df_total_20yr,
+            label='Forced 20-year running mean',
+            color='#3e8fb0', lw=2)
+        # ax3.set_ylim(-1, np.ceil(np.max(df_temp_Obs.values) * 2) / 2)
+        ax3.set_ylim(-1, np.ceil(np.max(df_temp_Obs.quantile(q=0.95, axis=1).values) * 2) / 2)
+
+        ax3.fill_between(
+            df_temp_Obs_20yr.index,
+            df_temp_Obs_20yr.quantile(q=0.05, axis=1),
+            df_temp_Obs_20yr.quantile(q=0.95, axis=1),
+            color='black', alpha=0.1, lw=0)
+        ax3.plot(
+            df_temp_Obs_20yr.index,
+            df_temp_Obs_20yr.quantile(q=0.5, axis=1),
+            label='Observed 20-year running mean',
+            color='black', lw=2)
+        ax3.set_xlim(min(df_temp_Obs.index), max(df_temp_Obs.index))
+
+        # ax4.fill_between(
+        #     df_temp_Obs_20yr.index,
+        #     df_temp_Obs_20yr.quantile(q=0.05, axis=1) - df_total_20yr,
+        #     df_temp_Obs_20yr.quantile(q=0.95, axis=1) - df_total_20yr,
+        #     alpha=0.2
+        # )
+        ax4.plot(
+            df_temp_Obs_20yr.quantile(q=0.5, axis=1) - df_total_20yr,
+            color='#3e8fb0'
+        )
+        ax4.set_ylim(-0.1, 0.1)
+
+        fig.suptitle('Sketch of re-creating the 20-year mean')
+        ax1.set_title('Historical-only information')
+        ax3.set_title('Full-time information')
+        gr.overall_legend(fig, 'lower center', 6)
+        fig.tight_layout(
+            rect=[0.02, 0.05, 0.98, 0.95])
+
+        fig.savefig(
+            f'plots/aggregated/SCENARIO--{scen}/VARIABLES--{reg_vars}/' +
+            'Historical_20yr_timeseries_' +
+            f'{scen}_{reg_vars}_' +
+            f'{min_regressed_range}_to_{max_regressed_range}.png')
+
+        plt.close(fig)
+
 
 ###############################################################################
 # Generate the projected warming for final constrained year ###################
