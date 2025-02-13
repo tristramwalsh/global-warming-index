@@ -46,19 +46,20 @@ import pymagicc
 #     return forc_Group
 
 def load_ERF(scenario, regress_vars):
-    if scenario == 'observed':
-        return load_ERF_CMIP6(regress_vars)
+    if 'observed' in scenario:
+        return load_ERF_CMIP6(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
         return load_ERF_SMILE(scenario, regress_vars)
     else:
         raise ValueError('Invalid scenario for ERF data.')
 
 
-def load_ERF_CMIP6(regress_vars=['GHG', 'OHF', 'Nat']):
+def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     """Load the ERFs from Chris."""
     # ERF location
     here = Path(__file__).parent
-    file_ERF = here / '../data/observed/ERF/Chris/ERF_DAMIP_1000_1750-2023.nc'
+    end = scenario.split('-')[-1]
+    file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}.nc'
     # import ERF_file to xarray dataset and convert to pandas dataframe
     df_ERF = xr.open_dataset(file_ERF).to_dataframe()
     # assign the columns the name 'variable'
@@ -193,19 +194,19 @@ def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
 
 
 def load_Temp(scenario, start_pi, end_pi):
-    if scenario == 'observed':
-        return load_HadCRUT(start_pi, end_pi)
+    if 'observed' in scenario:
+        return load_HadCRUT(scenario, start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         return load_Temp_SMILE(scenario, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for temperature data.')
 
 
-def load_HadCRUT(start_pi, end_pi):
+def load_HadCRUT(scenario, start_pi, end_pi):
     """Load HadCRUT5 observations and remove PI baseline."""
     here = Path(__file__).parent
     temp_ens_Path = (
-        '../data/observed/Temp/HadCRUT/' +
+        f'../data/{scenario}/Temp/HadCRUT/' +
         'HadCRUT.5.0.2.0.analysis.ensemble_series.global.annual.csv')
     temp_ens_Path = here / temp_ens_Path
     # read temp_Path into pandas dataframe, rename column 'Time' to 'Year'
@@ -299,7 +300,7 @@ def load_Temp_SMILE(scenario, start_pi, end_pi):
 
 
 def load_PiC(scenario, n_yrs, start_pi, end_pi):
-    if scenario == 'observed':
+    if 'observed' in scenario:
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
@@ -314,7 +315,7 @@ def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
     # downloaded from https://cmip6.science.unimelb.edu.au/results?experiment_id=piControl&normalised=&mip_era=CMIP6&timeseriestype=average-year-mid-year&variable_id=tas&region=World#download
     # (ie a CMIP6 archive for pre-meaned data, saving data/time.)
     here = Path(__file__).parent
-    path_PiC = here / '../data/observed/piControl/CMIP6/**/*.MAG'
+    path_PiC = here / '../data/piControl/CMIP6/**/*.MAG'
     path_PiC = str(path_PiC)
     mag_files = sorted(glob.glob(path_PiC, recursive=True))
     dict_temp = {}
