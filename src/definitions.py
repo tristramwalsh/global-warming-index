@@ -7,6 +7,7 @@ import xarray as xr
 import glob
 from pathlib import Path
 import pymagicc
+import sys
 
 
 ###############################################################################
@@ -50,6 +51,8 @@ def load_ERF(scenario, regress_vars):
         return load_ERF_CMIP6(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
         return load_ERF_SMILE(scenario, regress_vars)
+    elif 'NorESM' in scenario:
+        return load_ERF_NorESM(scenario, regress_vars)
     else:
         raise ValueError('Invalid scenario for ERF data.')
 
@@ -193,11 +196,136 @@ def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     return df_ERF
 
 
+def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
+    """Load the data from John Nicklas for Thorne et al., analyis."""
+
+    here = Path(__file__).parent
+    volc_scen = scenario.split('-')[-1]
+
+    if volc_scen == 'VolcConst':
+        # In this case, the ERF components are all in one file, and there is
+        # only one ensemble member.
+
+        # ERF location
+        here = Path(__file__).parent
+        volc_scen = scenario.split('-')[-1]
+        file_ERF = here / f'../data/{scenario}/ERF_NorESM_rcp45-{volc_scen}.csv'
+
+        df_ERF = pd.read_csv(file_ERF
+                             ).rename(columns={'year': 'Year',
+                                               'ERF_anthro': 'Ant',
+                                               'ERF_natural': 'Nat',
+                                               'ERF_other_human': 'OHF',
+                                               'ERF_wmghg': 'GHG'
+                                               }
+                                      ).set_index('Year')
+        df_ERF.columns = pd.MultiIndex.from_tuples(
+            [(col, 'single') for col in df_ERF.columns],
+            names=['variable', 'ensemble'])
+
+    elif volc_scen == 'Volc':
+        # In this case, there is a single timeseries for the various anthro
+        # components, and a whole ensemble of natural components.
+
+        # ERF location for NATURAL
+        file_ERF_natural = here / f'../data/{scenario}/ERF_natural_NorESM_rcp45-{volc_scen}.csv'
+        df_ERF_natural = pd.read_csv(file_ERF_natural, index_col=0)
+        # Rename index to 'Year'
+        df_ERF_natural.index.name = 'Year'
+        # Add a first level to the column names ,and set the name of the first
+        # level to 'variable'. Make the value of this 'Nat' for all of the
+        # columns. This keeps the data structure the same as the multi-ensemble
+        # data.
+        ens_num = len(df_ERF_natural.columns.to_list())
+        df_ERF_natural.columns = pd.MultiIndex.from_tuples(
+            [('Nat', col) for col in df_ERF_natural.columns],
+            names=['variable', 'ensemble'])
+
+        # There is only a single-level column name at the moment, with just
+        # ensemble numbers. Move this to the second level, and add in the
+        # first level the variable name]
+
+        # ERF location for ANTHRO
+        file_ERF_anthro = here / f'../data/{scenario}/ERF_anthro_NorESM_rcp45-{volc_scen}.csv'
+        df_ERF_anthro = pd.read_csv(file_ERF_anthro
+                             ).rename(columns={'year': 'Year',
+                                               'ERF_anthro': 'Ant',
+                                               'ERF_other_human': 'OHF',
+                                               'ERF_wmghg': 'GHG'
+                                               }
+                                      ).set_index('Year')
+        # At the moment we have a single level column name, with just variable
+        # names. Keep this in the first level, and add a second level with
+        # 'ensemble' as the name, and '1' as the  value:
+        df_ERF_anthro.columns = pd.MultiIndex.from_tuples(
+            [(col, 'single') for col in df_ERF_anthro.columns],
+            names=['variable', 'ensemble'])
+
+        # We currently have (var, 'single') as the column names. We need to
+        # copy this data to a new column, with the same variable name, but with
+        # 'ensemble' as the second level, and '1' as the value. Copy it 60
+        # times, so that the second levels are '0', '2', '3', ..., '59'.
+
+        copies = []
+        for ii in range(ens_num):
+            df_ERF_anthro_repeat = df_ERF_anthro.copy()
+            # Rename the values in the 'ensemble' column to 'ii'
+            df_ERF_anthro_repeat = df_ERF_anthro_repeat.rename(
+                columns={'single': str(ii)}, level=1)
+            copies.append(df_ERF_anthro_repeat)
+        df_ERF_anthro = pd.concat(copies, axis=1)
+
+        # Check that '(GHG, i)' column is the same, regardless, of the number i:
+        # Check that I haven't made a mistake in copying.
+        check_ens = all(
+            [df_ERF_anthro['GHG', str(ens)].equals(df_ERF_anthro['GHG', '0'])
+             for ens in range(ens_num)])
+        if not check_ens:
+            raise ValueError(
+                'Ensemble values are not the same for all variables.')
+
+        # Combine the two dataframes
+        df_ERF = pd.concat([df_ERF_anthro, df_ERF_natural], axis=1)
+
+    if sorted(regress_vars) == sorted(['Ant', 'Nat']):
+        # Remove all columns not named 'Ant' or 'Nat':
+        df_ERF = df_ERF.loc[:, (['Ant', 'Nat'], slice(None))]
+    elif sorted(regress_vars) == sorted(['GHG', 'OHF', 'Nat']):
+        df_ERF = df_ERF.loc[:, (['GHG', 'OHF', 'Nat'], slice(None))]
+
+    # Check whether the regress_vars is the same as the columns of df_ERF
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+    check_vars = sorted(regress_vars) == sorted(forc_var_names)
+
+    # If regress_vars and forc_vars are the same, no need to do anything.
+    # If they are not the same, aggregate into requried variables:
+    if check_vars:
+        pass
+
+    elif not check_vars and regress_vars == ['Tot']:
+        # If 'Tot' is the only variable to regress, combine all variables:
+        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
+                                ].copy().rename(columns={'GHG': 'Tot'})
+        # Group df_ERF by ensemble name, and sum across variable names
+        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
+                            ].groupby(level='ensemble', axis=1
+                                        ).sum()
+        df_ERF = df_ERF_Tot
+
+    else:
+        raise ValueError('Invalid combination of variables for regression.')
+
+    return df_ERF
+
+
 def load_Temp(scenario, start_pi, end_pi):
     if 'observed' in scenario:
         return load_HadCRUT(scenario, start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         return load_Temp_SMILE(scenario, start_pi, end_pi)
+    elif 'NorESM' in scenario:
+        return load_Temp_NorESM(scenario, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for temperature data.')
 
@@ -218,22 +346,7 @@ def load_HadCRUT(scenario, start_pi, end_pi):
                                                    ).filter(regex='Realization'
                                                             )
 
-    # Find PI offset that is the PI-mean of the median (HadCRUT best estimate)
-    # of the ensemble and substract this from entire ensemble. Importantly,
-    # the same offset is applied to the entire ensemble to maintain accurate
-    # spread of HadCRUT (ie it is wrong to subtract the PI-mean for each
-    # ensemble member from itself).
-    ofst_Obs = df_temp_Obs.median(axis=1).loc[
-        (df_temp_Obs.index >= start_pi) &
-        (df_temp_Obs.index <= end_pi),
-        ].mean(axis=0)
-    df_temp_Obs -= ofst_Obs
-
-    # # Filter only years between start_yr and end_yr
-    # df_temp_Obs = df_temp_Obs.loc[
-    #     (df_temp_Obs.index >= start_yr) &
-    #     (df_temp_Obs.index <= end_yr),
-    #     ]
+    df_temp_Obs = preindustrial_baseline(df_temp_Obs, start_pi, end_pi)
 
     return df_temp_Obs
 
@@ -285,16 +398,44 @@ def load_Temp_SMILE(scenario, start_pi, end_pi):
     # Rename index to 'Year'
     df_temp.index.name = 'Year'
 
-    # Find PI offset that is the PI-mean of the median (HadCRUT best estimate)
-    # of the ensemble and substract this from entire ensemble. Importantly,
-    # the same offset is applied to the entire ensemble to maintain accurate
-    # spread of HadCRUT (ie it is wrong to subtract the PI-mean for each
-    # ensemble member from itself).
-    ofst_Obs = df_temp.median(axis=1).loc[
-        (df_temp.index >= start_pi) &
-        (df_temp.index <= end_pi),
-        ].mean(axis=0)
-    df_temp -= ofst_Obs
+    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
+
+    return df_temp
+
+
+def load_Temp_NorESM(scenario, start_pi, end_pi):
+    """Load the temperature data from John Nicklas for Thorne et al., analyis."""
+    # Temp location
+    here = Path(__file__).parent
+    volc_scen = scenario.split('-')[-1]
+    file_temp = here / f'../data/{scenario}/ts_NorESM_rcp45-{volc_scen}.csv'
+
+    df_temp = pd.read_csv(file_temp, index_col=0)
+    # Rename index to 'Year'
+    df_temp.index.name = 'Year'
+
+    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
+
+    return df_temp
+
+
+def preindustrial_baseline(df_temp, start_pi, end_pi):
+    """Remove PI baseline from temperature data."""
+    # Check that start_pi and end_pi are within the range of the data
+
+    if ((start_pi in df_temp.index) and (end_pi in df_temp.index)):
+        # Find PI offset that is the PI-mean of the median (HadCRUT best estimate)
+        # of the ensemble and substract this from entire ensemble. Importantly,
+        # the same offset is applied to the entire ensemble to maintain accurate
+        # spread of HadCRUT (ie it is wrong to subtract the PI-mean for each
+        # ensemble member from itself).
+        ofst_Obs = df_temp.median(axis=1).loc[
+            (df_temp.index >= start_pi) &
+            (df_temp.index <= end_pi),
+            ].mean(axis=0)
+        df_temp -= ofst_Obs
+    else:
+        raise ValueError('PI offsetting period not in temperature data')
 
     return df_temp
 
@@ -303,6 +444,8 @@ def load_PiC(scenario, n_yrs, start_pi, end_pi):
     if 'observed' in scenario:
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
+        return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
+    elif 'NorESM' in scenario:
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for piControl data.')

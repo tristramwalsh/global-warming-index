@@ -3,7 +3,7 @@
 ###############################################################################
 ## Build the job index ########################################################
 
-# Define the GWI method argv inputs.
+# Define the GWI method argv inputs. ##########################################
 
 # Select the date to start the regression range from
 START_REGRESS=1850
@@ -13,38 +13,47 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 1950 2100`
+array_values=`seq 1950 2024`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(50 50 50)  # Size of subsampling
+array_samples=(90 90 90)  # Size of subsampling
+
+# Select the reference period for the temperature datasets
+# e.g. 1850-1900
+# e.g. 1981-2010
+PREINDUSTRIAL_ERA=1850-1900
 
 # Select which variables to regress on.
-# e.g. VARS=GHG,OHF,Nat
-# e.g. VARS=Ant,Nat
-# e.g. VARS=Tot
+# e.g. GHG,OHF,Nat
+# e.g. Ant,Nat
+# e.g. Tot
 VARS=GHG,OHF,Nat
 
 # Select which scenario to analyse
-# e.g. SCENARIO=observed
-# e.g. SCENARIO=SMILE_ESM-SSP370
-# e.g. SCENARIO=SMILE_ESM-SSP245
-# e.g. SCENARIO=SMILE_ESM-SSP126
-SCENARIO=SMILE_ESM-SSP370
+# e.g. observed
+# e.g. SMILE_ESM-SSP370
+# e.g. SMILE_ESM-SSP245
+# e.g. SMILE_ESM-SSP126
+# e.g. observed-2023
+# e.g. observed-2024
+# e.g. NorESM_rcp45-Volc
+# e.g. NorESM_rcp45-VolcConst
+SCENARIO=observed-2024
 
 # Select truncation range
-TRUNCATION=1850-2100
+TRUNCATION=1850-2024
 
 # Select whether to include the rate of change in the regression
-# e.g. INCLUDE_RATE=y
-# e.g. INCLUDE_RATE=n
+# e.g. y
+# e.g. nERF
 INCLUDE_RATE=n
 
 # Select whether to include the headlines in the regression
-# e.g. INCLUDE_HEADLINES=y
-# e.g. INCLUDE_HEADLINES=n
+# e.g. y
+# e.g. n
 INCLUDE_HEADLINES=n
 
 ###############################################################################
@@ -84,7 +93,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${VARS}_1850-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO}
+python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA}
 EOF
 
 # Submit a single job to slurm.

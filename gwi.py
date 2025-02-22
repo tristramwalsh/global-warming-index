@@ -487,7 +487,7 @@ if __name__ == "__main__":
 
     # Define pre-industrial period for temperature offset.
     # The average of this period is used as the offset, as standard in IPCC.
-    if '--pi-control' in argv_dict:
+    if '--preindustrial-era' in argv_dict:
         start_pi = int(argv_dict['--preindustrial-era'].split('-')[0])
         end_pi = int(argv_dict['--preindustrial-era'].split('-')[1])
     else:
@@ -603,13 +603,13 @@ if __name__ == "__main__":
     # TODO: write down how and when the truncation happens (i.e. after the
     # regression).
     if start_trunc < forc_Yrs_min:
-        print('Truncation start year is before ERF data range, '
-              'setting start year to ERF data minimum.')
         start_trunc = forc_Yrs_min
+        print('Truncation start year is before ERF data range, '
+              f'setting start year to ERF data minimum: {start_trunc}')
     if end_trunc > forc_Yrs_max:
-        print('Truncation end year is after ERF data range, '
-              'setting end year to ERF data maximum.')
         end_trunc = forc_Yrs_max
+        print('Truncation end year is after ERF data range, '
+              f'setting end year to ERF data maximum: {end_trunc}')
 
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
@@ -621,24 +621,24 @@ if __name__ == "__main__":
 
     # Check that the regression years are within the temperature data range.
     if start_regress < temp_Yrs.min():
-        print(
-            'Regression start year is before reference temperature data range,'
-            ' setting start year to temperature data minimum.')
         start_regress = temp_Yrs.min()
+        print(
+            'Regression start year is before reference temperature data range, '
+            f'setting start year to temperature data minimum: {start_regress}')
     if end_regress > temp_Yrs.max():
-        print('Regression end year is after reference temperature data range,'
-              ' setting end year to temperature data maximum.')
         end_regress = temp_Yrs.max()
+        print('Regression end year is after reference temperature data range, '
+              f'setting end year to temperature data maximum: {end_regress}')
 
     # Check that the regression years are within the forcing data range
     if start_regress < forc_Yrs_min:
-        print('Regression start year is before forcing data range,'
-              ' setting start year to forcing data minimum.')
         start_regress = forc_Yrs_min
+        print('Regression start year is before forcing data range, '
+              f'setting start year to forcing data minimum: {start_regress}')
     if end_regress > forc_Yrs_max:
-        print('Regression end year is after forcing data range,'
-              ' setting end year to forcing data maximum.')
         end_regress = forc_Yrs_max
+        print('Regression end year is after forcing data range, '
+              f'setting end year to forcing data maximum: {end_regress}')
 
     print('Calculating GWI with the following parameters:')
     print(f'Regressed variables: {regress_vars}')

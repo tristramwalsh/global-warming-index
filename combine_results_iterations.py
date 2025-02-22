@@ -350,6 +350,8 @@ def single_timeseries(reg_range, scen, reg_vars):
 
 for scen in results_dfs.keys():
     df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1850, end_pi=1900)
+    df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1980, end_pi=2010)
+
     for reg_vars in sorted(results_dfs[scen].keys()):
         ###################################################################
         # Plot the timeseries for each iteration ##########################
@@ -405,6 +407,8 @@ for scen in results_dfs.keys():
 
 for scen in sorted(results_dfs.keys()):
     df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1850, end_pi=1900)
+    # df_temp_Obs = defs.load_Temp(scenario=scen, start_pi=1980, end_pi=2010)
+    
     for reg_vars in sorted(results_dfs[scen].keys()):
         # Create a new empty dataframe to store the historical-only results:
         reg_ranges_all = sorted(list(results_dfs[scen][reg_vars].keys()))
