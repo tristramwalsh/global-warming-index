@@ -91,13 +91,14 @@ def combine_repeats(result_type, scenario, regressed_years, regressed_vars):
                               f'VARIABLES--{regressed_vars}/' +
                               f'REGRESSED-YEARS--{regressed_years}/')
         if result_type in f]
+    if len(iteration_files) == 0:
+        print('No iterations found for:',
+              result_type, scenario, regressed_years, regressed_vars)
+        return None, None, None
 
     # Remove previously averaged dataset in case it already exists
     iterations_dates = [f.split('_DATE-CALCULATED--')[-1].split('.')[0]
                         for f in iteration_files]
-    print(f'{scenario} {regressed_vars} {regressed_years} iterations: ' +
-          f'{iterations_dates}')
-
     for iteration in iteration_files:
 
         fname = f'{iterations_folder}/SCENARIO--{scenario}/' + \
