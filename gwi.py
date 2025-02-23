@@ -915,15 +915,26 @@ if __name__ == "__main__":
     if headline_toggle:
         print('Calculating headlines')
 
+        # Define the years for the headline results (including SR1.5 repeats)
+        if ((2017 in trunc_Yrs) and (end_regress != 2017)):
+            # The final condition is to avoid duplicate calculations when
+            # the end_regress is 2017.
+            years_headlines = [2017, end_regress]
+        else:
+            years_headlines = [end_regress]
+
         # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
-        dfs = [df_Results.loc[[2017]], df_Results.loc[[end_trunc]]]
+        # if 2017 in trunc_Yrs:
+        #     dfs = [df_Results.loc[], df_Results.loc[[end_regress]]]
+        # else:
+        #     dfs = [df_Results.loc[[end_regress]]]
+        dfs = [df_Results.loc[[y]] for y in years_headlines]
 
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # Calculate the linear trend of the final 15 years of the timeseries
         # and use this to calculate the present-day warming
         print('Calculating SR15-definition temps', end=' ')
-
-        for year in [2017, end_trunc]:
+        for year in years_headlines:
             years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
@@ -947,9 +958,8 @@ if __name__ == "__main__":
             gwi_headline_array = np.percentile(
                 temp_Att_Results_SR15, sigmas_all, axis=1)
             dict_Results = {
-                (var, sigma):
-                gwi_headline_array[sigmas_all.index(sigma),
-                                   vars_list.index(var)]
+                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                                                 vars_list.index(var)]
                 for var in vars_list for sigma in sigmas_all
             }
             df_headlines_i = pd.DataFrame(
@@ -963,17 +973,24 @@ if __name__ == "__main__":
 
         # AR6 DEFINITION (DECADE MEAN) ########################################
         print('Calculating AR6-definition temps', end=' ')
-        for years in [[2010, 2019], [end_trunc-9, end_trunc]]:
+        if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
+            # The final condition is to avoid duplicate calculations when
+            # the end_regress is 2019.
+            years_headlines = [[2010, 2019], [end_regress-9, end_regress]]
+        else:
+            years_headlines = [[end_regress-9, end_regress]]
+
+        for years in years_headlines:
             recent_years = ((years[0] <= trunc_Yrs) * (trunc_Yrs <= years[1]))
             temp_Att_Results_AR6 = \
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
+
             # Obtain statistics
             gwi_headline_array = np.percentile(
                 temp_Att_Results_AR6, sigmas_all, axis=1)
             dict_Results = {
-                (var, sigma):
-                gwi_headline_array[sigmas_all.index(sigma),
-                                   vars_list.index(var)]
+                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                                                 vars_list.index(var)]
                 for var in vars_list for sigma in sigmas_all
             }
             df_headlines_i = pd.DataFrame(
@@ -982,15 +999,50 @@ if __name__ == "__main__":
             df_headlines_i.index.name = 'Year'
             dfs.append(df_headlines_i)
 
-        df_headlines = pd.concat(dfs, axis=0)
-        df_headlines.to_csv(f'{results_folder}{output_path}' +
-                            f'GWI_results_headlines_{variation}.csv')
         T5 = dt.datetime.now()
         print(f'... took {T5 - T4}')
 
+        # CGWL DEFINITION (20YR MEAN CENTERED WITH PROJECTIONS) ###############
+        # This definition was propsoed in Betts et al., 2023, and is not
+        # currently used in the IPCC/IGCC assessments.
+
+        # Check that we have the years needed for the CGWL definition
+        if ((end_regress-9 in trunc_Yrs) and (end_regress+10 in trunc_Yrs)):
+            print('Calculating CGWL definition temps', end=' ')
+            for years in [[end_regress-9, end_regress+10]]:
+                recent_years = ((years[0] <= trunc_Yrs) *
+                                (trunc_Yrs <= years[1]))
+                temp_Att_Results_CGWL = \
+                    temp_Att_Results[recent_years, :, :].mean(axis=0)
+                # Obtain statistics
+                gwi_headline_array = np.percentile(
+                    temp_Att_Results_CGWL, sigmas_all, axis=1)
+                dict_Results = {
+                    (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                                                     vars_list.index(var)]
+                    for var in vars_list for sigma in sigmas_all
+                }
+                df_headlines_i = pd.DataFrame(
+                    dict_Results, index=[
+                        f"{'-'.join([str(y) for y in years])} (CGWL definition)"
+                    ])
+                df_headlines_i.columns.names = ['variable', 'percentile']
+                df_headlines_i.index.name = 'Year'
+                dfs.append(df_headlines_i)
+        else:
+            print('CGWL definition skipped; required number of projected' +
+                  'years not available.')
+
+        T6 = dt.datetime.now()
+        print(f'... took {T6 - T5}')
+
+        df_headlines = pd.concat(dfs, axis=0)
+        df_headlines.to_csv(f'{results_folder}{output_path}' +
+                            f'GWI_results_headlines_{variation}.csv')
+
     # RATE: AR6 DEFINITION
     if rate_toggle:
-        T6 = dt.datetime.now()
+        T7 = dt.datetime.now()
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
             print(f'Calculating AR6-definition warming rate: {year}', end='\r')
@@ -1028,6 +1080,6 @@ if __name__ == "__main__":
         df_rates = pd.concat(dfs_rates, axis=0)
         df_rates.to_csv(f'{results_folder}{output_path}' +
                         f'GWI_results_rates_{variation}.csv')
-        T7 = dt.datetime.now()
+        T8 = dt.datetime.now()
         print('')
-        print(f'... took {T7 - T6}')
+        print(f'... took {T8 - T7}')

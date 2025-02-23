@@ -435,7 +435,8 @@ def preindustrial_baseline(df_temp, start_pi, end_pi):
             ].mean(axis=0)
         df_temp -= ofst_Obs
     else:
-        raise ValueError('PI offsetting period not in temperature data')
+        print(f'{start_pi} and {end_pi} not in {df_temp.index}')
+        raise ValueError('PI offsetting period not in temperature data.')
 
     return df_temp
 

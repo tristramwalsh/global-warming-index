@@ -214,6 +214,7 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                     yerr=(err_neg, err_pos),
                     fmt='o', color=plot_cols['Obs'], ms=2.5, lw=1,
                     label=labels*'Reference Temp: HadCRUT5')
+    # Plot the PiControl ensemble
     if df_temp_PiC is not None:
         if len(sigmas) > 1:
             for s in range(len(sigmas)//2):
@@ -227,30 +228,37 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                 color=plot_cols['PiC'], alpha=line_alpha,
                 label=labels*'CMIP6 piControl')
 
-    for s in range(max(len(sigmas)//2, 1)):  # max to enable 50% only
-        # Plot the GWI timeseries
-        for var in plot_vars:
+    # Plot the GWI timeseries
+    if df_Results_ts is not None:
+        for s in range(max(len(sigmas)//2, 1)):  # max to enable 50% only
+            # Plot the GWI timeseries
+            for var in plot_vars:
 
-            # Because ROF (Gillett) method has different percentile results
-            # available for different variables (ie Tot only has 50th), check
-            # for each variable first whether to plot plume.
-            var_sigmas = df_Results_ts.iloc[\
-                :, df_Results_ts.columns.get_level_values('variable') == var
-                ].columns.get_level_values('percentile').unique()
-            if len(var_sigmas) > 1:
-                ax.fill_between(
-                    df_Results_ts.index,
-                    df_Results_ts.loc[:, (var, sigmas[s])].values,
-                    df_Results_ts.loc[:, (var, sigmas[-(s+2)])].values,
-                    color=plot_cols[var], alpha=fill_alpha, linewidth=0.0,
-                    hatch=hatch, linestyle=linestyle)
-            ax.plot(df_Results_ts.index,
-                    df_Results_ts.loc[:, (var, sigmas[-1])].values,
-                    color=plot_cols[var], alpha=line_alpha, label=labels*var,
-                    linestyle=linestyle)
+                # Because ROF (Gillett) method has different percentile results
+                # available for different variables (ie Tot only has 50th), check
+                # for each variable first whether to plot plume.
+                var_sigmas = df_Results_ts.iloc[\
+                    :, df_Results_ts.columns.get_level_values('variable') == var
+                    ].columns.get_level_values('percentile').unique()
+                if len(var_sigmas) > 1:
+                    ax.fill_between(
+                        df_Results_ts.index,
+                        df_Results_ts.loc[:, (var, sigmas[s])].values,
+                        df_Results_ts.loc[:, (var, sigmas[-(s+2)])].values,
+                        color=plot_cols[var], alpha=fill_alpha, linewidth=0.0,
+                        hatch=hatch, linestyle=linestyle)
+                ax.plot(df_Results_ts.index,
+                        df_Results_ts.loc[:, (var, sigmas[-1])].values,
+                        color=plot_cols[var], alpha=line_alpha, label=labels*var,
+                        linestyle=linestyle)
 
-    ax.set_xticks([1850, 1900, 1950, 2000, df_Results_ts.index[-1]],
-                  [1850, 1900, 1950, 2000, df_Results_ts.index[-1]])
+    if df_Results_ts is not None:
+        end_tick = df_Results_ts.index[-1]
+    elif df_temp_Obs is not None:
+        end_tick = df_temp_Obs.index[-1]
+
+    ax.set_xticks([1850, 1900, 1950, 2000, end_tick],
+                  [1850, 1900, 1950, 2000, end_tick])
 
 
 def gwi_residuals(ax, df_Results_ts):
