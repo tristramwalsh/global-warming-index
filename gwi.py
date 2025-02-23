@@ -571,9 +571,19 @@ if __name__ == "__main__":
         available = os.listdir('data/')
         scenario = input(f'Scenario (e.g. {available}: ')
 
+    # Specify the subset of the scenario's ensemble.
+    # By default, use the entire ensemble of forcings and temperatures.
+    # Optionally specify a specific member, e.g. as required for NorESM Volc
+    # scenarios for Thorne et al., 2025
+    if '--specify-ensemble-member' in argv_dict:
+        ensemble_members = argv_dict['--specify-ensemble-member']
+    else:
+        ensemble_members = 'all'
+
     # Create directory structure based on the input parameters.
     output_path = (
         f'SCENARIO--{scenario}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members}/' +
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
@@ -591,13 +601,15 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF(scenario, regress_vars)
+    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members)
     forc_var_names = sorted(
         df_forc.columns.get_level_values('variable').unique())
     # Obtain the ERF_start and ERF_end from the dataframe.
     forc_Yrs = np.array(df_forc.index)
     forc_Yrs_min = forc_Yrs.min()
     forc_Yrs_max = forc_Yrs.max()
+
+    print(df_forc)
 
     # Check that the truncation years are within the ERF data range.
     # TODO: write down how and when the truncation happens (i.e. after the
@@ -614,7 +626,7 @@ if __name__ == "__main__":
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
     # TEMPERATURE
-    df_temp_Obs = defs.load_Temp(scenario, start_pi, end_pi)
+    df_temp_Obs = defs.load_Temp(scenario, ensemble_members, start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
@@ -746,11 +758,14 @@ if __name__ == "__main__":
     # and averaging the resulting timeseries - see combine_results.py.
 
     # 1. Select random samples of the forcing data
-    print(f'Forcing ensemble all: {len(df_forc.columns.levels[1])}')
+    print(f'Forcing ensemble all: {len(df_forc.columns.get_level_values("ensemble").unique())}')
+    print(f'Forcing ensemble all: {df_forc.columns.get_level_values("ensemble").unique()}')
+
     # Select a random subset of the ensemble names from the forcing data.
     forc_sample = np.random.choice(
-        df_forc.columns.levels[1],
-        min(samples, len(df_forc.columns.levels[1])),
+        df_forc.columns.get_level_values("ensemble").unique(),
+        min(samples,
+            len(df_forc.columns.get_level_values("ensemble").unique())),
         replace=False)
     # print('forc_sample:', forc_sample)
     # select all variables for first column level, and forc_sample for
@@ -787,7 +802,7 @@ if __name__ == "__main__":
 
     # Print the total available ensemble size
     _n_all = (
-        len(df_forc.columns.levels[1].unique()) *
+        len(df_forc.columns.get_level_values("ensemble").unique()) *
         len(CMIP6_param_df.columns.levels[0].unique()) *
         df_temp_Obs.shape[1] *
         df_temp_PiC.shape[1]

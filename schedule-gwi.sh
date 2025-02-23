@@ -13,7 +13,7 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 1950 2024`
+array_values=`seq 1950 2023`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
@@ -41,10 +41,10 @@ VARS=GHG,OHF,Nat
 # e.g. observed-2024
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
-SCENARIO=observed-2024
+SCENARIO=observed-2023
 
 # Select truncation range
-TRUNCATION=1850-2024
+TRUNCATION=1850-2023
 
 # Select whether to include the rate of change in the regression
 # e.g. y
@@ -54,13 +54,20 @@ INCLUDE_RATE=n
 # Select whether to include the headlines in the regression
 # e.g. y
 # e.g. n
-INCLUDE_HEADLINES=n
+INCLUDE_HEADLINES=y
+
+# Select which ensemble members use from the scenario ERF/Temp files
+# e.g. all
+# e.g. 1
+SPECIFY_ENSEMBLE_MEMBERS=all
+# array_ensembles=`seq 0 59`
+
 
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
 WALLTIME=2:00:00
-SIM_NAME=gwi-hist
+SIM_NAME=gwi
 SIM_CPUS=28
 SLURM_FILE_NAME=${SIM_NAME}_1850-
 LOG_DIR=slurm_logs
@@ -74,6 +81,11 @@ do
 
 for i in $array_values
 do
+
+# For the single ensemble member selection runs
+# for k in $array_ensembles
+# do
+
 echo $count
 cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #!/bin/bash
@@ -88,12 +100,12 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --mem-per-cpu=8192
 
 ## Name the job and queue it
-#SBATCH --job-name=${SIM_NAME}_1850-${i}_${j}_${count}
+#SBATCH --job-name=${SIM_NAME}_${SCENARIO}_1850-${i}_${j}_${k}_${count}
 
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${VARS}_1850-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA}
+python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
 EOF
 
 # Submit a single job to slurm.
@@ -104,6 +116,9 @@ sbatch ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
 rm -rf ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
 
 done
+
+# For the single ensemble member selection runs
+# done
 
 # Increment the counter that keeps track of multiple runs at the same sample
 # size. i.e. for each member of array_samples, this counter will increment.

@@ -13,48 +13,39 @@ import sys
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
-# def load_ERF_Old(end_yr):
-#     """Load the ERFs from Stuart's ERF datasets."""
-#     here = Path(__file__).parent
-#     forc_Path = here / '../data/ERF Samples/Stuart/'
-#     # list_ERF = ['_'.join(file.split('_')[1:-1])
-#     #             for file in os.listdir(forc_Path)
-#     #             if '.csv' in file]
-#     forc_Group = {
-#                 #   'Ant': {'Consists': ['ant'], 'Colour': 'green'},
-#                 'Nat': {'Consists': ['nat'],
-#                         'Colour': 'green'},
-#                 'GHG': {'Consists': ['co2', 'ch4', 'n2o', 'other_wmghg'],
-#                         'Colour': 'orange'},
-#                 'OHF': {'Consists': ['ari', 'aci', 'bc_on_snow', 'contrails',
-#                                      'o3_tropospheric', 'o3_stratospheric',
-#                                      'h2o_stratospheric', 'land_use'],
-#                         'Colour': 'blue'}
-#                 }
-
-#     for grouping in forc_Group:
-#         list_df = []
-#         for element in forc_Group[grouping]['Consists']:
-#             _df = pd.read_csv(
-#                 forc_Path + f'rf_{element}_200samples.csv',
-#                 skiprows=[1]
-#                             ).rename(columns={'Unnamed: 0': 'Year'}
-#                             ).set_index('Year')
-#             list_df.append(_df.loc[_df.index <= end_yr])
-
-#         forc_Group[grouping]['df'] = functools.reduce(lambda x, y: x.add(y),
-#                                                       list_df)
-#     return forc_Group
-
-def load_ERF(scenario, regress_vars):
+def load_ERF(scenario, regress_vars, ensemble_members):
     if 'observed' in scenario:
-        return load_ERF_CMIP6(scenario, regress_vars)
+        df_ERF = load_ERF_CMIP6(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
-        return load_ERF_SMILE(scenario, regress_vars)
+        df_ERF = load_ERF_SMILE(scenario, regress_vars)
     elif 'NorESM' in scenario:
-        return load_ERF_NorESM(scenario, regress_vars)
+        df_ERF = load_ERF_NorESM(scenario, regress_vars)
     else:
         raise ValueError('Invalid scenario for ERF data.')
+
+    # Select vars:
+    df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+
+    available_ens = df_ERF.columns.get_level_values('ensemble').unique()
+
+    # Select ensemble members:
+    if ensemble_members == 'all':
+        ens_mems = slice(None)
+    elif ((len(available_ens) == 1) and (ensemble_members != 'all')):
+        # This is for SMILE_ESM scenarios that have multiple temperatures for
+        # a single input forcing
+        ens_mems = available_ens[0]
+    elif ((len(available_ens) > 1) and (ensemble_members in available_ens)):
+        # This is for NorESM scenarios that have multiple temperature
+        # timeseries and multiple forcing timeseries, but a 1-1 correspondance
+        # between the single ensemble number in the forcing and temperature. 
+        ens_mems = ensemble_members
+    else:
+        print(f'Invalid ensemble members {ensemble_members} for ensemble:'
+              + f'{df_ERF.columns.get_level_values("ensemble").unique()}')
+        raise ValueError('Invalid ensemble member {ensemble_member} for data.')
+
+    return df_ERF.loc[:, (slice(None), ens_mems)]
 
 
 def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
@@ -319,15 +310,30 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     return df_ERF
 
 
-def load_Temp(scenario, start_pi, end_pi):
+def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     if 'observed' in scenario:
-        return load_HadCRUT(scenario, start_pi, end_pi)
+        df_temp = load_HadCRUT(scenario, start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
-        return load_Temp_SMILE(scenario, start_pi, end_pi)
+        df_temp = load_Temp_SMILE(scenario, start_pi, end_pi)
     elif 'NorESM' in scenario:
-        return load_Temp_NorESM(scenario, start_pi, end_pi)
+        df_temp = load_Temp_NorESM(scenario, start_pi, end_pi)
     else:
         raise ValueError('Invalid scenario for temperature data.')
+
+    # Select ensemble members:
+    if ensemble_members == 'all':
+        df_temp = df_temp
+    elif ensemble_members in df_temp.columns.to_list():
+        df_temp = df_temp[[ensemble_members]]
+    else:
+        print(f'Invalid ensemble members {ensemble_members} for ensemble:'
+              + f'{df_temp.columns.to_list()}')
+        raise ValueError('Invalid ensemble member {ensemble_member} for data.')
+
+    # Remove pre-industrial baseline from temperature data
+    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
+
+    return df_temp
 
 
 def load_HadCRUT(scenario, start_pi, end_pi):
@@ -345,8 +351,6 @@ def load_HadCRUT(scenario, start_pi, end_pi):
                                        ).set_index('Year'
                                                    ).filter(regex='Realization'
                                                             )
-
-    df_temp_Obs = preindustrial_baseline(df_temp_Obs, start_pi, end_pi)
 
     return df_temp_Obs
 
@@ -398,8 +402,6 @@ def load_Temp_SMILE(scenario, start_pi, end_pi):
     # Rename index to 'Year'
     df_temp.index.name = 'Year'
 
-    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
-
     return df_temp
 
 
@@ -413,8 +415,6 @@ def load_Temp_NorESM(scenario, start_pi, end_pi):
     df_temp = pd.read_csv(file_temp, index_col=0)
     # Rename index to 'Year'
     df_temp.index.name = 'Year'
-
-    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
 
     return df_temp
 
