@@ -13,13 +13,13 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 1950 2023`
+array_values=`seq 2010 2024`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(90 90 90)  # Size of subsampling
+array_samples=(20 20 20)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -39,12 +39,13 @@ VARS=GHG,OHF,Nat
 # e.g. SMILE_ESM-SSP126
 # e.g. observed-2023
 # e.g. observed-2024
+# e.g. observed-SSP119
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
-SCENARIO=observed-2023
+SCENARIO=observed-SSP585
 
 # Select truncation range
-TRUNCATION=1850-2023
+TRUNCATION=1850-2050
 
 # Select whether to include the rate of change in the regression
 # e.g. y

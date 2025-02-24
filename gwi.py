@@ -252,8 +252,15 @@ def GWI_faster(
 
                 # RESIDUAL WARMING
                 if 'Res' in extra_vars:
-                    temp_Att_Results[:, -1, i] = (temp_Obs_kl - temp_Tot)
-
+                    # the len() check catches cases where ERFs are longer than
+                    # temperature at the later end of the timeseries which
+                    # can happen when the truncation end is set to a later date
+                    # then the end of the observations. 
+                    temp_Att_Results[:len(temp_Obs_kl), -1, i] = (temp_Obs_kl - temp_Tot[:len(temp_Obs_kl)])
+                    # This next line replaces the empty numpy values from when
+                    # temp_Att_Results is crated with nans. (Empty numpy values
+                    # are random, which could be misleading in the output.)
+                    temp_Att_Results[len(temp_Obs_kl):, -1, i] = np.nan
                 # ANTROPOGENIC WARMING
                 if 'Ant' in extra_vars:
                     temp_Ant = (temp_Att[:, var_list_ERF.index('GHG')] +
@@ -609,8 +616,6 @@ if __name__ == "__main__":
     forc_Yrs_min = forc_Yrs.min()
     forc_Yrs_max = forc_Yrs.max()
 
-    print(df_forc)
-
     # Check that the truncation years are within the ERF data range.
     # TODO: write down how and when the truncation happens (i.e. after the
     # regression).
@@ -758,9 +763,8 @@ if __name__ == "__main__":
     # and averaging the resulting timeseries - see combine_results.py.
 
     # 1. Select random samples of the forcing data
-    print(f'Forcing ensemble all: {len(df_forc.columns.get_level_values("ensemble").unique())}')
-    print(f'Forcing ensemble all: {df_forc.columns.get_level_values("ensemble").unique()}')
-
+    print(f'Forcing ensemble all: ' +
+          f'{len(df_forc.columns.get_level_values("ensemble").unique())}')
     # Select a random subset of the ensemble names from the forcing data.
     forc_sample = np.random.choice(
         df_forc.columns.get_level_values("ensemble").unique(),

@@ -14,8 +14,10 @@ import sys
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
 def load_ERF(scenario, regress_vars, ensemble_members):
-    if 'observed' in scenario:
+    if 'observed-20' in scenario:
         df_ERF = load_ERF_CMIP6(scenario, regress_vars)
+    elif 'observed-SSP' in scenario:
+        df_ERF = load_ERF_SSP(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
         df_ERF = load_ERF_SMILE(scenario, regress_vars)
     elif 'NorESM' in scenario:
@@ -310,9 +312,77 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     return df_ERF
 
 
+def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
+    """Load observed ERF with SSP extensions from Chris Smith."""
+    # ERF location
+    here = Path(__file__).parent
+    scen = scenario.split('-')[-1]
+    file_ERF = here / f'../data/observed_SSP-extension/ERF/ssp_forcing_fair2.1.3_cal1.4.5.nc'
+    # import ERF_file to xarray dataset and convert to pandas dataframe
+    df_ERF = xr.open_dataset(file_ERF).to_dataframe()
+    # Rename the 'config' column in the index to be 'ensemble'
+    df_ERF.index.names = ['year', 'scenario', 'ensemble']
+    # assign the columns the name 'variable'
+    df_ERF.columns.names = ['variable']
+    # Move the ensemble column from the index to the columns
+    df_ERF = df_ERF.unstack(level=2)
+    # Change the values of the index 'year' to be rounded down (ie. remove 0.5)
+    df_ERF.index = df_ERF.index.set_levels(
+        df_ERF.index.levels[0].astype(int), level=0)
+
+    # Select the scenario
+    df_ERF = df_ERF.loc[(slice(None), scen.lower()), :]
+    # Drop the scenario level from the index
+    df_ERF.index = df_ERF.index.droplevel(1)
+
+    # rename the variable columns
+    df_ERF = df_ERF.rename(columns={'ghg': 'GHG',
+                                    'natural': 'Nat',
+                                    'anthro': 'Ant',
+                                    'total': 'Tot'})
+
+    # Add 'OHF' variable as the sum of 'aerosol', and 'other':
+    df_ERF_OHF = df_ERF[['aerosol', 'other']].groupby(level='ensemble', axis=1
+                                                      ).sum()
+    # Add a new level to the columns, with the variable name 'OHF'
+    df_ERF_OHF.columns = pd.MultiIndex.from_product(
+        [['OHF'], df_ERF_OHF.columns])
+    df_ERF = pd.concat([df_ERF, df_ERF_OHF], axis=1)
+
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+
+    # Check whether the regress_vars are within the columns of df_ERF
+    check_vars = set(regress_vars).issubset(forc_var_names)
+    if check_vars:
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+    else:
+        raise ValueError('Invalid combination of variables for regression.')
+
+    # Check that the ensemble names are the same for all variables.
+    dict_ensemble_names = {}
+    for var in regress_vars:
+        forc_subset = df_ERF.loc[:, (var, slice(None))]
+        forc_ens_names = sorted(
+            list(forc_subset.columns.get_level_values("ensemble").unique()))
+        dict_ensemble_names[var] = forc_ens_names
+
+    check_ens = all(
+        [dict_ensemble_names[var] == dict_ensemble_names[regress_vars[0]]
+         for var in regress_vars]
+         )
+
+    if not check_ens:
+        raise ValueError('Ensemble names are not the same for all variables.')
+
+    return df_ERF
+
+
 def load_Temp(scenario, ensemble_members, start_pi, end_pi):
-    if 'observed' in scenario:
+    if 'observed-20' in scenario:
         df_temp = load_HadCRUT(scenario, start_pi, end_pi)
+    elif 'observed-SSP' in scenario:
+        df_temp = load_HadCRUT('observed-2024', start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         df_temp = load_Temp_SMILE(scenario, start_pi, end_pi)
     elif 'NorESM' in scenario:

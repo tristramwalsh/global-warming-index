@@ -937,6 +937,9 @@ for scen in sorted(results_dfs.keys()):
     ###############################################################################
     # Generate timeseries showing source of changes in GWI value each year ########
     ###############################################################################
+            # TODO: This whole multi-plot figure needs fixing, revising,
+            # sorting, etc
+
             # From year Y to year Y+1, you have contributions from:
             # 1. the change in temp in year Y in the old dataset to year Y in the
             # new dataset
@@ -1000,8 +1003,8 @@ for scen in sorted(results_dfs.keys()):
 
             # Plot the 
             ax1.fill_between(
-                df_delta_additional_forcing_year.index,
-                # df_hist.loc[smallest_end_year:, ('Res', '5')].index,
+                # df_delta_additional_forcing_year.index,
+                df_hist.loc[smallest_end_year:, ('Res', '5')].index,
                 df_hist.loc[smallest_end_year:, ('Res', '5')].values,
                 df_hist.loc[smallest_end_year:, ('Res', '95')].values,
                 color='seagreen', alpha=0.1, lw=0)
@@ -1018,8 +1021,8 @@ for scen in sorted(results_dfs.keys()):
                 df_delta_additional_forcing_year.loc[:, (changing_var, '95')].values,
                 color='indianred', alpha=0.3, lw=0)
             ax1.plot(
-                df_delta_additional_forcing_year.index,
-                # df_hist.loc[smallest_end_year:, ('Res', '50')].index,
+                # df_delta_additional_forcing_year.index,
+                df_hist.loc[smallest_end_year:, ('Res', '50')].index,
                 df_hist.loc[smallest_end_year:, ('Res', '50')].values,
                 label='Residual (internal variability) in year Y+1',
                 color='seagreen', ls='dashed', alpha=line_alpha)
