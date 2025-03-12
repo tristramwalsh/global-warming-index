@@ -785,36 +785,38 @@ for scen in sorted(results_dfs.keys()):
                 'AR6': '#EE8679',
                 'CGWL': '#A88BFA'
             }
+            line_style = {
+                'Tot': 'solid',
+                'Ant': 'dashed',
+                'Nat': 'dotted'
+            }
 
             for ax in [ax1, ax3]:
                 gr.gwi_timeseries(
                     ax, df_temp_Obs, None, None, None,
                     var_colours, sigmas=['5', '95', '50'])
-                # Plot the centered 20-year rolling window on the 50th percentile Obs
-                df_temp_Obs_20yr = df_temp_Obs.quantile(q=0.5, axis=1).rolling(
-                    window=20, center=True, axis=0).mean()
-                ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
-                        label='Obs 20-year running mean',
-                        color='black'
-                        )
+
+            # Plot the centered 20-year rolling window on the 50th percentile Obs
+            df_temp_Obs_20yr = df_temp_Obs.quantile(q=0.5, axis=1).rolling(
+                window=20, center=True, axis=0).mean()
 
             for headline in headlines:
-                for vv in ['Tot', 'Ant']:
+                for vv in ['Tot', 'Ant', 'Nat']:
                     # Plot the historical only timeseries
                     ax1.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
                              results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
                              label=f'{headline}-{vv}',
-                             linestyle=('solid' if vv == 'Tot' else 'dashed'),
+                             linestyle=line_style[vv],
                              color=headline_colours[headline]
                              )
-                    ax2.plot(
-                        (results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
-                         - df_temp_Obs_20yr),
-                        label=f'{headline}-{vv}',
-                        linestyle=('solid' if vv == 'Tot' else 'dashed'),
-                        color=headline_colours[headline]
-                    )
-                    ax2.hlines(0, smallest_end_year, largest_end_year, color='black')
+                    if vv != 'Nat':
+                        ax2.plot(
+                            (results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
+                            - df_temp_Obs_20yr),
+                            label=f'{headline}-{vv}',
+                            linestyle=line_style[vv],
+                            color=headline_colours[headline]
+                        )
 
                     # Calculate the full-information timeseries for the headlines
 
@@ -833,16 +835,31 @@ for scen in sorted(results_dfs.keys()):
 
                     ax3.plot(df_fullinfo_defs.index, df_fullinfo_defs,
                              label=f'{headline}-{vv}',
-                             linestyle=('solid' if vv == 'Tot' else 'dashed'),
+                             linestyle=line_style[vv],
                              color=headline_colours[headline]
                              )
-                    ax4.plot(
-                        (df_fullinfo_defs - df_temp_Obs_20yr),
-                        label=f'{headline}-{vv}',
-                        linestyle=('solid' if vv == 'Tot' else 'dashed'),
-                        color=headline_colours[headline]
-                    )
-                    ax4.hlines(0, smallest_end_year, largest_end_year, color='black')
+                    if vv != 'Nat':
+                        ax4.plot(
+                            (df_fullinfo_defs - df_temp_Obs_20yr),
+                            label=f'{headline}-{vv}',
+                            linestyle=line_style[vv],
+                            color=headline_colours[headline]
+                        )
+
+            # Plotting 20-year running means on observations moved to the
+            # end to sort ordering in the legend to look nicer.
+            for ax in [ax1, ax3]:
+                # Plot the Obs 20-year running mean
+                ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
+                        label='Obs 20-year running mean',
+                        color='black'
+                        )
+            for ax in [ax2, ax4]:
+                # Plot the Obs 20-year running mean
+                ax.plot((df_temp_Obs_20yr - df_temp_Obs_20yr),
+                        label='Obs 20-year running mean',
+                        color='black'
+                        )
 
             # Slice the df_temp_Obs using the smallest and largest end years
             min_y = np.floor(np.min(df_temp_Obs.loc[smallest_end_year:largest_end_year].values) * 2) / 2
