@@ -43,7 +43,7 @@ for scenario in scenarios:
     # Check if the file exists before copying
     plot_dir = base_dir.replace('results', 'plots')
     fig = [f for f in os.listdir(plot_dir)
-           if f.endswith('.png') and 'headlines' in f
+           if f.endswith('.png') and 'Historical_and_full_headlines' in f
            ][0]
     fig_file = plot_dir + fig
     os.system(f'cp {fig_file} Thorne2025/{fig}')

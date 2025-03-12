@@ -883,11 +883,55 @@ for scen in sorted(results_dfs.keys()):
             fig.savefig(f'plots/aggregated/SCENARIO--{scen}/' +
                         f'ENSEMBLE-MEMBER--{ens}/' +
                         f'VARIABLES--{reg_vars}/' +
-                        'Historical_only_headlines_' +
+                        'Historical_and_full_headlines_' +
                         f'{scen}_{ens}_{reg_vars}_' +
                         f'{min_regressed_range}_to_{max_regressed_range}.png')
 
             plt.close(fig)
+
+            # Create one-off figure for Thorne et al paper
+            fig = plt.figure(figsize=(12,8))
+            ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0))
+
+            gr.gwi_timeseries(
+                ax, df_temp_Obs, None, None, None,
+                var_colours,
+                sigmas=['5', '95', '50']
+                # hatch='\\', linestyle='dashed'
+            )
+            for headline in headlines:
+                for vv in ['Tot', 'Ant', 'Nat']:
+                    # Plot the historical only timeseries
+                    ax.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
+                            results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
+                            label=f'{headline}-{vv}',
+                            linestyle=line_style[vv],
+                            color=headline_colours[headline]
+                            )
+            ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
+                    label='Obs 20-year running mean',
+                    color='black'
+                    )
+
+            # Slice the df_temp_Obs using the smallest and largest end years
+            ax.set_ylim(min_y, max_y)
+            ax.set_xlim(smallest_end_year, largest_end_year + 0.5)
+            ax.set_title('Calculated as historical-only: annual-mean, AR6 decade-mean, SR1.5 centered 30-year mean, and CGWL centered 20-year mean')
+            gr.overall_legend(fig, 'lower center', 5)
+
+            ax.set_ylabel('Attributable warming relative to 1850–1900 (⁰C)')
+            fig.suptitle(
+                'Global Warming Index (GWI)'
+            )
+
+            fig.savefig(f'plots/aggregated/SCENARIO--{scen}/' +
+                        f'ENSEMBLE-MEMBER--{ens}/' +
+                        f'VARIABLES--{reg_vars}/' +
+                        'Historical_only_headlines_' +
+                        f'{scen}_{ens}_{reg_vars}_' +
+                        f'{min_regressed_range}_to_{max_regressed_range}.png')
+            plt.close(fig)
+
 
     ###############################################################################
     # Generate the projected warming for final constrained year ###################
