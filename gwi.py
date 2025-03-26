@@ -657,9 +657,10 @@ if __name__ == "__main__":
         print('Regression end year is after forcing data range, '
               f'setting end year to forcing data maximum: {end_regress}')
 
-    print('Calculating GWI with the following parameters:')
-    print(f'Cluster node" {os.uname().nodename}')
+    print('\nCalculating GWI with the following parameters:')
+    print(f'Cluster node: {os.uname().nodename}')
     print(f'Scenario: {scenario}')
+    print(f'Reference temperature realisation number: {ensemble_members}')
     print(f'Regressed variables: {regress_vars}')
     print(f'Forcing range: {forc_Yrs_min}-{forc_Yrs_max}')
     print(f'Reference temperature range: {temp_Yrs.min()}-{temp_Yrs.max()}')

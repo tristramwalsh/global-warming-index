@@ -13,13 +13,13 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 2010 2024`
+array_values=`seq 1950 2100`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(20 20 20)  # Size of subsampling
+array_samples=(90)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -42,14 +42,14 @@ VARS=GHG,OHF,Nat
 # e.g. observed-SSP119
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
-SCENARIO=observed-SSP585
+SCENARIO=SMILE_ESM-SSP370
 
 # Select truncation range
-TRUNCATION=1850-2050
+TRUNCATION=1850-2100
 
 # Select whether to include the rate of change in the regression
 # e.g. y
-# e.g. nERF
+# e.g. n
 INCLUDE_RATE=n
 
 # Select whether to include the headlines in the regression
@@ -60,8 +60,9 @@ INCLUDE_HEADLINES=y
 # Select which ensemble members use from the scenario ERF/Temp files
 # e.g. all
 # e.g. 1
-SPECIFY_ENSEMBLE_MEMBERS=all
-# array_ensembles=`seq 0 59`
+# e.g. {0..49}
+# SPECIFY_ENSEMBLE_MEMBERS=all
+SPECIFY_ENSEMBLE_MEMBERS={0..49}
 
 
 ###############################################################################
@@ -81,11 +82,9 @@ for j in "${array_samples[@]}"
 do
 
 for i in $array_values
+# for i in "${array_values[@]}"
 do
 
-# For the single ensemble member selection runs
-# for k in $array_ensembles
-# do
 
 echo $count
 cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
@@ -98,15 +97,25 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem-per-cpu=8192
 
 ## Name the job and queue it
-#SBATCH --job-name=${SIM_NAME}_${SCENARIO}_1850-${i}_${j}_${k}_${count}
+#SBATCH --job-name=${SIM_NAME}_${SCENARIO}_${START_REGRESS}-${i}_${j}_${count}
 
 ## Declare an output log for all jobs to use:
-#SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${VARS}_1850-${i}_${j}_${count}.out
+#SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${SCENARIO}_${VARS}_${START_REGRESS}-${i}_${j}_${count}.out
 
-python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
+# For the single ensemble member selection runs
+if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
+    # Regress against all reference temperatures at the same time
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
+else
+  for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
+    # Regress against each reference temperature separately
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=\$k
+  done
+fi
+
+
 EOF
 
 # Submit a single job to slurm.
@@ -117,9 +126,6 @@ sbatch ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
 rm -rf ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
 
 done
-
-# For the single ensemble member selection runs
-# done
 
 # Increment the counter that keeps track of multiple runs at the same sample
 # size. i.e. for each member of array_samples, this counter will increment.
