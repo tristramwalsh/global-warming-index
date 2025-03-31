@@ -10,6 +10,147 @@ import json
 import multiprocessing as mp
 import functools
 
+
+def historical_only(scen, ens, reg_vars, reg_ranges_all,
+                    headline, headline_toggle, results_dfs):
+    """Calculate historical-only timeseries for each headline."""
+    print(f'Calculating historical-only for {headline}')
+    # Prepare empty timeseries for each headline
+    df_hist_headline = results_dfs[
+        scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
+    df_hist_headline[:] = 0
+
+    for reg_range in reg_ranges_all:
+        # Extract the relevant headline values for this regressed range
+        current_year = int(reg_range.split('-')[1])
+        if headline == 'ANNUAL':
+            headline_time = (
+                # headlines index string-y; timeseries index integer-y
+                str(current_year) if headline_toggle else current_year)
+        elif headline == 'AR6':
+            headline_time = f'{current_year-9}-{current_year}'
+        elif headline == 'SR15':
+            headline_time = f'{current_year} (SR15 definition)'
+        elif headline == 'CGWL':
+            headline_time = (
+                f'{current_year-9}-{current_year+10} (CGWL definition)'
+                )
+
+        # Determine whether to pull the headline from the headlines or
+        # timeseries dataframe. You can only pull annual years from the
+        # both headlines and timeseries dataframes. The value of
+        # selecting, is that the headlines are much more
+        # computationally expensive to calculate, do you may not always
+        # calculate the headlines for all regressed_year ranges.
+        res_type = 'headlines' if headline_toggle else 'timeseries'
+
+        if headline_time in results_dfs[
+            scen][ens][reg_vars][reg_range][res_type].index:
+
+            # print(f'SUCCESS: Headline time {headline} {headline_time} found in ' +
+            #       f'{scen} {reg_vars} {reg_range} {res_type}')
+
+            _df = results_dfs[
+                scen][ens][reg_vars][reg_range][res_type
+                                        ].loc[headline_time]
+
+            df_hist_headline.loc[current_year] = _df
+
+        else:
+            pass
+            # print(f'FAILURE: Headline time {headline} {headline_time} not ' +
+            #       f'found in {scen} {reg_vars} {reg_range} {res_type}')
+
+    # Remove all years that are not the end of an attribution
+    # period to avoid confusion (i.e. the longer earlier years
+    # before the historical-only focus period).
+    end_years = [int(reg_range.split('-')[1])
+                    for reg_range in reg_ranges_all]
+    smallest_end_year = min(end_years)
+    largest_end_year = max(end_years)
+    start_years = set([int(reg_range.split('-')[0])
+                        for reg_range in reg_ranges_all])
+    if len(start_years) == 1:
+        start_regress = list(start_years)[0]
+    else:
+        raise ValueError('Multiple start years in regressed ranges')
+
+
+    # Filter the dataframe to only include the years that are
+    # relevant for the historical-only dataset: these are years
+    # that are >= smallest_end_year and <= largest_end_year.
+    df_hist_headline = df_hist_headline.loc[
+        smallest_end_year:largest_end_year, :]
+
+    # Remove any rows that contain on the value zero
+    df_hist_headline = df_hist_headline.loc[
+        (df_hist_headline != 0).any(axis=1)]
+
+    # Save the dataframe to a csv file
+    df_hist_headline.to_csv(
+        f'{aggregated_folder}/SCENARIO--{scen}/' +
+        f'ENSEMBLE-MEMBER--{ens}/' +
+        f'VARIABLES--{reg_vars}/'
+        f'GWI_results_{headline}_HISTORICAL-ONLY_' +
+        f'SCENARIO--{scen}_' +
+        f'ENSEMBLE-MEMBER--{ens}_' +
+        f'VARIABLES--{reg_vars}_' +
+        f'__REGRESSED-YEARS--{min_regressed_range}' +
+        f'_to_{max_regressed_range}.csv')
+
+    ###################################################################
+    # NOTE: commented out for now, as I have no use for this now that
+    # checks are complete.
+
+    # # Concatenate the previous timeperiods before the earliest
+    # # regressed range.
+
+    # # NOTE: This technically is inconsistent with the way the the full
+    # # historical-only timeseries is calcualted, since the headlines for
+    # # the full historical-only timeseries are calculated within the 
+    # # entire GWI ensemble. This pre-historical-only extension is
+    # # included as a optional historical reference, e.g. for plotting.
+
+    # # Select the timeseries from the earliest regressed range
+    # historical_piece = results_dfs[
+    #     scen][reg_vars][min(reg_ranges_all)]['timeseries']
+    # print('\nHere is the pre-filtered index for historical piece')
+    # print(historical_piece.index)
+    # # Apply the headlie-specific running means over this piece
+    # if headline == 'AR6':
+    #     historical_piece_filtered = historical_piece.rolling(
+    #         window=10, center=False).mean()
+    # elif headline == 'SR15':
+    #     historical_piece_filtered = historical_piece.rolling(
+    #         window=30, center=True).mean()
+    # elif headline == 'CGWL':
+    #     historical_piece_filtered = historical_piece.rolling(
+    #         window=20, center=True).mean()
+    # else:
+    #     historical_piece_filtered = historical_piece
+    # historical_piece_filtered = historical_piece_filtered.loc[
+    #         :smallest_end_year-1, :]
+    # print('\nHere is the post-filtered index for historical piece:')
+    # print(historical_piece_filtered.index)
+    # # Concatenate the historical piece with the historical-only
+    # # dataset
+
+    # df_hist_headline_prehist = pd.concat(
+    #     [historical_piece_filtered, df_hist_headline] ,
+    #     axis=0).sort_index()
+    # print('\nHere is the index for the full historical-only dataset:')
+    # print(df_hist_headline_prehist.index)
+
+    # # Check whether there are any rows that are duplicates
+    # # (if overlapping)
+    # if df_hist_headline_prehist.index.duplicated().any():
+    #     df_hist_headline_prehist = df_hist_headline_prehist.drop_duplicates()
+
+    # return df_hist_headline, df_hist_headline_prehist
+    ###################################################################
+
+    return df_hist_headline, None
+
 # NOTE:
 # results_files[reg_scen][reg_vars][reg_range][result_type].keys():
 # results_files[reg_scen][reg_vars][reg_range][result_type].keys():
@@ -92,8 +233,8 @@ if not os.path.exists(iterations_folder):
 
 
 # AVERAGE THE TIMESERIES AND HEADLINES ITERATIONS #############################
-def combine_repeats(result_type, scenario, ensemble_selection,
-                    regressed_years, regressed_vars):
+def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
+                    regressed_vars):
     dict_iterations = {}
     size_iterations = {}
 
@@ -137,6 +278,7 @@ def combine_repeats(result_type, scenario, ensemble_selection,
     # df_avg /= len(iterations)
     df_avg /= sum(size_iterations.values())
 
+    # Create the specific directory for these regressed years
     out_path = f'{aggregated_folder}/' + \
                f'SCENARIO--{scenario}/' + \
                f'ENSEMBLE-MEMBER--{ensemble_selection}/' + \
@@ -171,7 +313,7 @@ if re_calculate:
              ])
         for ensemble_selection in ensemble_selections:
             # TODO: Parallelise this loop
-            print('Calculating ensemble selection:', ensemble_selection)
+            print('  Calculating ensemble selection:', ensemble_selection)
 
             regressed_variables_all = sorted(
                 [d.split('VARIABLES--')[1]
@@ -181,10 +323,11 @@ if re_calculate:
                      f'ENSEMBLE-MEMBER--{ensemble_selection}/')
                  ])
 
-            print('All regressed variables for scenario:',
+            print('    All regressed variables for scenario:',
                   regressed_variables_all)
 
             for regressed_vars in regressed_variables_all:
+                print('      Calculating regressed variables:', regressed_vars)
                 _path = (f'{iterations_folder}/' +
                          f'SCENARIO--{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
@@ -194,96 +337,123 @@ if re_calculate:
                      for d in os.listdir(_path)
                      if os.path.isdir(f'{_path}{d}')
                      ])
+                
+                if defs.check_steps(regressed_years_vars)['check_bool']:
+                    print(f'        All regressed years for {regressed_vars}:',
+                          defs.check_steps(regressed_years_vars)['range'])
 
-                print(f'Regressed years for {regressed_vars}:',
-                      regressed_years_vars)
-
-                for regressed_years in regressed_years_vars:
-                    print('Calculating:', scenario, ensemble_selection,
-                          regressed_years, regressed_vars)
-                    # Timeseries averaging
-                    df_avg, dict_iterations, size_iterations = combine_repeats(
-                        'timeseries', scenario, ensemble_selection,
-                        regressed_years, regressed_vars)
-
-                    # Headlines may not have been calculated if only timeseries
-                    # were needed
+                with mp.Pool(os.cpu_count()) as p:
+                    print('        Calculating (parallel regressed_years) ',
+                          'for:',
+                          scenario, ensemble_selection, regressed_vars)
+                    p.map(
+                        functools.partial(
+                            combine_repeats,
+                            result_type='timeseries', scenario=scenario,
+                            ensemble_selection=ensemble_selection,
+                            regressed_vars=regressed_vars),
+                        regressed_years_vars)
                     if headline_toggle:
-                        combine_repeats(
-                            'headlines', scenario, ensemble_selection,
-                            regressed_years, regressed_vars)
+                        p.map(
+                            functools.partial(
+                                combine_repeats,
+                                result_type='headlines', scenario=scenario,
+                                ensemble_selection=ensemble_selection,
+                                regressed_vars=regressed_vars),
+                            regressed_years_vars)
 
-                    plot_iteration_toggle = False
-                    if plot_iteration_toggle:
-                        # Plot each iteration of the data to check
-                        fig = plt.figure(figsize=(15, 10))
-                        ax1 = plt.subplot2grid(
-                            shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
-                        ax2 = plt.subplot2grid(
-                            shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
-                        # Get the variable names from the dataframe:
-                        vars_all = df_avg.columns.get_level_values(
-                            0).unique().to_list()
-                        for sigma in ['5', '95', '50']:
-                            for var in vars_all:
-                                for iteration in dict_iterations.keys():
-                                    ax1.plot(df_avg.index,
-                                             dict_iterations[iteration][
-                                                 (var, sigma)],
-                                             label=f'{iteration} {var}',
-                                             color=var_colours[var],
-                                             alpha=1 if sigma == '50' else 0.5
-                                             #  linestyle=linestyles[iteration]
-                                             )
-                                ax1.plot(df_avg.index, df_avg[(var, sigma)],
-                                         label=f'Avg {var}', color='black')
-                        # plt.legend()
-                        ax1.set_ylabel('Iteration results, ⁰C')
-                        ax1.set_title('Multiple iterations of samples,' +
-                                      '5th, 50th, 95th percentiles\n' +
-                                      'ensembles sizes: ' +
-                                      str(list(size_iterations.values())))
+                # for regressed_years in regressed_years_vars:
+                #     print('Calculating:', scenario, ensemble_selection,
+                #           regressed_years, regressed_vars)
+                #     # Timeseries averaging
+                #     df_avg, dict_iterations, size_iterations = combine_repeats(
+                #         regressed_years,
+                #         'timeseries',
+                #         scenario,
+                #         ensemble_selection,
+                #         regressed_vars)
 
-                        # Plot difference between the data in each iteration
-                        # and the average
-                        for iteration in dict_iterations.keys():
-                            for sigma in ['5', '95', '50']:
-                                for var in vars_all:
-                                    ax2.plot(
-                                        df_avg.index,
-                                        (dict_iterations[iteration][
-                                            (var, sigma)]
-                                         - df_avg[(var, sigma)]),
-                                        label=f'{iteration} {var}',
-                                        color=var_colours[var],
-                                        alpha=1 if sigma == '50' else 0.5
-                                        #  linestyle=linestyles[iteration]
-                                        )
-                        # plt.legend()
-                        ax2.set_ylabel('Iteration minus average, ⁰C')
-                        ax2.set_title(
-                            'Difference between iterations and average, ' +
-                            '5th, 50th, 95th percentiles')
-                        fig.suptitle(
-                            'Iterations for regressed years: ' +
-                            f'{regressed_years} and regressed vars: ' +
-                            f'{regressed_vars}')
-                        gr.overall_legend(fig, 'lower center', 6)
+                #     # Headlines may not have been calculated if only timeseries
+                #     # were needed
+                #     if headline_toggle:
+                #         combine_repeats(
+                #             regressed_years,
+                #             'headlines',
+                #             scenario,
+                #             ensemble_selection,
+                #             regressed_vars)
 
-                        plot_path = (
-                            f'{plot_folder}/iterations/' +
-                            f'SCENARIO--{scenario}/' +
-                            f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
-                            f'VARIABLES--{regressed_vars}/' +
-                            f'REGRESSED-YEARS--{regressed_years}/')
-                        if not os.path.exists(plot_path):
-                            os.makedirs(plot_path)
+                    # plot_iteration_toggle = False
+                    # if plot_iteration_toggle:
+                    #     # Plot each iteration of the data to check
+                    #     fig = plt.figure(figsize=(15, 10))
+                    #     ax1 = plt.subplot2grid(
+                    #         shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
+                    #     ax2 = plt.subplot2grid(
+                    #         shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
+                    #     # Get the variable names from the dataframe:
+                    #     vars_all = df_avg.columns.get_level_values(
+                    #         0).unique().to_list()
+                    #     for sigma in ['5', '95', '50']:
+                    #         for var in vars_all:
+                    #             for iteration in dict_iterations.keys():
+                    #                 ax1.plot(df_avg.index,
+                    #                          dict_iterations[iteration][
+                    #                              (var, sigma)],
+                    #                          label=f'{iteration} {var}',
+                    #                          color=var_colours[var],
+                    #                          alpha=1 if sigma == '50' else 0.5
+                    #                          #  linestyle=linestyles[iteration]
+                    #                          )
+                    #             ax1.plot(df_avg.index, df_avg[(var, sigma)],
+                    #                      label=f'Avg {var}', color='black')
+                    #     # plt.legend()
+                    #     ax1.set_ylabel('Iteration results, ⁰C')
+                    #     ax1.set_title('Multiple iterations of samples,' +
+                    #                   '5th, 50th, 95th percentiles\n' +
+                    #                   'ensembles sizes: ' +
+                    #                   str(list(size_iterations.values())))
 
-                        fig.savefig(
-                            f'{plot_path}Compare_iterations_' +
-                            f'{scenario}_{ensemble_selection}_' +
-                            f'{regressed_vars}_{regressed_years}.png')
-                        plt.close(fig)
+                    #     # Plot difference between the data in each iteration
+                    #     # and the average
+                    #     for iteration in dict_iterations.keys():
+                    #         for sigma in ['5', '95', '50']:
+                    #             for var in vars_all:
+                    #                 ax2.plot(
+                    #                     df_avg.index,
+                    #                     (dict_iterations[iteration][
+                    #                         (var, sigma)]
+                    #                      - df_avg[(var, sigma)]),
+                    #                     label=f'{iteration} {var}',
+                    #                     color=var_colours[var],
+                    #                     alpha=1 if sigma == '50' else 0.5
+                    #                     #  linestyle=linestyles[iteration]
+                    #                     )
+                    #     # plt.legend()
+                    #     ax2.set_ylabel('Iteration minus average, ⁰C')
+                    #     ax2.set_title(
+                    #         'Difference between iterations and average, ' +
+                    #         '5th, 50th, 95th percentiles')
+                    #     fig.suptitle(
+                    #         'Iterations for regressed years: ' +
+                    #         f'{regressed_years} and regressed vars: ' +
+                    #         f'{regressed_vars}')
+                    #     gr.overall_legend(fig, 'lower center', 6)
+
+                    #     plot_path = (
+                    #         f'{plot_folder}/iterations/' +
+                    #         f'SCENARIO--{scenario}/' +
+                    #         f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
+                    #         f'VARIABLES--{regressed_vars}/' +
+                    #         f'REGRESSED-YEARS--{regressed_years}/')
+                    #     if not os.path.exists(plot_path):
+                    #         os.makedirs(plot_path)
+
+                    #     fig.savefig(
+                    #         f'{plot_path}Compare_iterations_' +
+                    #         f'{scenario}_{ensemble_selection}_' +
+                    #         f'{regressed_vars}_{regressed_years}.png')
+                    #     plt.close(fig)
 
 ###############################################################################
 # Load all averaged datasets
@@ -367,8 +537,8 @@ for reg_scen in results_files.keys():
 
 def single_timeseries(reg_range, scen, ens, reg_vars):
     """Plot single timeseries plots."""
-    print('Creating single timeseries plots for:',
-          scen, reg_vars, reg_range, end='\r')
+    # print('Creating single timeseries plots for:',
+    #       scen, ens, reg_vars, reg_range, end='\r')
     plot_vars = results_dfs[
         scen][ens][reg_vars][reg_range]['timeseries'].columns.get_level_values(
             0).unique().to_list()
@@ -423,8 +593,11 @@ def single_timeseries(reg_range, scen, ens, reg_vars):
     return plot_name
 
 
+print('Plotting single-run timeseries')
 for scen in results_dfs.keys():
+    print('SCENARIO:', scen)
     for ens in results_dfs[scen].keys():
+        print('  ENSEMBLE-MEMBER:', ens)
         df_temp_Obs = defs.load_Temp(
             scenario=scen, ensemble_members=ens, start_pi=1850, end_pi=1900)
 
@@ -434,20 +607,33 @@ for scen in results_dfs.keys():
             ###################################################################
 
             reg_ranges_all = sorted(list(results_dfs[scen][ens][reg_vars].keys()))
-
+            if defs.check_steps(reg_ranges_all)['check_bool']:
+                print('    All years available for: ',
+                         defs.check_steps(reg_ranges_all)['range'])
             # for reg_range in reg_ranges_all:
             # This code was just the code inside the single_timeseries function
             # above, separated in order to parallelise to speed up code.
-            with mp.Pool(os.cpu_count()) as p:
-                print('multiprocessing for:', scen, reg_vars)
-                plot_names = p.map(
-                    functools.partial(
-                        single_timeseries,
-                        scen=scen, ens=ens, reg_vars=reg_vars),
-                    reg_ranges_all)
+            if ens == 'all':
+                single_toggle = True
+            elif int(ens) == 0:
+                single_toggle = True
+            else:
+                single_toggle = False
+                print('      Skipping single_timeseries for:',
+                      scen, ens, reg_vars)
 
-            print('')
-            print('All years complete: ', reg_ranges_all)
+            if single_toggle:
+                with mp.Pool(os.cpu_count()) as p:
+                    print('      Plotting single_timeseries for:',
+                          scen, ens, reg_vars)
+                    # print('  in parallel for:', reg_ranges_all)
+                    plot_names = p.map(
+                        functools.partial(
+                            single_timeseries,
+                            scen=scen, ens=ens, reg_vars=reg_vars),
+                        reg_ranges_all)
+
+                print('')
 
             #######################################################################
             # Create a gif of the timeseries plots
@@ -455,7 +641,8 @@ for scen in results_dfs.keys():
             # Add a toggle, because this is quite slow for the SMILE ensembles.
             gif_toggle = False
             if gif_toggle:
-                print('Creating gif of timeseries plots for:', reg_vars)
+                print('  Creating gif of timeseries plots for:',
+                      scen, ens, reg_vars)
 
                 images_list = [Image.open(plot) for plot in plot_names]
                 # calculate the frame number of the last frame (ie the number of
@@ -486,7 +673,7 @@ for scen in results_dfs.keys():
 ###############################################################################
 
 for scen in sorted(results_dfs.keys()):
-    
+
     for ens in results_dfs[scen].keys():
         df_temp_Obs = defs.load_Temp(
             scenario=scen, ensemble_members=ens, start_pi=1850, end_pi=1900)
@@ -512,146 +699,6 @@ for scen in sorted(results_dfs.keys()):
             # need doing inside GWI.py (and could easily be added using a new argv
             # of 'all' alongside 'y' and 'n' in the headline_toggle).
 
-            def historical_only(scen, ens, reg_vars, reg_ranges_all,
-                                headline, headline_toggle, results_dfs):
-                """Calculate historical-only timeseries for each headline."""
-                print(f'Calculating historical-only for {headline}')
-                # Prepare empty timeseries for each headline
-                df_hist_headline = results_dfs[
-                    scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
-                df_hist_headline[:] = 0
-
-                for reg_range in reg_ranges_all:
-                    # Extract the relevant headline values for this regressed range
-                    current_year = int(reg_range.split('-')[1])
-                    if headline == 'ANNUAL':
-                        headline_time = (
-                            # headlines index string-y; timeseries index integer-y
-                            str(current_year) if headline_toggle else current_year)
-                    elif headline == 'AR6':
-                        headline_time = f'{current_year-9}-{current_year}'
-                    elif headline == 'SR15':
-                        headline_time = f'{current_year} (SR15 definition)'
-                    elif headline == 'CGWL':
-                        headline_time = (
-                            f'{current_year-9}-{current_year+10} (CGWL definition)'
-                            )
-
-                    # Determine whether to pull the headline from the headlines or
-                    # timeseries dataframe. You can only pull annual years from the
-                    # both headlines and timeseries dataframes. The value of
-                    # selecting, is that the headlines are much more
-                    # computationally expensive to calculate, do you may not always
-                    # calculate the headlines for all regressed_year ranges.
-                    res_type = 'headlines' if headline_toggle else 'timeseries'
-
-                    if headline_time in results_dfs[
-                        scen][ens][reg_vars][reg_range][res_type].index:
-
-                        # print(f'SUCCESS: Headline time {headline} {headline_time} found in ' +
-                        #       f'{scen} {reg_vars} {reg_range} {res_type}')
-
-                        _df = results_dfs[
-                            scen][ens][reg_vars][reg_range][res_type
-                                                    ].loc[headline_time]
-
-                        df_hist_headline.loc[current_year] = _df
-
-                    else:
-                        pass
-                        # print(f'FAILURE: Headline time {headline} {headline_time} not ' +
-                        #       f'found in {scen} {reg_vars} {reg_range} {res_type}')
-
-                # Remove all years that are not the end of an attribution
-                # period to avoid confusion (i.e. the longer earlier years
-                # before the historical-only focus period).
-                end_years = [int(reg_range.split('-')[1])
-                             for reg_range in reg_ranges_all]
-                smallest_end_year = min(end_years)
-                largest_end_year = max(end_years)
-                start_years = set([int(reg_range.split('-')[0])
-                                   for reg_range in reg_ranges_all])
-                if len(start_years) == 1:
-                    start_regress = list(start_years)[0]
-                else:
-                    raise ValueError('Multiple start years in regressed ranges')
-
-
-                # Filter the dataframe to only include the years that are
-                # relevant for the historical-only dataset: these are years
-                # that are >= smallest_end_year and <= largest_end_year.
-                df_hist_headline = df_hist_headline.loc[
-                    smallest_end_year:largest_end_year, :]
-
-                # Remove any rows that contain on the value zero
-                df_hist_headline = df_hist_headline.loc[
-                    (df_hist_headline != 0).any(axis=1)]
-
-                # Save the dataframe to a csv file
-                df_hist_headline.to_csv(
-                    f'{aggregated_folder}/SCENARIO--{scen}/' +
-                    f'ENSEMBLE-MEMBER--{ens}/' +
-                    f'VARIABLES--{reg_vars}/'
-                    f'GWI_results_{headline}_HISTORICAL-ONLY_' +
-                    f'SCENARIO--{scen}_' +
-                    f'ENSEMBLE-MEMBER--{ens}_' +
-                    f'VARIABLES--{reg_vars}_' +
-                    f'__REGRESSED-YEARS--{min_regressed_range}' +
-                    f'_to_{max_regressed_range}.csv')
-
-                ###################################################################
-                # NOTE: commented out for now, as I have no use for this now that
-                # checks are complete.
-
-                # # Concatenate the previous timeperiods before the earliest
-                # # regressed range.
-
-                # # NOTE: This technically is inconsistent with the way the the full
-                # # historical-only timeseries is calcualted, since the headlines for
-                # # the full historical-only timeseries are calculated within the 
-                # # entire GWI ensemble. This pre-historical-only extension is
-                # # included as a optional historical reference, e.g. for plotting.
-
-                # # Select the timeseries from the earliest regressed range
-                # historical_piece = results_dfs[
-                #     scen][reg_vars][min(reg_ranges_all)]['timeseries']
-                # print('\nHere is the pre-filtered index for historical piece')
-                # print(historical_piece.index)
-                # # Apply the headlie-specific running means over this piece
-                # if headline == 'AR6':
-                #     historical_piece_filtered = historical_piece.rolling(
-                #         window=10, center=False).mean()
-                # elif headline == 'SR15':
-                #     historical_piece_filtered = historical_piece.rolling(
-                #         window=30, center=True).mean()
-                # elif headline == 'CGWL':
-                #     historical_piece_filtered = historical_piece.rolling(
-                #         window=20, center=True).mean()
-                # else:
-                #     historical_piece_filtered = historical_piece
-                # historical_piece_filtered = historical_piece_filtered.loc[
-                #         :smallest_end_year-1, :]
-                # print('\nHere is the post-filtered index for historical piece:')
-                # print(historical_piece_filtered.index)
-                # # Concatenate the historical piece with the historical-only
-                # # dataset
-
-                # df_hist_headline_prehist = pd.concat(
-                #     [historical_piece_filtered, df_hist_headline] ,
-                #     axis=0).sort_index()
-                # print('\nHere is the index for the full historical-only dataset:')
-                # print(df_hist_headline_prehist.index)
-
-                # # Check whether there are any rows that are duplicates
-                # # (if overlapping)
-                # if df_hist_headline_prehist.index.duplicated().any():
-                #     df_hist_headline_prehist = df_hist_headline_prehist.drop_duplicates()
-
-                # return df_hist_headline, df_hist_headline_prehist
-                ###################################################################
-
-                return df_hist_headline, None
-
             if headline_toggle:
                 headlines = ['ANNUAL', 'SR15', 'AR6', 'CGWL']
             else:
@@ -676,7 +723,18 @@ for scen in sorted(results_dfs.keys()):
             if len(start_years) == 1:
                 start_regress = list(start_years)[0]
 
-            #######################################################################
+            ###################################################################
+            # Create directory
+
+            # Create the overarching directory for the plots
+            out_path = f'plots/aggregated/' + \
+                f'SCENARIO--{scen}/' + \
+                f'ENSEMBLE-MEMBER--{ens}/' + \
+                f'VARIABLES--{reg_vars}/'
+            if not os.path.exists(out_path):
+                os.makedirs(out_path)
+
+            ###################################################################
             # Plot each headline historical-only timeseries as its own plot
             print('Plotting historical-only timeseries for:', scen, ens, reg_vars)
             for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
@@ -863,6 +921,7 @@ for scen in sorted(results_dfs.keys()):
 
             # Slice the df_temp_Obs using the smallest and largest end years
             min_y = np.floor(np.min(df_temp_Obs.loc[smallest_end_year:largest_end_year].values) * 2) / 2
+            min_y = min([-0.5, min_y])
             max_y = np.ceil(np.max(df_temp_Obs.loc[smallest_end_year:largest_end_year].values) * 2) / 2
             # min_y = np.floor(np.min(df_temp_Obs.values) * 2) / 2
             # max_y = np.ceil(np.max(df_temp_Obs.values) * 2) / 2

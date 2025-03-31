@@ -302,8 +302,8 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
                                 ].copy().rename(columns={'GHG': 'Tot'})
         # Group df_ERF by ensemble name, and sum across variable names
         df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
-                            ].groupby(level='ensemble', axis=1
-                                        ).sum()
+                               ].groupby(level='ensemble', axis=1
+                                         ).sum()
         df_ERF = df_ERF_Tot
 
     else:
@@ -810,3 +810,19 @@ def extra_vars(forc_vars):
         raise ValueError('Invalid combination of variables for regression.')
 
     return extra_vars
+
+
+def check_steps(all_reg_ranges):
+    """Check that the years are in steps of 1."""
+    end_yrs = sorted([
+        int(regressed_years.split('-')[1])
+        for regressed_years in all_reg_ranges
+    ])
+    all_year_steps = all(np.diff(end_yrs) == 1)
+
+    out_dict = {
+        'check_bool': all_year_steps,
+        'range': f'{min(all_reg_ranges)} to {max(all_reg_ranges)}' ,
+    }
+
+    return out_dict
