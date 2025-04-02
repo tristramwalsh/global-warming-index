@@ -229,7 +229,7 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         # level to 'variable'. Make the value of this 'Nat' for all of the
         # columns. This keeps the data structure the same as the multi-ensemble
         # data.
-        ens_num = len(df_ERF_natural.columns.to_list())
+        ens_num = df_ERF_natural.columns.to_list()
         df_ERF_natural.columns = pd.MultiIndex.from_tuples(
             [('Nat', col) for col in df_ERF_natural.columns],
             names=['variable', 'ensemble'])
@@ -260,7 +260,7 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         # times, so that the second levels are '0', '2', '3', ..., '59'.
 
         copies = []
-        for ii in range(ens_num):
+        for ii in ens_num:
             df_ERF_anthro_repeat = df_ERF_anthro.copy()
             # Rename the values in the 'ensemble' column to 'ii'
             df_ERF_anthro_repeat = df_ERF_anthro_repeat.rename(
@@ -272,7 +272,7 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         # Check that I haven't made a mistake in copying.
         check_ens = all(
             [df_ERF_anthro['GHG', str(ens)].equals(df_ERF_anthro['GHG', '0'])
-             for ens in range(ens_num)])
+             for ens in ens_num])
         if not check_ens:
             raise ValueError(
                 'Ensemble values are not the same for all variables.')

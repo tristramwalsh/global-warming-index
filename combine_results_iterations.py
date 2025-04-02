@@ -551,6 +551,10 @@ def single_timeseries(reg_range, scen, ens, reg_vars):
     trunc_start = results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].index.min()
     trunc_end = results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].index.max()
 
+    if results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].loc[reg_end:, :].empty:
+        print(f'No data for: {reg_range} {scen} {ens} {reg_vars}')
+        print(results_dfs[scen][ens][reg_vars][reg_range]['timeseries'])
+
     gr.gwi_timeseries(
         ax, df_temp_Obs, None,
         results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].loc[reg_end:, :],
@@ -609,13 +613,13 @@ for scen in results_dfs.keys():
             reg_ranges_all = sorted(list(results_dfs[scen][ens][reg_vars].keys()))
             if defs.check_steps(reg_ranges_all)['check_bool']:
                 print('    All years available for: ',
-                         defs.check_steps(reg_ranges_all)['range'])
+                      defs.check_steps(reg_ranges_all)['range'])
             # for reg_range in reg_ranges_all:
             # This code was just the code inside the single_timeseries function
             # above, separated in order to parallelise to speed up code.
             if ens == 'all':
                 single_toggle = True
-            elif int(ens) == 0:
+            elif (int(ens) % 10) == 0:
                 single_toggle = True
             else:
                 single_toggle = False
@@ -736,7 +740,7 @@ for scen in sorted(results_dfs.keys()):
 
             ###################################################################
             # Plot each headline historical-only timeseries as its own plot
-            print('Plotting historical-only timeseries for:', scen, ens, reg_vars)
+            print('  Plotting historical-only timeseries for:', scen, ens, reg_vars)
             for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
                 print('Plotting:', headline)
                 plot_vars = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][
@@ -766,7 +770,7 @@ for scen in sorted(results_dfs.keys()):
                     f'Historical-only {headline}\n' +
                     f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}')
                 fig.savefig(
-                    f'plots/aggregated/' +
+                    'plots/aggregated/' +
                     f'SCENARIO--{scen}/' +
                     f'ENSEMBLE-MEMBER--{ens}/' +
                     f'VARIABLES--{reg_vars}/' +
@@ -778,7 +782,7 @@ for scen in sorted(results_dfs.keys()):
             #######################################################################
             # Plot the historical-only vs full dataset using gr.gwi_timeseries
 
-            print('Plotting historical-only vs full dataset for:',
+            print('  Plotting historical-only vs full dataset for:',
                   scen, ens, reg_vars)
             plot_vars = results_dfs[scen][ens][reg_vars][
                 'HISTORICAL-ONLY'][
@@ -824,7 +828,7 @@ for scen in sorted(results_dfs.keys()):
             #######################################################################
             # Plot comparison of all headlines datasets
 
-            print('Plotting historical-only and full-information headlines:',
+            print('  Plotting historical-only and full-information headlines:',
                   scen, ens, reg_vars)
 
             fig = plt.figure(figsize=(20, 10))
@@ -998,7 +1002,7 @@ for scen in sorted(results_dfs.keys()):
             # TODO: Add to constrained warming dictionary.
             # TODO: Move calculation higher up in script.
 
-            print('Creating constrained results for:', reg_vars)
+            print('  Creating constrained results for:', reg_vars)
             # Calculate how the expected final year of the timeseries changes
             # depending on the years that are regressed. Expect that the attributed
             # values in 2023 (end year of the full timeseries) will have larger
@@ -1028,7 +1032,7 @@ for scen in sorted(results_dfs.keys()):
             #######################################################################
             # Plot this dataframe df_constrined in the same way as df_hist
 
-            print('Plotting constrained results for:', reg_vars)
+            print('    Plotting constrained results for:', reg_vars)
             fig = plt.figure(figsize=(12, 8))
             ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
             gr.gwi_timeseries(
@@ -1071,7 +1075,7 @@ for scen in sorted(results_dfs.keys()):
             # factors may be added later, but sourcing historical T and ERF data is
             # significantly more wrangling.
 
-            print('Creating delta contributions for:', scen, reg_vars)
+            print('  Creating delta contributions for:', scen, reg_vars)
 
             fig = plt.figure(figsize=(12, 10))
             ax1 = plt.subplot2grid(shape=(2, 2), loc=(1, 0), rowspan=1, colspan=1)
@@ -1112,7 +1116,7 @@ for scen in sorted(results_dfs.keys()):
             # The green dashed line is the residual warming in year Y relative in
             # the dataset for year Y. That is so say, this line comes from the
             # historical-only dataset.
-            print('Plotting delta contributions for:', reg_vars)
+            print('    Plotting delta contributions for:', reg_vars)
 
             line_alpha = 0.9
 
@@ -1290,7 +1294,7 @@ for scen in sorted(results_dfs.keys()):
             residual_rms = np.sqrt(
                 np.mean(df_hist.loc[smallest_end_year:, ('Res', '50')].values**2))
 
-            print(f'Revision RMS for {reg_vars}: {delta_rms}')
-            print(f'Residual RMS for {reg_vars}: {residual_rms}')
-            print(f'Average fractional variation for {reg_vars}:',
+            print(f'    Revision RMS for {reg_vars}: {delta_rms}')
+            print(f'    Residual RMS for {reg_vars}: {residual_rms}')
+            print(f'    Average fractional variation for {reg_vars}:',
                   delta_rms / residual_rms)
