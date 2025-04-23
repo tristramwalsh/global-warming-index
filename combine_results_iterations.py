@@ -86,17 +86,22 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
     df_hist_headline = df_hist_headline.loc[
         (df_hist_headline != 0).any(axis=1)]
 
-    # Save the dataframe to a csv file
-    df_hist_headline.to_csv(
-        f'{aggregated_folder}/SCENARIO--{scen}/' +
-        f'ENSEMBLE-MEMBER--{ens}/' +
-        f'VARIABLES--{reg_vars}/'
-        f'GWI_results_{headline}_HISTORICAL-ONLY_' +
-        f'SCENARIO--{scen}_' +
-        f'ENSEMBLE-MEMBER--{ens}_' +
-        f'VARIABLES--{reg_vars}_' +
-        f'__REGRESSED-YEARS--{min_regressed_range}' +
-        f'_to_{max_regressed_range}.csv')
+    # Check whether the dataframe is empty and save if not. This fixes an issue
+    # where the CGWL isn't calculated in some years in some scenarios
+    # (the latter years of observed-202x) due to no "future" ERFs being
+    # available. In this case the CGWL csv would be saved, but empty, which
+    # then produced an error later on in the code.
+    if not df_hist_headline.empty:
+        df_hist_headline.to_csv(
+            f'{aggregated_folder}/SCENARIO--{scen}/' +
+            f'ENSEMBLE-MEMBER--{ens}/' +
+            f'VARIABLES--{reg_vars}/'
+            f'GWI_results_{headline}_HISTORICAL-ONLY_' +
+            f'SCENARIO--{scen}_' +
+            f'ENSEMBLE-MEMBER--{ens}_' +
+            f'VARIABLES--{reg_vars}_' +
+            f'__REGRESSED-YEARS--{min_regressed_range}' +
+            f'_to_{max_regressed_range}.csv')
 
     ###################################################################
     # NOTE: commented out for now, as I have no use for this now that
@@ -713,10 +718,11 @@ for scen in sorted(results_dfs.keys()):
                     headline, headline_toggle,
                     results_dfs)
 
-                results_dfs[scen][ens][reg_vars][
-                    'HISTORICAL-ONLY'].update({headline: df_results_headlines})
-                results_dfs[scen][ens][reg_vars][
-                    'HISTORICAL-ONLY-PREHIST'].update({headline: df_results_headlines_prehist})
+                if not df_results_headlines.empty:
+                    results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'].update({headline: df_results_headlines})
+                    results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY-PREHIST'].update({headline: df_results_headlines_prehist})
 
             smallest_end_year = min([int(reg_range.split('-')[1])
                                     for reg_range in reg_ranges_all])
@@ -862,7 +868,8 @@ for scen in sorted(results_dfs.keys()):
             df_temp_Obs_20yr = df_temp_Obs.quantile(q=0.5, axis=1).rolling(
                 window=20, center=True, axis=0).mean()
 
-            for headline in headlines:
+            # for headline in headlines:
+            for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
                 for vv in ['Tot', 'Ant', 'Nat']:
                     # Plot the historical only timeseries
                     ax1.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
@@ -962,7 +969,8 @@ for scen in sorted(results_dfs.keys()):
                 sigmas=['5', '95', '50']
                 # hatch='\\', linestyle='dashed'
             )
-            for headline in headlines:
+            # for headline in headlines:
+            for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
                 for vv in ['Tot', 'Ant', 'Nat']:
                     # Plot the historical only timeseries
                     ax.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
