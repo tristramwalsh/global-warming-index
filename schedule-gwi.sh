@@ -13,13 +13,13 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 1950 2100`
+array_values=`seq 2020 2023`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(90)  # Size of subsampling
+array_samples=(90 90 90)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -42,10 +42,10 @@ VARS=GHG,OHF,Nat
 # e.g. observed-SSP119
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
-SCENARIO=SMILE_ESM-SSP370
+SCENARIO=observed-2024
 
 # Select truncation range
-TRUNCATION=1850-2100
+TRUNCATION=1850-2024
 
 # Select whether to include the rate of change in the regression
 # e.g. y
@@ -61,8 +61,8 @@ INCLUDE_HEADLINES=y
 # e.g. all
 # e.g. 1
 # e.g. {0..49}
-# SPECIFY_ENSEMBLE_MEMBERS=all
-SPECIFY_ENSEMBLE_MEMBERS={0..49}
+SPECIFY_ENSEMBLE_MEMBERS=all
+# SPECIFY_ENSEMBLE_MEMBERS={1..60}
 
 
 ###############################################################################
@@ -71,7 +71,7 @@ SPECIFY_ENSEMBLE_MEMBERS={0..49}
 WALLTIME=2:00:00
 SIM_NAME=gwi
 SIM_CPUS=28
-SLURM_FILE_NAME=${SIM_NAME}_1850-
+SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
 
@@ -84,7 +84,7 @@ do
 for i in $array_values
 # for i in "${array_values[@]}"
 do
-
+# 
 
 echo $count
 cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
@@ -97,6 +97,9 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
+##SBATCH --mem-per-cpu=8192
+#SBATCH --mem=300G
+#SBATCH --partition=short
 
 ## Name the job and queue it
 #SBATCH --job-name=${SIM_NAME}_${SCENARIO}_${START_REGRESS}-${i}_${j}_${count}
@@ -104,9 +107,14 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${SCENARIO}_${VARS}_${START_REGRESS}-${i}_${j}_${count}.out
 
+# For the ARC cluster
+# module load Mamba
+# module load Miniconda3
+# conda activate gwi-new
+
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
-    # Regress against all reference temperatures at the same time
+  # Regress against all reference temperatures at the same time
   python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
