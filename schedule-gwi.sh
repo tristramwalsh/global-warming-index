@@ -13,7 +13,7 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # array_values=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 2020 2023`
+array_values=`seq 2024 2024`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
@@ -68,7 +68,8 @@ SPECIFY_ENSEMBLE_MEMBERS=all
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-WALLTIME=2:00:00
+WALLTIME=40:00:00
+PARTITION=Medium
 SIM_NAME=gwi
 SIM_CPUS=28
 SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
@@ -97,9 +98,8 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-##SBATCH --mem-per-cpu=8192
-#SBATCH --mem=300G
-#SBATCH --partition=short
+#SBATCH --mem-per-cpu=8192
+#SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it
 #SBATCH --job-name=${SIM_NAME}_${SCENARIO}_${START_REGRESS}-${i}_${j}_${count}
@@ -111,6 +111,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 # module load Mamba
 # module load Miniconda3
 # conda activate gwi-new
+# micromamba activate gwi-mamba
 
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
