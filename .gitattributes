@@ -1,1 +1,1 @@
-data/observed_SSP-extension/ERF/ssp_forcing_fair2.1.3_cal1.4.5.nc filter=lfs diff=lfs merge=lfs -text
+*.nc filter=lfs diff=lfs merge=lfs -text
