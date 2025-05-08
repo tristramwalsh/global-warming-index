@@ -19,7 +19,7 @@ array_values=`seq 2024 2024`
 # This is for scaling up the calculation:
 # array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(90 90 90)  # Size of subsampling
+array_samples=(9 9 9 9)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -53,9 +53,20 @@ TRUNCATION=1850-2024
 INCLUDE_RATE=n
 
 # Select whether to include the headlines in the regression
-# e.g. y
+# e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n
-INCLUDE_HEADLINES=y
+HEADLINE_TOGGLES='annual,AR6,SR1.5'
+
+# Select which years for the headlines to cover.
+# If HEADLINES_TOGGLE is set to 'n' then this will be ignored.
+# e.g. 'end_regress' for the end of the regressed range
+# e.g. 'end_trunc' for the end of the truncation range
+# e.g. 'IGCC' for latest year, 2017 repeat, and 2010-2019 repeat
+# e.g. '2024' for a single year
+# e.g. '2023,2024,2025' for multiple separate years.
+# e.g. $(seq -s, 1950 2024) will create a comma-separated list of years
+HEADLINE_YEARS=$(seq -s, 2020 2024)
+
 
 # Select which ensemble members use from the scenario ERF/Temp files
 # e.g. all
@@ -68,8 +79,8 @@ SPECIFY_ENSEMBLE_MEMBERS=all
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-WALLTIME=40:00:00
-PARTITION=Medium
+WALLTIME=2:00:00
+PARTITION=Short
 SIM_NAME=gwi
 SIM_CPUS=28
 SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
@@ -116,11 +127,11 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
   # Regress against all reference temperatures at the same time
-  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
     # Regress against each reference temperature separately
-    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --include-headlines=${INCLUDE_HEADLINES} --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=\$k
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=\$k
   done
 fi
 

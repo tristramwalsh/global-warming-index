@@ -826,3 +826,38 @@ def check_steps(all_reg_ranges):
     }
 
     return out_dict
+
+
+def check_headlines(hy):
+    """Check that the headline years are in the correct format."""
+    if hy in ['IGCC', 'end_regress', 'end_trunc']:
+        return hy
+    elif hy.isnumeric():
+        return hy
+    elif all([y.isnumeric() for y in hy.split(',')]):
+        return hy
+    else:
+        raise ValueError('Invalid headline year format.')
+
+
+def generate_headline_years(headline_years, end_regress, end_trunc):
+    """Generate the headline years for the analysis."""
+
+    if headline_years == 'end_regress':
+        hl_years = [end_regress]
+    elif headline_years == 'end_trunc':
+        hl_years = [end_trunc]
+
+    elif headline_years == 'IGCC':
+        hl_years = [end_regress]
+
+    elif headline_years.isnumeric():
+        hl_years = [int(headline_years)]
+
+    elif all([y.isnumeric() for y in headline_years.split(',')]):
+        hl_years = [int(y) for y in headline_years.split(',')]
+    else:
+        print(headline_years)
+        raise ValueError('Invalid headline year format.')
+
+    return hl_years

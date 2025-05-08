@@ -555,14 +555,34 @@ if __name__ == "__main__":
         rate_toggle = True if rate_toggle == 'y' else False
 
     # Determine whether to include headline calculations in the output.
-    # If no, then only the timeseries are calculated, and not the SR1.5 and
-    # AR6 definitions that are used for the IGCC assessments.
-    if '--include-headlines' in argv_dict:
-        headline_toggle = argv_dict['--include-headlines']
-        headline_toggle = True if headline_toggle == 'y' else False
+    # If no, then only the timeseries are calculated
+    # Format: 'ANNUAL,SR1.5,AR6,CGWL' or some subset.
+    if '--headline-toggles' in argv_dict:
+        headline_toggles = argv_dict['--headline-toggles']
     else:
-        headline_toggle = input('Include headlines? (y/n): ')
-        headline_toggle = True if headline_toggle == 'y' else False
+        headline_toggles = input(
+            'Include headlines? (annual, SR1.5, AR6, CGWL, or n): ')
+
+    if headline_toggles == 'n':
+        headline_toggles = False
+    else:
+        tog_list = headline_toggles.split(',')
+        tog_avail = ['annual', 'SR1.5', 'AR6', 'CGWL', '']
+        # Check that the all elements of tog_list exist within tog_avail
+        if not (all(tog in tog_avail for tog in tog_list)):
+            raise ValueError('Invalid headline toggle(s) provided.')
+
+    # Specify years for headlines calculations
+    # Format '2024', '2022,2023,2024', etc.
+    if '--headline-years' in argv_dict:
+        headline_years = argv_dict['--headline-years']
+    else:
+        if headline_toggles:
+            headline_years = input('Years for headlines: ')
+        else:
+            headline_years = None
+    headline_years = defs.check_headlines(headline_years)
+
 
     # Specify regression variables:
     if '--regress-variables' in argv_dict:
@@ -929,34 +949,56 @@ if __name__ == "__main__":
     print(f'... took {T3 - T2}')
 
     # HEADLINE RESULTS ########################################################
+    # TODO: Update this.
     # NOTE: Currently, the headline results are calculated for two periods:
     # 1. The same years as the most recent IPCC reports (2017, and 2010-2019)
     # 2. The end of the truncation period, NOT the end of the regressed range.
     # The preferred range dependes on usage context, and can be changed later.
 
-    if headline_toggle:
-        print('Calculating headlines')
+    if headline_toggles:
+        print(f'Calculating headlines for {headline_years}')
 
-        # Define the years for the headline results (including SR1.5 repeats)
-        if ((2017 in trunc_Yrs) and (end_regress != 2017)):
-            # The final condition is to avoid duplicate calculations when
-            # the end_regress is 2017.
-            years_headlines = [2017, end_regress]
-        else:
-            years_headlines = [end_regress]
+        hl_years = defs.generate_headline_years(
+            headline_years, end_regress, end_trunc)
+
+        dfs = []
+
+    if 'annual' in headline_toggles:
+        T1 = dt.datetime.now()
+        print('Reading annual mean definition temps', end=' ')
+
+        hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
+        if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
+            hl_years_annual.append(2017)
 
         # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
         # if 2017 in trunc_Yrs:
         #     dfs = [df_Results.loc[], df_Results.loc[[end_regress]]]
         # else:
         #     dfs = [df_Results.loc[[end_regress]]]
-        dfs = [df_Results.loc[[y]] for y in years_headlines]
 
+        dfs = [df_Results.loc[[y]] for y in hl_years_annual]
+        T2 = dt.datetime.now()
+        print(f'... took {T2 - T1}')
+
+    if 'SR1.5' in headline_toggles:
+        T1 = dt.datetime.now()
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # Calculate the linear trend of the final 15 years of the timeseries
         # and use this to calculate the present-day warming
         print('Calculating SR15-definition temps', end=' ')
-        for year in years_headlines:
+
+        hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
+        if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
+            hl_years_annual.append(2017)
+
+        for year in hl_years_annual:
+            if ((year not in trunc_Yrs) and (year-15 not in trunc_Yrs)):
+                raise ValueError(
+                    f'SR15 definition requires the years {year} and {year-15} '
+                    'to be in the truncation years: '
+                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
+
             years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
@@ -990,20 +1032,32 @@ if __name__ == "__main__":
             df_headlines_i.index.name = 'Year'
             dfs.append(df_headlines_i)
 
-        T4 = dt.datetime.now()
-        print(f'... took {T4 - T3}')
+        T2 = dt.datetime.now()
+        print(f'... took {T2 - T1}')
 
         # AR6 DEFINITION (DECADE MEAN) ########################################
-        print('Calculating AR6-definition temps', end=' ')
-        if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
-            # The final condition is to avoid duplicate calculations when
-            # the end_regress is 2019.
-            years_headlines = [[2010, 2019], [end_regress-9, end_regress]]
-        else:
-            years_headlines = [[end_regress-9, end_regress]]
+    if 'AR6' in headline_toggles:
+        T1 = dt.datetime.now()
+        hl_years_decadal = [y for y in hl_years
+                            if ((y in trunc_Yrs) and (y-9 in trunc_Yrs))]
+        if ((headline_years == 'IGCC') and (2019 not in hl_years_decadal)):
+            hl_years_decadal.append(2019)
 
-        for years in years_headlines:
-            recent_years = ((years[0] <= trunc_Yrs) * (trunc_Yrs <= years[1]))
+        print('Calculating AR6-definition temps', end=' ')
+        # if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
+        #     # The final condition is to avoid duplicate calculations when
+        #     # the end_regress is 2019.
+        #     years_headlines = [[2010, 2019], [end_regress-9, end_regress]]
+        # else:
+        #     years_headlines = [[end_regress-9, end_regress]]
+
+        for year in hl_years_decadal:
+            if ((year not in trunc_Yrs) and (year-9 not in trunc_Yrs)):
+                raise ValueError(
+                    f'AR6 definition requires the years {year-9} and '
+                    f'{year} to be in the truncation years: '
+                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
+            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_AR6 = \
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
 
@@ -1016,51 +1070,56 @@ if __name__ == "__main__":
                 for var in vars_list for sigma in sigmas_all
             }
             df_headlines_i = pd.DataFrame(
-                dict_Results, index=['-'.join([str(y) for y in years])])
+                dict_Results, index=['-'.join([str(year-9), str(year)])])
             df_headlines_i.columns.names = ['variable', 'percentile']
             df_headlines_i.index.name = 'Year'
             dfs.append(df_headlines_i)
 
-        T5 = dt.datetime.now()
-        print(f'... took {T5 - T4}')
+        T2 = dt.datetime.now()
+        print(f'... took {T2 - T1}')
 
+    if 'CGWL' in headline_toggles:
+        T1 = dt.datetime.now()
         # CGWL DEFINITION (20YR MEAN CENTERED WITH PROJECTIONS) ###############
         # This definition was propsoed in Betts et al., 2023, and is not
         # currently used in the IPCC/IGCC assessments.
 
         # Check that we have the years needed for the CGWL definition
-        if ((end_regress-9 in trunc_Yrs) and (end_regress+10 in trunc_Yrs)):
-            print('Calculating CGWL definition temps', end=' ')
-            for years in [[end_regress-9, end_regress+10]]:
-                recent_years = ((years[0] <= trunc_Yrs) *
-                                (trunc_Yrs <= years[1]))
-                temp_Att_Results_CGWL = \
-                    temp_Att_Results[recent_years, :, :].mean(axis=0)
-                # Obtain statistics
-                gwi_headline_array = np.percentile(
-                    temp_Att_Results_CGWL, sigmas_all, axis=1)
-                dict_Results = {
-                    (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
-                                                     vars_list.index(var)]
-                    for var in vars_list for sigma in sigmas_all
-                }
-                df_headlines_i = pd.DataFrame(
-                    dict_Results, index=[
-                        f"{'-'.join([str(y) for y in years])} (CGWL definition)"
-                    ])
-                df_headlines_i.columns.names = ['variable', 'percentile']
-                df_headlines_i.index.name = 'Year'
-                dfs.append(df_headlines_i)
+        for year in hl_years:
+            if not ((year-9 in trunc_Yrs) and (year+10 in trunc_Yrs)):
+                raise ValueError(
+                    f'CGWL definition requires the years {year-9} and '
+                    f'{year+10} to be in the truncation years: '
+                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
+
+            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
+            temp_Att_Results_CGWL = \
+                temp_Att_Results[recent_years, :, :].mean(axis=0)
+            # Obtain statistics
+            gwi_headline_array = np.percentile(
+                temp_Att_Results_CGWL, sigmas_all, axis=1)
+            dict_Results = {
+                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                                                 vars_list.index(var)]
+                for var in vars_list for sigma in sigmas_all
+            }
+            df_headlines_i = pd.DataFrame(
+                dict_Results, index=[
+                    f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"
+                ])
+            df_headlines_i.columns.names = ['variable', 'percentile']
+            df_headlines_i.index.name = 'Year'
+            dfs.append(df_headlines_i)
         else:
-            print('CGWL definition skipped; required number of projected' +
+            print('CGWL definition skipped; required number of projected ' +
                   'years not available.')
 
-        T6 = dt.datetime.now()
-        print(f'... took {T6 - T5}')
+        T2 = dt.datetime.now()
+        print(f'... took {T2 - T1}')
 
-        df_headlines = pd.concat(dfs, axis=0)
-        df_headlines.to_csv(f'{results_folder}{output_path}' +
-                            f'GWI_results_headlines_{variation}.csv')
+    df_headlines = pd.concat(dfs, axis=0)
+    df_headlines.to_csv(f'{results_folder}{output_path}' +
+                        f'GWI_results_headlines_{variation}.csv')
 
     # RATE: AR6 DEFINITION
     if rate_toggle:
