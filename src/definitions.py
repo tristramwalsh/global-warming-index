@@ -16,6 +16,8 @@ import sys
 def load_ERF(scenario, regress_vars, ensemble_members):
     if 'observed-20' in scenario:
         df_ERF = load_ERF_CMIP6(scenario, regress_vars)
+    elif 'observed_JK' in scenario:
+        df_ERF = load_ERF_SSP(scenario, regress_vars)
     elif 'observed-SSP' in scenario:
         df_ERF = load_ERF_SSP(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
@@ -381,6 +383,8 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
 def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     if 'observed-20' in scenario:
         df_temp = load_HadCRUT(scenario, start_pi, end_pi)
+    elif 'observed_JK' in scenario:
+        df_temp = load_JK(scenario, start_pi, end_pi)
     elif 'observed-SSP' in scenario:
         df_temp = load_HadCRUT('observed-2024', start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
@@ -424,6 +428,25 @@ def load_HadCRUT(scenario, start_pi, end_pi):
 
     return df_temp_Obs
 
+def load_JK(scenario, start_pi, end_pi):
+    """Load multi-dataset observations from John Kennedy and
+    remove PI baseline."""
+    here = Path(__file__).parent
+    temp_ens_Path = (
+        f'../data/observed_JK-2024/Temp/JohnKennedy/' +
+        'sst_pseudo.csv')
+
+    # Read the csv file into a pandas dataframe. But note that, unlike the
+    # HadCRUT dataset, there are no column names in this csv; we need the
+    # first column to be named 'Year', and the rest to be named 'Realization_x'
+    # for x=0,1,2,...,N where N is the number of columns that are not 'Year'.
+    temp_ens_Path = here / temp_ens_Path
+    df_temp_Obs = pd.read_csv(temp_ens_Path, header=None)
+    n_ens = df_temp_Obs.shape[1] - 1
+    col_names = ['Year'] + [f'Realization_{i}' for i in range(n_ens)]
+    df_temp_Obs.columns = col_names
+    df_temp_Obs = df_temp_Obs.set_index('Year')
+    return df_temp_Obs
 
 # def load_PiC_Old(n_yrs):
 #     """Load piControl data from Stuart's ERF datasets."""

@@ -213,7 +213,7 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
         ax.errorbar(df_temp_Obs.index, df_temp_Obs.quantile(q=0.5, axis=1),
                     yerr=(err_neg, err_pos),
                     fmt='o', color=plot_cols['Obs'], ms=2.5, lw=1,
-                    label=labels*'Reference Temp: HadCRUT5')
+                    label=labels*'Reference Temp')
     # Plot the PiControl ensemble
     if df_temp_PiC is not None:
         if len(sigmas) > 1:

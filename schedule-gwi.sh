@@ -11,15 +11,15 @@ START_REGRESS=1850
 # Select the date to end the regression range at. Create a sequential range
 # for the range of regressed years.
 # This is for calculating the historical-only GWI:
-# array_values=`seq 2000 2023`  # This is inclusive of the start and end years
+# END_REGRESS=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-array_values=`seq 2024 2024`
+END_REGRESS=`seq 1950 2024`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
-# array_samples=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
+# SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-array_samples=(9 9 9 9)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(80 80 80)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -42,10 +42,11 @@ VARS=GHG,OHF,Nat
 # e.g. observed-SSP119
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
-SCENARIO=observed-2024
+# e.g. observed_JK-2024-SSP245
+SCENARIO=observed_JK-2024-SSP245
 
 # Select truncation range
-TRUNCATION=1850-2024
+TRUNCATION=1850-2050
 
 # Select whether to include the rate of change in the regression
 # e.g. y
@@ -55,7 +56,7 @@ INCLUDE_RATE=n
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n
-HEADLINE_TOGGLES='annual,AR6,SR1.5'
+HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 
 # Select which years for the headlines to cover.
 # If HEADLINES_TOGGLE is set to 'n' then this will be ignored.
@@ -65,7 +66,7 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5'
 # e.g. '2024' for a single year
 # e.g. '2023,2024,2025' for multiple separate years.
 # e.g. $(seq -s, 1950 2024) will create a comma-separated list of years
-HEADLINE_YEARS=$(seq -s, 2020 2024)
+HEADLINE_YEARS='end_regress'
 
 
 # Select which ensemble members use from the scenario ERF/Temp files
@@ -90,11 +91,11 @@ mkdir -p ${LOG_DIR}
 # Keep track of which iteration we are on (avoid overwriting log files)
 count=1
 # Create the job file for each job ID
-for j in "${array_samples[@]}"
+for j in "${SUBSAMPLE_ITERATIONS[@]}"
 do
 
-for i in $array_values
-# for i in "${array_values[@]}"
+for i in $END_REGRESS
+# for i in "${END_REGRESS[@]}"
 do
 # 
 
@@ -148,7 +149,7 @@ rm -rf ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
 done
 
 # Increment the counter that keeps track of multiple runs at the same sample
-# size. i.e. for each member of array_samples, this counter will increment.
+# size. i.e. for each member of SUBSAMPLE_ITERATIONS, this counter will increment.
 count=$((count + 1))
 
 done

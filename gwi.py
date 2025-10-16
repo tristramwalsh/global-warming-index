@@ -1110,9 +1110,7 @@ if __name__ == "__main__":
             df_headlines_i.columns.names = ['variable', 'percentile']
             df_headlines_i.index.name = 'Year'
             dfs.append(df_headlines_i)
-        else:
-            print('CGWL definition skipped; required number of projected ' +
-                  'years not available.')
+
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
