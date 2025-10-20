@@ -19,7 +19,7 @@ END_REGRESS=`seq 1950 2024`
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-SUBSAMPLE_ITERATIONS=(80 80 80)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(1000)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -69,18 +69,33 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 HEADLINE_YEARS='end_regress'
 
 
-# Select which ensemble members use from the scenario ERF/Temp files
-# e.g. all
-# e.g. 1
-# e.g. {0..49}
-SPECIFY_ENSEMBLE_MEMBERS=all
-# SPECIFY_ENSEMBLE_MEMBERS={1..60}
+# Select which ensemble members use from the scenario ERF/GMT files
+# e.g. 'all'  # (Use all members for all sources).
+# e.g. 1.  # (Use single member only)
+# e.g. {0..49}  # (Use single member only, and apply separately to each member
+# in the range)
+SPECIFY_ENSEMBLE_MEMBERS={50..99}
+
+
+# Select which uncertainty sources this single-member selection should apply
+# to.
+# NOTE: For now, we just consider ERF and GMT specification.
+# By default, all ensemble members will be used for an uncertainty source;
+# If SPECIFY_ENSEMBLE_MEMBERS is not set to 'all', then only the specified
+# members will be used for the sources listed here; sources not listed here
+# will use all ensemble members.
+# e.g. 'ERF'  # (Apply above selection to ERF only)
+# e.g. 'GMT'  # (Apply above selection to GMT only)
+# e.g. 'ERF,GMT'  # (Apply above selection to both ERF and GMT; in this case,
+# the same ensemble members will be paired for both sources;
+# i.e. ensemble member 0 for ERF is paired with ensemble member 0 for GMT)
+SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT'
 
 
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-WALLTIME=2:00:00
+WALLTIME=12:00:00
 PARTITION=Short
 SIM_NAME=gwi
 SIM_CPUS=28
@@ -110,7 +125,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem-per-cpu=8192
+# #SBATCH --mem-per-cpu=8192
 #SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it
@@ -128,11 +143,11 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
   # Regress against all reference temperatures at the same time
-  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
     # Regress against each reference temperature separately
-    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member=\$k
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k
   done
 fi
 

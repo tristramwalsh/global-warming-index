@@ -382,11 +382,11 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
 
 def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     if 'observed-20' in scenario:
-        df_temp = load_HadCRUT(scenario, start_pi, end_pi)
+        df_temp = load_Temp_HadCRUT(scenario, start_pi, end_pi)
     elif 'observed_JK' in scenario:
-        df_temp = load_JK(scenario, start_pi, end_pi)
+        df_temp = load_Temp_JK(scenario, start_pi, end_pi)
     elif 'observed-SSP' in scenario:
-        df_temp = load_HadCRUT('observed-2024', start_pi, end_pi)
+        df_temp = load_Temp_HadCRUT('observed-2024', start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         df_temp = load_Temp_SMILE(scenario, start_pi, end_pi)
     elif 'NorESM' in scenario:
@@ -402,7 +402,7 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     else:
         print(f'Invalid ensemble members {ensemble_members} for ensemble:'
               + f'{df_temp.columns.to_list()}')
-        raise ValueError('Invalid ensemble member {ensemble_member} for data.')
+        raise ValueError(f'Invalid ensemble member {ensemble_member} for data.')
 
     # Remove pre-industrial baseline from temperature data
     df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
@@ -410,7 +410,7 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     return df_temp
 
 
-def load_HadCRUT(scenario, start_pi, end_pi):
+def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     """Load HadCRUT5 observations and remove PI baseline."""
     here = Path(__file__).parent
     temp_ens_Path = (
@@ -426,9 +426,12 @@ def load_HadCRUT(scenario, start_pi, end_pi):
                                                    ).filter(regex='Realization'
                                                             )
 
+    # Rename the columns called "Realization_x" to just "x"
+    df_temp_Obs.columns = [col.split('_')[-1] for col in df_temp_Obs.columns]
+
     return df_temp_Obs
 
-def load_JK(scenario, start_pi, end_pi):
+def load_Temp_JK(scenario, start_pi, end_pi):
     """Load multi-dataset observations from John Kennedy and
     remove PI baseline."""
     here = Path(__file__).parent
@@ -443,7 +446,7 @@ def load_JK(scenario, start_pi, end_pi):
     temp_ens_Path = here / temp_ens_Path
     df_temp_Obs = pd.read_csv(temp_ens_Path, header=None)
     n_ens = df_temp_Obs.shape[1] - 1
-    col_names = ['Year'] + [f'Realization_{i}' for i in range(n_ens)]
+    col_names = ['Year'] + [str(realisation) for realisation in range(n_ens)]
     df_temp_Obs.columns = col_names
     df_temp_Obs = df_temp_Obs.set_index('Year')
     return df_temp_Obs
@@ -696,7 +699,7 @@ def rate_func(array):
 
 def rate_HadCRUT5(start_pi, end_pi, start_yr, end_yr, sigmas_all):
     # Load the HadCRUT5 dataset
-    df_temp_Obs = load_HadCRUT(start_pi, end_pi, start_yr, end_yr)
+    df_temp_Obs = load_Temp_HadCRUT(start_pi, end_pi, start_yr, end_yr)
     temp_Yrs = df_temp_Obs.index.values
     arr_temp_Obs = df_temp_Obs.values
     # Apply the function defs.rate_calc to each column of this dataframe

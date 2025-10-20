@@ -598,19 +598,46 @@ if __name__ == "__main__":
         available = os.listdir('data/')
         scenario = input(f'Scenario (e.g. {available}: ')
 
+    # Specify whether you want to specify individual ensemble members for
+    # specific sources of uncertainty.
     # Specify the subset of the scenario's ensemble.
     # By default, use the entire ensemble of forcings and temperatures.
     # Optionally specify a specific member, e.g. as required for NorESM Volc
     # scenarios for Thorne et al., 2025
-    if '--specify-ensemble-member' in argv_dict:
-        ensemble_members = argv_dict['--specify-ensemble-member']
-    else:
-        ensemble_members = 'all'
+    if (('--specify-ensemble-member-sources-for' in argv_dict) and
+        ('--specify-ensemble-member' in argv_dict)):
+
+        all_sources = ['GMT', 'ERF']
+        specified_member_sources = argv_dict['--specify-ensemble-member-sources-for'
+                                      ].split(',')
+        specified_member = argv_dict['--specify-ensemble-member']
+
+        # If specified sources are not in all_sources, raise error.
+        for source in specified_member_sources:
+            if source not in all_sources:
+                raise ValueError(f'Invalid source specified: {source}')
+
+        unspecified_sources = (list(set(all_sources) -
+                               set(specified_member_sources)))
+        
+        # Create a dictionary mapping source to specified ensemble members.
+        spec_ensemble_members = {
+            source: specified_member
+            for source in specified_member_sources
+        }
+        # Default behaviour for unspecified sources is to use the entire
+        # ensemble.
+        unspec_ensemble_members = {
+            source: 'all'
+            for source in unspecified_sources
+        }
+        ensemble_members = spec_ensemble_members | unspec_ensemble_members
+
 
     # Create directory structure based on the input parameters.
     output_path = (
         f'SCENARIO--{scenario}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members}/' +
+        f'ENSEMBLE-MEMBER--{specified_member}/' +
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
@@ -628,7 +655,7 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members)
+    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members['ERF'])
     forc_var_names = sorted(
         df_forc.columns.get_level_values('variable').unique())
     # Obtain the ERF_start and ERF_end from the dataframe.
@@ -651,7 +678,7 @@ if __name__ == "__main__":
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
     # TEMPERATURE
-    df_temp_Obs = defs.load_Temp(scenario, ensemble_members, start_pi, end_pi)
+    df_temp_Obs = defs.load_Temp(scenario, ensemble_members['GMT'], start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
@@ -680,7 +707,8 @@ if __name__ == "__main__":
     print('\nCalculating GWI with the following parameters:')
     print(f'Cluster node: {os.uname().nodename}')
     print(f'Scenario: {scenario}')
-    print(f'Reference temperature realisation number: {ensemble_members}')
+    print(f'Reference temperature realisation number: {ensemble_members["GMT"]}')
+    print(f'ERF realisation number: {ensemble_members["ERF"]}')
     print(f'Regressed variables: {regress_vars}')
     print(f'Forcing range: {forc_Yrs_min}-{forc_Yrs_max}')
     print(f'Reference temperature range: {temp_Yrs.min()}-{temp_Yrs.max()}')

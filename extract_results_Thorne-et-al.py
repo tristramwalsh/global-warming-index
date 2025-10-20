@@ -2,9 +2,13 @@ import os
 import sys
 import pandas as pd
 
-scenarios = ['observed-SSP245',
-             'SMILE_ESM-SSP126', 'SMILE_ESM-SSP245', 'SMILE_ESM-SSP370',
-             'NorESM_rcp45-Volc', 'NorESM_rcp45-VolcConst']
+scenarios = [
+    # 'observed-SSP245',
+    # 'SMILE_ESM-SSP126', 'SMILE_ESM-SSP245', 'SMILE_ESM-SSP370',
+    # 'NorESM_rcp45-Volc', 'NorESM_rcp45-VolcConst',
+    'observed_JK-2024-SSP245'
+    ]
+# scenarios = ['observed_JK-2024-SSP245',]
 variables = 'GHG-Nat-OHF'
 ensembles = 'all'
 headlines = ['ANNUAL', 'SR15', 'AR6', 'CGWL']
