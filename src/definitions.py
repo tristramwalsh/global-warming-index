@@ -1,3 +1,4 @@
+import sys
 import os
 import multiprocessing as mp
 import numpy as np
@@ -7,7 +8,7 @@ import xarray as xr
 import glob
 from pathlib import Path
 import pymagicc
-import sys
+import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 
 ###############################################################################
@@ -887,3 +888,83 @@ def generate_headline_years(headline_years, end_regress, end_trunc):
         raise ValueError('Invalid headline year format.')
 
     return hl_years
+
+
+def model_prior_warming(
+        model_choice, df_params, df_forc):
+    """Calculate prior (pre-constrained) warming."""
+    """Parallelise over FaIR parameterisations, exploit vectorisation of
+    FaIR model by running all forcings at once through it, and sample over all
+    ERF and model uncertainty."""
+
+    # Preparing lists to ensure that order of variables and ensemble members
+    # are consistent across the different dataframes. I'm pretty sure that
+    # pandas keeps column order consistent, but this is just extra safety
+    var_list_ERF = sorted(df_forc.columns.get_level_values(
+        "variable").unique().to_list())
+    ens_list_ERF = df_forc.columns.get_level_values(
+        "ensemble").unique().to_list()
+    vars_extra = extra_vars(var_list_ERF)
+    
+
+    # Prepare results #########################################################
+    # Total sub-ensemble size: multiple number of ensemble members for ERF:
+    n_ens = len(ens_list_ERF)
+    n_yrs = df_forc.shape[0]
+    forc_Yrs = df_forc.index.to_numpy()  # Full forcing years
+
+    # Prepare FaIR parameters for this particular model.
+    params_FaIR = df_params[model_choice]
+    params_FaIR.columns = pd.MultiIndex.from_product(
+        [[model_choice], params_FaIR.columns])
+
+    # Prepare results array for temperatures. Note that temp_Mod naming refers
+    # to the fact that these temperatures are outputs from the model.
+    temp_Mod_array = np.zeros(shape=(forc_Yrs.shape[0],
+                                     # -1 to get rid of Res
+                                     len(var_list_ERF) + len(vars_extra) - 1,
+                                     len(ens_list_ERF)))
+
+    # Calculate temperatures from forcings for all ensembles at once,
+    # leveraging FaIR's vectorisation
+    for var in var_list_ERF:
+        # Select forcings for the specific variable. This selects all ensemble
+        # members available from the random subsample.
+        forc_var_All = df_forc.loc[:, (var, slice(None))]
+
+        # FaIR won't run without emissions or concentrations, so specify
+        # no zero emissions for input.
+        emis_FAIR = fair.return_empty_emissions(
+            df_to_copy=False,
+            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
+            scen_names=ens_list_ERF)
+        # Prepare a FaIR-compatible forcing dataframe
+        forc_FaIR = fair.return_empty_forcing(
+            df_to_copy=False,
+            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
+            scen_names=ens_list_ERF)
+        for ens in ens_list_ERF:
+            forc_FaIR[ens] = forc_var_All[(var, ens)].to_numpy()
+
+        # Run FaIR. Convert output to numpy array for later regression.
+        temp_All = fair.run_FaIR(emissions_in=emis_FAIR,
+                                 forcing_in=forc_FaIR,
+                                 thermal_parameters=params_FaIR,
+                                 show_run_info=False)['T'].to_numpy()
+        temp_Mod_array[:, var_list_ERF.index(var), :] = temp_All
+
+
+
+    # TOTAL WARMING
+    # NOTE:'Tot' is in position -1 regardless of the number of variables:
+    temp_Tot = temp_Mod_array[:, :-1, :].sum(axis=1)
+    temp_Mod_array[:, -1, :] = temp_Tot
+
+    # ANTROPOGENIC WARMING
+    if 'Ant' in vars_extra:
+        temp_Ant = (temp_Mod_array[:, var_list_ERF.index('GHG')] +
+                    temp_Mod_array[:, var_list_ERF.index('OHF')])
+        temp_Mod_array[:, -2, :] = temp_Ant
+    
+    return temp_Mod_array
+

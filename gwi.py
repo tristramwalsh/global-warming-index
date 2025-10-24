@@ -651,6 +651,11 @@ if __name__ == "__main__":
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
+    output_path_priors = (
+        f'SCENARIO--{scenario}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
+        f'VARIABLES--{"-".join(regress_vars)}/'
+    )
 
     # Create a folder to store the plots
     results_folder = 'results/iterations/'
@@ -659,6 +664,9 @@ if __name__ == "__main__":
     plot_folder = 'plots/iterations/'
     if not os.path.exists(f'{plot_folder}{output_path}'):
         os.makedirs(f'{plot_folder}{output_path}')
+    results_folder_priors = 'results/priors/'
+    if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
+        os.makedirs(f'{results_folder_priors}{output_path_priors}')
 
     ###########################################################################
     # READ IN THE DATA ########################################################
@@ -885,7 +893,7 @@ if __name__ == "__main__":
 
     # Parallelise GWI calculation, with each thread corresponding to a
     # single (model) parameterisation for FaIR.
-    T1 = dt.datetime.now()
+    T1a = dt.datetime.now()
     with mp.Pool(os.cpu_count()) as p:
         print('Partialising Function')
         partial_GWI = functools.partial(
@@ -909,21 +917,20 @@ if __name__ == "__main__":
     # Create a list of the names of the attributed warming variables
     # TODO: rename this to vars_Att or something, since Python syntax makes
     # vars_list red, so probably a bad idea.
-    vars_list = forc_var_names
+    vars_list = forc_var_names.copy()
     # print(vars_list)
     vars_list.extend(defs.extra_vars(forc_var_names))
-    # print(vars_list)
 
-    T1_1 = dt.datetime.now()
-    print(f'... took {T1_1 - T1}')
+    T1b = dt.datetime.now()
+    print(f'... took {T1b - T1a}')
 
     print('Concatenating Results', end=' ')
     # Combine results from temperature attributions from all parallel model
     # emulations ('results' above is a list of arrays, one for each emulation).
     temp_Att_Results = np.concatenate(results, axis=2)
     # print(temp_Att_Results.shape)
-    T2 = dt.datetime.now()
-    print(f'... took {T2 - T1_1}')
+    T2a = dt.datetime.now()
+    print(f'... took {T2a - T1b}')
 
     # Reminder: temp_Att_Results has shape (years, vars_list, n (ensembles members))
     n = temp_Att_Results.shape[2]
@@ -950,6 +957,22 @@ if __name__ == "__main__":
         coef_Reg_Results = coef_Reg_Results[:, coef_mask]
         print('Shape of masked attribution results:', temp_Att_Results.shape)
 
+
+    # CALCULATE PRIOR WARMING #################################################
+    print('Calculating PRIORS (parallelised)', end=' ')
+    with mp.Pool(os.cpu_count()) as p:
+        # print('Partialising Function')
+        partial_priors = functools.partial(
+            defs.model_prior_warming,
+            df_params=params_subset,
+            df_forc=df_forc)
+        results = p.map(partial_priors, models)
+
+    # Combine results from all models into one array
+    temp_Priors = np.concatenate(results, axis=2)
+    T2b = dt.datetime.now()
+    print(f'... took {T2b - T2a}')
+
     # PRODUCE FINAL RESULTS DATASETS ######################################
 
     # For multiple runs, we want to save the results with a unique identifier.
@@ -965,12 +988,21 @@ if __name__ == "__main__":
         f'DATE-CALCULATED--{iteration_id}'
     )
 
+    full_prior_size = (
+        len(models) *
+        len(df_forc.columns.get_level_values("ensemble").unique()))
+    variation_priors = (
+        f'SCENARIO--{scenario}_' +
+        f'VARIABLES--{"-".join(regress_vars)}_' +
+        f'ENSEMBLE-SIZE--{full_prior_size}_'
+    )
+
     # NOTE TO SELF: multidimensional np.percentile() changes the order of
     # the axes, so that the axis along which you took the percentiles is
     # now the first axis, and the other axes are the remaining axes...
 
     # TIMESERIES RESULTS ######################################################
-    print('Calculating percentiles', end=' ')
+    print('Calculating percentiles for GWI', end=' ')
     gwi_timeseries_array = np.percentile(temp_Att_Results, sigmas_all, axis=2)
     dict_Results = {
         (var, sigma):
@@ -983,8 +1015,38 @@ if __name__ == "__main__":
     df_Results.to_csv(f'{results_folder}{output_path}' +
                       f'GWI_results_timeseries_{variation}.csv')
 
-    T3 = dt.datetime.now()
-    print(f'... took {T3 - T2}')
+    T3a = dt.datetime.now()
+    print(f'... took {T3a - T2b}')
+
+    print('Calculating percentiles for priors', end=' ')
+    vars_list_priors = vars_list.copy()
+    vars_list_priors.remove('Res')
+    
+    priors_timeseries_array = np.percentile(temp_Priors, sigmas_all, axis=2)
+    dict_Results_priors = {
+        (var, sigma):
+        priors_timeseries_array[
+            sigmas_all.index(sigma), :, vars_list_priors.index(var)]
+        for var in vars_list_priors for sigma in sigmas_all
+    }
+    df_Results_priors = pd.DataFrame(
+        dict_Results_priors, index=df_forc.index.to_numpy()
+        )
+    df_Results_priors.columns.names = ['variable', 'percentile']
+    df_Results_priors.index.name = 'Year'
+    priors_filename = (
+    f'{results_folder_priors}{output_path_priors}' +
+        f'PRIOR_results_timeseries_{variation_priors}.csv'
+    )
+    # Note that every iteration of GWI will result in an identical prior
+    # dataset, so if running multiple iterations, this will overwrite the
+    # previously saved prior dataset (there is no date identifier in the
+    # filename), but note this is intended behaviour to avoid unnecessary
+    # duplication of identical datasets.
+    df_Results_priors.to_csv(priors_filename)
+
+    T3b = dt.datetime.now()
+    print(f'... took {T3b - T3a}')
 
     # HEADLINE RESULTS ########################################################
     # TODO: Update this.
@@ -1003,19 +1065,15 @@ if __name__ == "__main__":
 
     if 'annual' in headline_toggles:
         T1 = dt.datetime.now()
+        # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
         print('Reading annual mean definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
             hl_years_annual.append(2017)
 
-        # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
-        # if 2017 in trunc_Yrs:
-        #     dfs = [df_Results.loc[], df_Results.loc[[end_regress]]]
-        # else:
-        #     dfs = [df_Results.loc[[end_regress]]]
-
         dfs = [df_Results.loc[[y]] for y in hl_years_annual]
+
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 

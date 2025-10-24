@@ -713,8 +713,13 @@ if __name__ == '__main__':
     for scen in sorted(results_dfs.keys()):
 
         for ens in results_dfs[scen].keys():
+            ens_GMT = {combo.split('-')[0]: combo.split('-')[1]
+                       for combo in ens.split('_')
+                       }['GMT']
+
             df_temp_Obs = defs.load_Temp(
-                scenario=scen, ensemble_members=ens, start_pi=1850, end_pi=1900)
+                scenario=scen, ensemble_members=ens_GMT,
+                start_pi=1850, end_pi=1900)
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 # Create a new empty dataframe to store the historical-only results:
