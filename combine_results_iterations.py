@@ -257,17 +257,24 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
             reg_start:reg_end, :],
         plot_vars, var_colours)
 
-    ax.set_ylim(-1, np.ceil(np.max(df_temp_Obs.values) * 2) / 2)
+    
+    ax.set_ylim(
+        np.floor(np.min(results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].drop(columns='Res').values) * 2) / 2,
+        # np.ceil(np.max(df_temp_Obs.values) * 2) / 2,
+        np.ceil(np.max(results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].drop(columns='Res').values) * 2) / 2
+    )
+    # ax.set_ylim(-2,5)
+
     ax.set_xlim(trunc_start, trunc_end)
-    gr.overall_legend(fig, 'lower center', 6)
+    gr.overall_legend(fig, 'lower center', 7)
 
     # Plot a box around the regressed years
     ax.axvline(int(reg_range.split('-')[1]),
                color='darkslategray', linestyle='--')
 
-    fig.suptitle(f'Scenario--{scen} Esemble-Member--{ens} ' +
-                 f'Regressed--{reg_vars}_{reg_range}'
-                 + 'Timeseries Plot')
+    fig.suptitle(
+        f'GWI Warming Timeseries\n' +
+        f'Scenario: {scen} | Ensemble: {ens} | Regressed: {reg_vars} {reg_range}')
 
     plot_path = ('plots/aggregated/' +
                  f'SCENARIO--{scen}/' +
@@ -538,17 +545,20 @@ if __name__ == '__main__':
     ###############################################################################
     # Get a list of all files with 'AVERAGE' in them:
     results_files = {}
+    priors_files = {}
 
     scenarios_all = sorted(
             [d.split('SCENARIO--')[1] for d in os.listdir(aggregated_folder)])
     for scenario in scenarios_all:
         results_files.update({scenario: {}})
+        priors_files.update({scenario: {}})
 
         ensembles_seletions_all = sorted(
             [d.split('ENSEMBLE-MEMBER--')[1] for d in
             os.listdir(f'{aggregated_folder}/SCENARIO--{scenario}/')])
         for ensemble_selection in ensembles_seletions_all:
             results_files[scenario].update({ensemble_selection: {}})
+            priors_files[scenario].update({ensemble_selection: {}})
 
             regressed_variables_all = sorted(
                     [d.split('VARIABLES--')[1] for d in
@@ -560,10 +570,19 @@ if __name__ == '__main__':
 
             for regressed_vars in regressed_variables_all:
                 results_files[scenario][ensemble_selection].update({regressed_vars: {}})
+                priors_files[scenario][ensemble_selection].update({regressed_vars: {}})
+                
                 _path = (f'{aggregated_folder}/' +
-                        f'SCENARIO--{scenario}/' +
-                        f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
-                        f'VARIABLES--{regressed_vars}/')
+                         f'SCENARIO--{scenario}/' +
+                         f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
+                         f'VARIABLES--{regressed_vars}/')
+                _path_prior = _path.replace('aggregated', 'priors')
+                # Add prior timeseries to priors_files dictionary
+                priors_files[scenario][ensemble_selection][regressed_vars].update({
+                      # only (first) file in directory
+                    'timeseries': (_path_prior + os.listdir(_path_prior)[0])
+                })
+
                 regressed_years_vars = sorted(
                         [d.split('REGRESSED-YEARS--')[1] for d in
                         os.listdir(_path) if os.path.isdir(f'{_path}{d}')])
@@ -586,20 +605,32 @@ if __name__ == '__main__':
                             for res_type in ['timeseries', 'headlines']
                         }
                     })
-    # print(json.dumps(results_files, indent=4))
+    # print(json.dumps(priors_files, indent=4))
+
 
     print('Loading all averaged datasets')
     results_dfs = results_files.copy()
+    priors_dfs = priors_files.copy()
     for reg_scen in results_files.keys():
         for reg_ens in results_files[reg_scen].keys():
             for reg_vars in results_files[reg_scen][reg_ens].keys():
+                df_ = pd.read_csv(
+                    priors_files[reg_scen
+                                 ][reg_ens
+                                   ][reg_vars
+                                     ]['timeseries'],
+                    index_col=0,  header=[0, 1], skiprows=0)
+                priors_dfs[reg_scen
+                           ][reg_ens
+                             ][reg_vars
+                               ]['timeseries'] = df_
                 for reg_range in results_files[reg_scen][reg_ens][reg_vars].keys():
                     for res_type in results_files[reg_scen][reg_ens][reg_vars][reg_range].keys():
                         df_ = pd.read_csv(
                                 results_files[reg_scen
-                                            ][reg_ens
+                                              ][reg_ens
                                                 ][reg_vars
-                                                ][reg_range
+                                                  ][reg_range
                                                     ][res_type],
                                 index_col=0,  header=[0, 1], skiprows=0)
                         results_dfs[reg_scen
@@ -657,7 +688,7 @@ if __name__ == '__main__':
 
                 if single_toggle:
                     with mp.Pool(os.cpu_count()) as p:
-                        print('      Plotting single_timeseries for:',
+                        print('      Plotting single_timeseries for GWI:',
                             scen, ens, reg_vars)
                         # print('  in parallel for:', reg_ranges_all)
                         plot_names = p.map(
@@ -705,10 +736,55 @@ if __name__ == '__main__':
                         save_all=True, append_images=images_list[1:],
                         optimize=False, duration=500, loop=0)
 
-
-    ###############################################################################
-    # Generate the historical-only timeseries #####################################
-    ###############################################################################
+            ###################################################################
+            # Plot timeseries for PRIOR warming ###############################
+            ###################################################################
+            plot_vars = priors_dfs[
+                scen][ens][reg_vars]['timeseries'].columns.get_level_values(
+                    0).unique().to_list()
+            fig = plt.figure(figsize=(12, 8))
+            ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), 
+                                  rowspan=1, colspan=1)
+            
+            gr.gwi_timeseries(
+                ax, df_temp_Obs, None,
+                priors_dfs[scen][ens][reg_vars]['timeseries'],
+                plot_vars, var_colours,
+                hatch='x', linestyle='dashed')
+            ax.set_ylim(
+                np.floor(np.min(
+                    priors_dfs[scen][ens][reg_vars]['timeseries'].values)
+                    * 2) / 2,
+                np.ceil(np.max(
+                    priors_dfs[scen][ens][reg_vars]['timeseries'].values)
+                    * 2) / 2
+                )
+            # ax.set_ylim(-2,5)
+            ax.set_xlim(
+                max(1850,
+                    priors_dfs[scen][ens][reg_vars]['timeseries'].index.min()),
+                priors_dfs[scen][ens][reg_vars]['timeseries'].index.max())
+            gr.overall_legend(fig, 'lower center', 6)
+            fig.suptitle(
+                f'Prior Warming Timeseries\n' +
+                f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}')
+            plot_path = ('plots/priors/' +
+                 f'SCENARIO--{scen}/' +
+                 f'ENSEMBLE-MEMBER--{ens}/' +
+                 f'VARIABLES--{reg_vars}/')
+            if not os.path.exists(plot_path):
+                os.makedirs(plot_path)
+            plot_name = (f'{plot_path}/' +
+                 f'Prior_Timeseries_Scenario--{scen}_' +
+                 f'ENSEMBLE-MEMBER--{ens}_' +
+                 f'VARIABLES--{reg_vars}.png')
+            fig.savefig(plot_name)
+            plt.close(fig)
+    
+    
+    ###########################################################################
+    # Generate the historical-only timeseries #################################
+    ###########################################################################
 
     for scen in sorted(results_dfs.keys()):
 

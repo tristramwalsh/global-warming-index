@@ -199,7 +199,7 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
     if sigmas == 'all':
         sigmas = df_Results_ts.columns.get_level_values('percentile').unique()
     # Shade the pre-industrial period
-    ax.fill_between([1850, 1900], [-5, -5], [+5, +5],
+    ax.fill_between([1850, 1900], [-10, -10], [+10, +10],
                     color='#f4f2f1')
     ax.text(1875, -0.85, '1850\N{EN DASH}1900\nPreindustrial Baseline',
             ha='center')
