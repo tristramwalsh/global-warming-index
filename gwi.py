@@ -44,7 +44,6 @@ def GWI_faster(
         "ensemble").unique().to_list()
     ens_list_Obs = df_temp_Obs.columns.to_list()
     ens_list_PiC = df_temp_PiC.columns.to_list()
-    # NOTE: we get passed a list of variables.
 
     # Prepare results #########################################################
     # Total sub-ensemble size: multiple number of ensemble members for each of:
@@ -631,13 +630,24 @@ if __name__ == "__main__":
             source: 'all'
             for source in unspecified_sources
         }
+        # Join the two dictionaries.
         ensemble_members = spec_ensemble_members | unspec_ensemble_members
 
+    else:
+        # Default: use all ensemble members for all sources.
+        ensemble_members = {'GMT': 'all', 'ERF': 'all'}
+    
+    # Currently this gives a dict of the form:
+    # {'GMT': 'GMTmems', 'ERF': 'ERFmems'}
+    # Turn that into a string of this form": ""ERF-ERFmems_GMT-GMTmems"
+    ensemble_members_str = '_'.join(
+        f'{source}-{member}' for source, member in ensemble_members.items()
+    )
 
     # Create directory structure based on the input parameters.
     output_path = (
         f'SCENARIO--{scenario}/' +
-        f'ENSEMBLE-MEMBER--{specified_member}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )

@@ -427,7 +427,7 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
                                                             )
 
     # Rename the columns called "Realization_x" to just "x"
-    df_temp_Obs.columns = [col.split('_')[-1] for col in df_temp_Obs.columns]
+    df_temp_Obs.columns = [col.split(' ')[-1] for col in df_temp_Obs.columns]
 
     return df_temp_Obs
 

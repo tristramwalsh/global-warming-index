@@ -2,7 +2,7 @@
 models/FaIR_V2
 
 # slurm logs
-slurm_logs/
+slurm_logs*/
 
 # outputs: results and plots
 results*/

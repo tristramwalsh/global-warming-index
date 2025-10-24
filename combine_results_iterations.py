@@ -618,8 +618,14 @@ if __name__ == '__main__':
         print('SCENARIO:', scen)
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
+            # e.g. pull the 7 (or similar) out of: GMT-7_ERF-all
+            ens_GMT = {combo.split('-')[0]: combo.split('-')[1]
+                       for combo in ens.split('_')
+                       }['GMT']
+
             df_temp_Obs = defs.load_Temp(
-                scenario=scen, ensemble_members=ens, start_pi=1850, end_pi=1900)
+                scenario=scen, ensemble_members=ens_GMT,
+                start_pi=1850, end_pi=1900)
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 ###################################################################
@@ -631,11 +637,18 @@ if __name__ == '__main__':
                     print('    All years available for: ',
                         defs.check_steps(reg_ranges_all)['range'])
                 # for reg_range in reg_ranges_all:
+                
                 # This code was just the code inside the single_timeseries function
                 # above, separated in order to parallelise to speed up code.
-                if ens == 'all':
+                
+                # All specifications:
+                ens_values = [combo.split('-')[1] for combo in ens.split('_')]
+                ens_nums = [s for s in ens_values if s.isdigit()]
+                if set(ens_values) == {'all'}:
                     single_toggle = True
-                elif (int(ens) % 10) == 0:
+                # If divisible by 10, then plot (i.e. just plot 1/10 of the
+                # available ensemble members to save space/time)
+                elif any(int(s) % 10 == 0 for s in ens_nums):
                     single_toggle = True
                 else:
                     single_toggle = False
