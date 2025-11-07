@@ -104,18 +104,18 @@ def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     if check_vars:
         pass
 
-    elif not check_vars and regress_vars == ['Tot']:
-        # If 'Tot' is the only variable to regress, combine all variables:
+    if not check_vars and 'Tot' in regress_vars:
+        # If 'Tot' is one variable to regress, combine all variables:
         df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
                                 ].copy().rename(columns={'GHG': 'Tot'})
         # Group df_ERF by ensemble name, and sum across variable names
         df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
                                ].groupby(level='ensemble', axis=1
                                          ).sum()
-        df_ERF = df_ERF_Tot
+        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
 
-    elif not check_vars and regress_vars == ['Ant', 'Nat']:
-        # If 'Ant' and 'Nat' are the only variables to regress, combine
+    if not check_vars and 'Ant' in regress_vars:
+        # If 'Ant' is one variable to regress, combine
         # 'GHG' and 'OHF' into 'Ant':
         df_ERF_Ant = df_ERF.loc[:, ('GHG', slice(None))
                                 ].copy().rename(columns={'GHG': 'Ant'})
@@ -123,10 +123,15 @@ def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         df_ERF_Ant[:] = df_ERF[['GHG', 'OHF']
                                ].groupby(level='ensemble', axis=1
                                          ).sum()
-        # Concatenate 'Ant' with 'Nat':
-        df_ERF_Nat = df_ERF.loc[:, ('Nat', slice(None))]
-        df_ERF = pd.concat([df_ERF_Ant, df_ERF_Nat], axis=1)
+        df_ERF = pd.concat([df_ERF_Ant, df_ERF], axis=1)
 
+    # Final check and allocation:
+    # Final check and allocation:
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+    check_vars = set(regress_vars).issubset(forc_var_names)
+    if check_vars:
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
     else:
         raise ValueError('Invalid combination of variables for regression.')
 
@@ -168,26 +173,39 @@ def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     forc_var_names = sorted(df_ERF.columns.get_level_values(
         'variable').unique().to_list())
 
-    # Check whether the regress_vars is the same as the columns of df_ERF
-    check_vars = sorted(regress_vars) == sorted(forc_var_names)
-
-    # If regress_vars and forc_vars are the same, no need to do anything.
-    # If they are not the same, aggregate into requried variables:
+    check_vars = set(regress_vars).issubset(forc_var_names)
     if check_vars:
-        pass
-
-    elif not check_vars and regress_vars == ['Tot']:
-        # If 'Tot' is the only variable to regress, combine all variables:
-        df_ERF_Tot = df_ERF.loc[:, ('Ant', slice(None))
-                                ].copy().rename(columns={'Ant': 'Tot'})
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+    
+    if not check_vars and 'Tot' in regress_vars:
+        # If 'Tot' is one variable to regress, combine all variables:
+        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
+                                ].copy().rename(columns={'GHG': 'Tot'})
         # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Tot[:] = df_ERF[['Ant', 'Nat']
+        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
                                ].groupby(level='ensemble', axis=1
                                          ).sum()
-        df_ERF = df_ERF_Tot
+        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
+    
+    if not check_vars and 'Ant' in regress_vars:
+        # If 'Ant' is one variable to regress, combine
+        # 'GHG' and 'OHF' into 'Ant':
+        df_ERF_Ant = df_ERF.loc[:, ('GHG', slice(None))
+                                ].copy().rename(columns={'GHG': 'Ant'})
+        # Group df_ERF by ensemble name, and sum across variable names
+        df_ERF_Ant[:] = df_ERF[['GHG', 'OHF']
+                               ].groupby(level='ensemble', axis=1
+                                         ).sum()
+        df_ERF = pd.concat([df_ERF_Ant, df_ERF], axis=1)
 
-    else:
-        raise ValueError('Invalid combination of variables for this scenario.')
+    # Final check and allocation:
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+    check_vars = set(regress_vars).issubset(forc_var_names)
+    if check_vars:
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+    else: 
+        raise ValueError('Invalid combination of variables for regression.')
 
     return df_ERF
 
@@ -299,7 +317,7 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     if check_vars:
         pass
 
-    elif not check_vars and regress_vars == ['Tot']:
+    if not check_vars and 'Tot' in regress_vars:
         # If 'Tot' is the only variable to regress, combine all variables:
         df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
                                 ].copy().rename(columns={'GHG': 'Tot'})
@@ -307,8 +325,15 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
                                ].groupby(level='ensemble', axis=1
                                          ).sum()
-        df_ERF = df_ERF_Tot
+        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
 
+    # Final checks and allocation:
+    # Final check and allocation:
+    forc_var_names = sorted(df_ERF.columns.get_level_values(
+        'variable').unique().to_list())
+    check_vars = set(regress_vars).issubset(forc_var_names)
+    if check_vars:
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
     else:
         raise ValueError('Invalid combination of variables for regression.')
 
@@ -900,12 +925,10 @@ def model_prior_warming(
     # Preparing lists to ensure that order of variables and ensemble members
     # are consistent across the different dataframes. I'm pretty sure that
     # pandas keeps column order consistent, but this is just extra safety
-    var_list_ERF = sorted(df_forc.columns.get_level_values(
-        "variable").unique().to_list())
+    var_list_ERF = df_forc.columns.get_level_values(
+        "variable").unique().to_list()
     ens_list_ERF = df_forc.columns.get_level_values(
         "ensemble").unique().to_list()
-    vars_extra = extra_vars(var_list_ERF)
-    
 
     # Prepare results #########################################################
     # Total sub-ensemble size: multiple number of ensemble members for ERF:
@@ -922,7 +945,8 @@ def model_prior_warming(
     # to the fact that these temperatures are outputs from the model.
     temp_Mod_array = np.zeros(shape=(forc_Yrs.shape[0],
                                      # -1 to get rid of Res
-                                     len(var_list_ERF) + len(vars_extra) - 1,
+                                    #  len(var_list_ERF) + len(vars_extra) - 1,
+                                     len(var_list_ERF),
                                      len(ens_list_ERF)))
 
     # Calculate temperatures from forcings for all ensembles at once,
@@ -955,16 +979,16 @@ def model_prior_warming(
 
 
 
-    # TOTAL WARMING
-    # NOTE:'Tot' is in position -1 regardless of the number of variables:
-    temp_Tot = temp_Mod_array[:, :-1, :].sum(axis=1)
-    temp_Mod_array[:, -1, :] = temp_Tot
+    # # TOTAL WARMING
+    # # NOTE:'Tot' is in position -1 regardless of the number of variables:
+    # temp_Tot = temp_Mod_array[:, :-1, :].sum(axis=1)
+    # temp_Mod_array[:, -1, :] = temp_Tot
 
-    # ANTROPOGENIC WARMING
-    if 'Ant' in vars_extra:
-        temp_Ant = (temp_Mod_array[:, var_list_ERF.index('GHG')] +
-                    temp_Mod_array[:, var_list_ERF.index('OHF')])
-        temp_Mod_array[:, -2, :] = temp_Ant
+    # # ANTROPOGENIC WARMING
+    # if 'Ant' in vars_extra:
+    #     temp_Ant = (temp_Mod_array[:, var_list_ERF.index('GHG')] +
+    #                 temp_Mod_array[:, var_list_ERF.index('OHF')])
+    #     temp_Mod_array[:, -2, :] = temp_Ant
     
     return temp_Mod_array
 

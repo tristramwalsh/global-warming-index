@@ -960,12 +960,18 @@ if __name__ == "__main__":
 
     # CALCULATE PRIOR WARMING #################################################
     print('Calculating PRIORS (parallelised)', end=' ')
+    # Load in the forcings for the prior calculation
+    prior_vars = forc_var_names.copy()
+    prior_vars.extend(defs.extra_vars(forc_var_names))
+    prior_vars.remove('Res')  # No residual in prior ERFs
+    df_forc_priors = defs.load_ERF(scenario, prior_vars, ensemble_members['ERF'])
+
     with mp.Pool(os.cpu_count()) as p:
         # print('Partialising Function')
         partial_priors = functools.partial(
             defs.model_prior_warming,
             df_params=params_subset,
-            df_forc=df_forc)
+            df_forc=df_forc_priors)
         results = p.map(partial_priors, models)
 
     # Combine results from all models into one array
@@ -1019,15 +1025,12 @@ if __name__ == "__main__":
     print(f'... took {T3a - T2b}')
 
     print('Calculating percentiles for priors', end=' ')
-    vars_list_priors = vars_list.copy()
-    vars_list_priors.remove('Res')
-    
     priors_timeseries_array = np.percentile(temp_Priors, sigmas_all, axis=2)
     dict_Results_priors = {
         (var, sigma):
         priors_timeseries_array[
-            sigmas_all.index(sigma), :, vars_list_priors.index(var)]
-        for var in vars_list_priors for sigma in sigmas_all
+            sigmas_all.index(sigma), :, prior_vars.index(var)]
+        for var in prior_vars for sigma in sigmas_all
     }
     df_Results_priors = pd.DataFrame(
         dict_Results_priors, index=df_forc.index.to_numpy()
@@ -1183,29 +1186,37 @@ if __name__ == "__main__":
         # Check that we have the years needed for the CGWL definition
         for year in hl_years:
             if not ((year-9 in trunc_Yrs) and (year+10 in trunc_Yrs)):
-                raise ValueError(
+                # Often we can produce SR1.5 and AR6 definitions but not CGWL
+                # due to not having data off the end of the truncation period.
+                # Therefore, we simply print a warning rather than raising an
+                # error, so that we can still produce the headlines csv without
+                # the CGWL definition.
+                print(
                     f'CGWL definition requires the years {year-9} and '
                     f'{year+10} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
-            temp_Att_Results_CGWL = \
-                temp_Att_Results[recent_years, :, :].mean(axis=0)
-            # Obtain statistics
-            gwi_headline_array = np.percentile(
-                temp_Att_Results_CGWL, sigmas_all, axis=1)
-            dict_Results = {
-                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
-                                                 vars_list.index(var)]
-                for var in vars_list for sigma in sigmas_all
-            }
-            df_headlines_i = pd.DataFrame(
-                dict_Results, index=[
-                    f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"
-                ])
-            df_headlines_i.columns.names = ['variable', 'percentile']
-            df_headlines_i.index.name = 'Year'
-            dfs.append(df_headlines_i)
+            else:
+                print('Calculating CGWL-definition temps', end=' ')
+
+                recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
+                temp_Att_Results_CGWL = \
+                    temp_Att_Results[recent_years, :, :].mean(axis=0)
+                # Obtain statistics
+                gwi_headline_array = np.percentile(
+                    temp_Att_Results_CGWL, sigmas_all, axis=1)
+                dict_Results = {
+                    (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                                                    vars_list.index(var)]
+                    for var in vars_list for sigma in sigmas_all
+                }
+                df_headlines_i = pd.DataFrame(
+                    dict_Results, index=[
+                        f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"
+                    ])
+                df_headlines_i.columns.names = ['variable', 'percentile']
+                df_headlines_i.index.name = 'Year'
+                dfs.append(df_headlines_i)
 
 
         T2 = dt.datetime.now()
