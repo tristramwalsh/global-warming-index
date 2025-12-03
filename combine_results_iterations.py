@@ -9,7 +9,7 @@ import src.definitions as defs
 import json
 import multiprocessing as mp
 import functools
-
+import pprint
 
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
                     regressed_vars, iterations_folder, aggregated_folder):
@@ -165,7 +165,7 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
             f'SCENARIO--{scen}_' +
             f'ENSEMBLE-MEMBER--{ens}_' +
             f'VARIABLES--{reg_vars}_' +
-            f'__REGRESSED-YEARS--{min_regressed_range}' +
+            f'REGRESSED-YEARS--{min_regressed_range}' +
             f'_to_{max_regressed_range}.csv')
 
     ###################################################################
@@ -385,7 +385,7 @@ if __name__ == '__main__':
     if re_calculate:
         scenarios_all = sorted(
             [d.split('SCENARIO--')[1] for d in os.listdir(iterations_folder)])
-
+        print(scenarios_all)
         for scenario in scenarios_all:
             print('Calculating SCENARIO:', scenario)
 
@@ -550,6 +550,7 @@ if __name__ == '__main__':
 
     scenarios_all = sorted(
             [d.split('SCENARIO--')[1] for d in os.listdir(aggregated_folder)])
+    print(scenarios_all)
     for scenario in scenarios_all:
         results_files.update({scenario: {}})
         priors_files.update({scenario: {}})
@@ -655,8 +656,9 @@ if __name__ == '__main__':
                        for combo in ens.split('_')
                        }['GMT']
 
+            scen_in = scen.split('_const-ERF')[0]
             df_temp_Obs = defs.load_Temp(
-                scenario=scen, ensemble_members=ens_GMT,
+                scenario=scen_in, ensemble_members=ens_GMT,
                 start_pi=1850, end_pi=1900)
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
@@ -797,11 +799,12 @@ if __name__ == '__main__':
             print('  ENSEMBLE-MEMBER:', ens)
 
             ens_GMT = {combo.split('-')[0]: combo.split('-')[1]
-                       for combo in ens.split('_')
-                       }['GMT']
+                        for combo in ens.split('_')
+                        }['GMT']
 
+            scen_in = scen.split('_const-ERF')[0]
             df_temp_Obs = defs.load_Temp(
-                scenario=scen, ensemble_members=ens_GMT,
+                scenario=scen_in, ensemble_members=ens_GMT,
                 start_pi=1850, end_pi=1900)
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
@@ -909,6 +912,11 @@ if __name__ == '__main__':
 
                 print('      Plotting historical-only vs full dataset for:',
                     scen, ens, reg_vars)
+                
+                # results_dfs are a very nested dictionary - please print the
+                # nested keys for all levels, except the data at the bottom level:
+                pprint.pprint({k: list(v.keys()) for k, v in results_dfs[scen][ens][reg_vars].items()})
+
                 plot_vars = results_dfs[scen][ens][reg_vars][
                     'HISTORICAL-ONLY'][
                         'ANNUAL'].columns.get_level_values(0).unique().to_list()

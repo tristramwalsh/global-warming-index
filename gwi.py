@@ -533,6 +533,38 @@ if __name__ == "__main__":
         start_trunc = start_regress
         end_trunc = end_regress
 
+    # Determine whether to calculate committed warming.
+    if '--committed' in argv_dict:
+        committed_arg = argv_dict['--committed']
+    else:
+        committed_arg = input('Calculate committed warming? (n or start-end): ')
+
+    if committed_arg == 'n':
+        year_committed_to = False
+        year_committed_from = False
+    
+    else:
+        # Parse the committed argument.
+        # Format: start_year-end_year (e.g. 2024-2300 or end_regress-2300)
+        if 'end_regress' in committed_arg:
+            committed_arg = committed_arg.replace(
+                'end_regress', str(end_regress))
+        
+        if '-' in committed_arg:
+            year_committed_from = int(committed_arg.split('-')[0])
+            year_committed_to = int(committed_arg.split('-')[1])
+        
+        else:
+            raise ValueError(
+                f'Invalid committed warming argument provided: {committed_arg}'
+                )
+
+    # Generate a string to identify the committed warming settings.
+    committed_str = (
+        f'const-ERF_{year_committed_from}-{year_committed_to}'
+        if year_committed_to
+        else '')
+
     # Determine the number of samples to take for each source.
     # This is the number of ensemble members to subsample from the available
     # ensemble members for each source. If this is larger than the ensemble for
@@ -580,7 +612,8 @@ if __name__ == "__main__":
             headline_years = input('Years for headlines: ')
         else:
             headline_years = None
-    headline_years = defs.check_headlines(headline_years)
+    headline_years = defs.check_headlines(
+        headline_years, end_regress, end_trunc)
 
 
     # Specify regression variables:
@@ -596,6 +629,12 @@ if __name__ == "__main__":
         # available scenarios:
         available = os.listdir('data/')
         scenario = input(f'Scenario (e.g. {available}: ')
+
+    # Add the committed_str to the scenario name for committed runs.
+    if year_committed_to:
+        scenario_out = f'{scenario}_{committed_str}'
+    else:
+        scenario_out = scenario
 
     # Specify whether you want to specify individual ensemble members for
     # specific sources of uncertainty.
@@ -646,13 +685,13 @@ if __name__ == "__main__":
 
     # Create directory structure based on the input parameters.
     output_path = (
-        f'SCENARIO--{scenario}/' +
+        f'SCENARIO--{scenario_out}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
     output_path_priors = (
-        f'SCENARIO--{scenario}/' +
+        f'SCENARIO--{scenario_out}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
         f'VARIABLES--{"-".join(regress_vars)}/'
     )
@@ -674,6 +713,11 @@ if __name__ == "__main__":
 
     # Effective Radiative Forcing
     df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members['ERF'])
+    if year_committed_to and year_committed_from:
+        # Ensure that the ERF data goes up to the committed year.
+        df_forc = defs.extend_ERF_to_committed_year(
+            df_forc, year_committed_to, year_committed_from)
+
     forc_var_names = sorted(
         df_forc.columns.get_level_values('variable').unique())
     # Obtain the ERF_start and ERF_end from the dataframe.
@@ -692,6 +736,13 @@ if __name__ == "__main__":
         end_trunc = forc_Yrs_max
         print('Truncation end year is after ERF data range, '
               f'setting end year to ERF data maximum: {end_trunc}')
+    if year_committed_to and (year_committed_to != forc_Yrs_max):
+        print('Warning: ERF data end year does not match committed warming '
+              'year.')
+    if year_committed_to and (end_trunc < year_committed_to):
+        print(f'Warning: Truncation end year {end_trunc} is before committed '
+              f'warming end year {year_committed_to}.')
+            
 
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
@@ -722,14 +773,28 @@ if __name__ == "__main__":
         print('Regression end year is after forcing data range, '
               f'setting end year to forcing data maximum: {end_regress}')
 
+    # Check that the regression end year is not after the start of the
+    # committed warming period.
+    if year_committed_to and (end_regress > year_committed_from):
+        raise ValueError(
+            f'Regression end year ({end_regress}) cannot be after the '
+            f'start of the committed warming period ({year_committed_from}). '
+            'The regression must be performed on data consistent between the '
+            'reference/observed temperatures and forcing data; once the'
+            'constant ERF assumption begins, the scenario for forcing and'
+            'reference warming are no longer aligned.')
+
     print('\nCalculating GWI with the following parameters:')
     print(f'Cluster node: {os.uname().nodename}')
-    print(f'Scenario: {scenario}')
-    print(f'Reference temperature realisation number: {ensemble_members["GMT"]}')
-    print(f'ERF realisation number: {ensemble_members["ERF"]}')
     print(f'Regressed variables: {regress_vars}')
+    print(f'Scenario: {scenario_out}')
+    if year_committed_to:
+        print(f'Committed warming: forcing constant from:'
+              f'{year_committed_to} to {year_committed_from}')
     print(f'Forcing range: {forc_Yrs_min}-{forc_Yrs_max}')
     print(f'Reference temperature range: {temp_Yrs.min()}-{temp_Yrs.max()}')
+    print(f'Reference temperature realisation number: {ensemble_members["GMT"]}')
+    print(f'ERF realisation number: {ensemble_members["ERF"]}')
     print(f'Pre-industrial era: {start_pi}-{end_pi}')
     print(f'Truncation range: {start_trunc}-{end_trunc}')
     print(f'Regression range: {start_regress}-{end_regress}')
@@ -965,6 +1030,10 @@ if __name__ == "__main__":
     prior_vars.extend(defs.extra_vars(forc_var_names))
     prior_vars.remove('Res')  # No residual in prior ERFs
     df_forc_priors = defs.load_ERF(scenario, prior_vars, ensemble_members['ERF'])
+    if year_committed_to:
+        # Ensure that the ERF data goes up to the committed year.
+        df_forc_priors = defs.extend_ERF_to_committed_year(
+            df_forc_priors, year_committed_to, year_committed_from)
 
     with mp.Pool(os.cpu_count()) as p:
         # print('Partialising Function')
@@ -987,7 +1056,7 @@ if __name__ == "__main__":
     iteration_id = current_time
 
     variation = (
-        f'SCENARIO--{scenario}_' +
+        f'SCENARIO--{scenario_out}_' +
         f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{n}_' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
@@ -998,7 +1067,7 @@ if __name__ == "__main__":
         len(models) *
         len(df_forc.columns.get_level_values("ensemble").unique()))
     variation_priors = (
-        f'SCENARIO--{scenario}_' +
+        f'SCENARIO--{scenario_out}_' +
         f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
@@ -1018,8 +1087,9 @@ if __name__ == "__main__":
     df_Results = pd.DataFrame(dict_Results, index=trunc_Yrs)
     df_Results.columns.names = ['variable', 'percentile']
     df_Results.index.name = 'Year'
-    df_Results.to_csv(f'{results_folder}{output_path}' +
-                      f'GWI_results_timeseries_{variation}.csv')
+    gwi_filename = (f'{results_folder}{output_path}' +
+                    f'GWI_results_timeseries_{variation}.csv')
+    df_Results.to_csv(gwi_filename)
 
     T3a = dt.datetime.now()
     print(f'... took {T3a - T2b}')
@@ -1038,7 +1108,7 @@ if __name__ == "__main__":
     df_Results_priors.columns.names = ['variable', 'percentile']
     df_Results_priors.index.name = 'Year'
     priors_filename = (
-    f'{results_folder_priors}{output_path_priors}' +
+        f'{results_folder_priors}{output_path_priors}' +
         f'PRIOR_results_timeseries_{variation_priors}.csv'
     )
     # Note that every iteration of GWI will result in an identical prior

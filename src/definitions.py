@@ -53,6 +53,26 @@ def load_ERF(scenario, regress_vars, ensemble_members):
     return df_ERF.loc[:, (slice(None), ens_mems)]
 
 
+def extend_ERF_to_committed_year(
+    df_ERF, year_committed_to, year_committed_from=None):
+    """Extend the ERF dataframe to the committed year by holding
+    the ERF constant from the specified year."""
+    if year_committed_from is not None:
+        df_ERF = df_ERF.loc[:year_committed_from]
+
+    last_year = df_ERF.index.max()
+    if year_committed_to > last_year:
+        years_to_add = np.arange(last_year + 1, year_committed_to + 1)
+        df_extension = pd.DataFrame(
+            index=years_to_add,
+            columns=df_ERF.columns,
+            data=np.tile(df_ERF.loc[last_year].values,
+                         (len(years_to_add), 1))
+        )
+        df_ERF = pd.concat([df_ERF, df_extension], axis=0)
+    return df_ERF
+
+
 def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     """Load the ERFs from Chris."""
     # ERF location
@@ -880,8 +900,11 @@ def check_steps(all_reg_ranges):
     return out_dict
 
 
-def check_headlines(hy):
+def check_headlines(hy, end_regress, end_trunc):
     """Check that the headline years are in the correct format."""
+
+    hy = hy.replace('end_regress', str(end_regress))
+    hy = hy.replace('end_trunc', str(end_trunc))
     if hy in ['IGCC', 'end_regress', 'end_trunc']:
         return hy
     elif hy.isnumeric():
@@ -894,6 +917,9 @@ def check_headlines(hy):
 
 def generate_headline_years(headline_years, end_regress, end_trunc):
     """Generate the headline years for the analysis."""
+
+    headline_years = headline_years.replace('end_regress', str(end_regress))
+    headline_years = headline_years.replace('end_trunc', str(end_trunc))
 
     if headline_years == 'end_regress':
         hl_years = [end_regress]
