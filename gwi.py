@@ -28,7 +28,7 @@ def GWI_faster(
         model_choice, inc_reg_const, inc_pi_offset,
         df_forc, df_params, df_temp_PiC, df_temp_Obs,
         start_trunc, end_trunc, start_pi, end_pi,
-        start_regress, end_regress):
+        start_regress, end_regress, regress_vars):
     """Calculate the global warming index (GWI)."""
     """Parallelise over FaIR parameterisations, exploit vectorisation of
     FaIR model by running all forcings at once through it, and separate
@@ -63,12 +63,23 @@ def GWI_faster(
     # regression. If we aren't directly regressing 'Ant', then we need to
     # include it in the extra_vars list. If we are not, then we need to include
     # 'Ant' in the variables list.
-    extra_vars = defs.extra_vars(var_list_ERF)
+    extra_vars = defs.extra_vars(regress_vars)
 
     # Create empty output array, with dimensions: (years, variables, samples)
+    # We want to output all variables in var_list_ERF (which might include
+    # sub-vars) plus extra_vars.
+    # NOTE: var_list_ERF includes regress_vars.
+    # We need to maintain a consistent order for output_vars to index into
+    # temp_Att_Results later. Define the order: var_list_ERF then extra_vars
+    # (excluding those already in var_list_ERF)
+    # NOTE: extra_vars should not include variables already in var_list_ERF,
+    # as extra_vars are the higher-level aggregates above the regression vars
+    # and the residual. The check here is just extra safety.
+    output_vars = var_list_ERF + [v for v in extra_vars if v not in var_list_ERF]
+
     temp_Att_Results = np.empty(
       (end_trunc - start_trunc + 1,  # number of years (after truncation)
-       len(var_list_ERF) + len(extra_vars),  # variables dimension
+       len(output_vars),  # variables dimension
        n),  # samples
       dtype=np.float32  # make the array smaller in memory
       )
@@ -99,8 +110,8 @@ def GWI_faster(
                                                len(var_list_ERF),
                                                len(ens_list_ERF)))
 
-    # Calculate temperatures from forcings for all ensembles at once,
-    # leveraging FaIR's vectorisation
+    # Calculate pre-regression temperature estimatesw from forcings for all 
+    # ensembles at once, leveraging FaIR's vectorisation
     for var in var_list_ERF:
         # Select forcings for the specific variable. This selects all ensemble
         # members available from the random subsample.
@@ -142,13 +153,18 @@ def GWI_faster(
             temp_Mod_array_all_years_ens = (temp_Mod_array_all_years_ens -
                                             ens_offset)
 
+        # Prepare regression variables
+        # We only regress 'regress_vars'.
+        reg_indices = [var_list_ERF.index(var) for var in regress_vars]
+        temp_Mod_regress_vars_ens = temp_Mod_array_all_years_ens[:, reg_indices]
+
         # Add a constant offset term to the regression if specified.
         if inc_reg_const:
-            temp_Mod_array_all_years_ens = np.append(
-                temp_Mod_array_all_years_ens,
-                np.ones((temp_Mod_array_all_years_ens.shape[0], 1)),
+            temp_Mod_regress_vars_ens = np.append(
+                temp_Mod_regress_vars_ens,
+                np.ones((temp_Mod_regress_vars_ens.shape[0], 1)),
                 axis=1)
-        n_reg_vars = temp_Mod_array_all_years_ens.shape[1]
+        n_reg_vars = temp_Mod_regress_vars_ens.shape[1]
 
         # Prepare arrays to store regression coefficients.
         # Dimensions correspond to:
@@ -169,7 +185,7 @@ def GWI_faster(
             temp_Obs_i = df_temp_Obs[temp_Obs_Ens].to_numpy()
             # Select only the year range for temp_Mod_array_all_years_ens and
             # temp_Obs_i that corresponds to the regression range.
-            temp_Mod_regress_yrs = temp_Mod_array_all_years_ens[
+            temp_Mod_regress_yrs = temp_Mod_regress_vars_ens[
                                         (forc_Yrs >= start_regress) &
                                         (forc_Yrs <= end_regress)]
             temp_Obs_i_regress = temp_Obs_i[(temp_Yrs >= start_regress) &
@@ -187,7 +203,7 @@ def GWI_faster(
             temp_PiC_j = df_temp_PiC[temp_PiC_Ens].to_numpy()
             # Select only the year range for temp_Mod_array_all_years_ens and
             # temp_PiC_j that corresponds to the regression range.
-            temp_Mod_regress_yrs = temp_Mod_array_all_years_ens[
+            temp_Mod_regress_yrs = temp_Mod_regress_vars_ens[
                                         (forc_Yrs >= start_regress) &
                                         (forc_Yrs <= end_regress)]
             temp_PiC_j_regress = temp_PiC_j[(PiC_Yrs >= start_regress) &
@@ -204,6 +220,9 @@ def GWI_faster(
         yr_mask = ((forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc))
         temp_Mod_trunc_yrs_ens = temp_Mod_array_all_years_ens[yr_mask, :]
 
+        # Get the mapping from variable to regression variable
+        scaling_map = defs.get_scaling_map(var_list_ERF, regress_vars)
+
         # Now combine the coeffieicnts with the truncated model outputs:
         for c_k in range(coef_Obs_Results.shape[1]):
             for c_l in range(coef_PiC_Results.shape[1]):
@@ -212,7 +231,18 @@ def GWI_faster(
                             coef_PiC_Results[:, c_l])
 
                 # Attributed warming for each component
-                temp_Att = temp_Mod_trunc_yrs_ens * coef_Reg
+                # We need to scale each variable in temp_Mod_trunc_yrs_ens by
+                # the appropriate coefficient.
+
+                # Construct scaling vector for all variables in var_list_ERF
+                var_list_ERF_reg_ancestor = [
+                    scaling_map[v] for v in var_list_ERF]
+                var_list_ERF_reg_coef = [
+                    coef_Reg[regress_vars.index(ancestor)]
+                    for ancestor in var_list_ERF_reg_ancestor
+                    ]
+
+                temp_Att = temp_Mod_trunc_yrs_ens * var_list_ERF_reg_coef
 
                 # Extract T_Obs and T_PiC data for this c_i, c_j combo.
                 temp_Obs_kl = df_temp_Obs_trunc[ens_list_Obs[c_k]
@@ -225,13 +255,13 @@ def GWI_faster(
                 # coef_Reg_Results[:, i] = coef_Reg
 
                 # Attributed warming for each component.
-                # NOTE: the constant term in the regression is not included in
-                # this array, to save memory space. This explains the slicing
-                # on the next two lines:
-                # (the -1*inc_reg_const in temp_Att_Results,
-                # and the :-1 in temp_Att).
-                temp_Att_Results[:, :(n_reg_vars-(1*inc_reg_const)), i] = \
-                    temp_Att[:, :-1]
+                # Now map temp_Att (which has variable dimension corresponding
+                # to var_list_ERF) to temp_Att_Results (which has variable
+                # dimension corresponding to output_vars)
+
+                for var in var_list_ERF:
+                    temp_Att_Results[:, output_vars.index(var), i] = \
+                        temp_Att[:, output_vars.index(var)]
 
                 # # Actual piControl IV sample that used for this c_k, c_l
                 # temp_Att_Results[:, -2, i] = temp_PiC_kl
@@ -239,15 +269,25 @@ def GWI_faster(
                 # temp_Att_Results[:, -1, i] = temp_Obs_kl
 
                 # TOTAL WARMING
-                # NOTE: no conditional required: 'Tot' is in position -2
-                # regardless of the number of regression variables:
-                # e.g. [Ant, Nat, OHF, Tot, Res] for 3-way
-                # e.g. [Tot, Res] for 1-way
-                # Even in a 1-way regression, you still want to add the
-                # constant regression offset in the Tot warming output, hence
-                # why we always sum over the temp_Att variables dimension.
-                temp_Tot = temp_Att.sum(axis=1)
-                temp_Att_Results[:, -2, i] = temp_Tot
+                # Sum of all attributed warming components?
+                # Or sum of regression variables?
+                # Usually Tot is sum of GHG + OHF + Nat (or Ant + Nat).
+                # If we have sub-variables, we shouldn't double count.
+                # We should sum the regression variables (or their equivalents).
+                # Tot only needs calculating whern it is higher in the
+                # aggregation than the other components - ie. is an extra_var.
+                if 'Tot' in extra_vars:
+                    # Sum the regression variables
+                    reg_indices_in_output = [
+                        output_vars.index(v) for v in regress_vars]
+                    temp_Tot = temp_Att_Results[:, reg_indices_in_output, i
+                                                ].sum(axis=1)
+
+                    # Add the constant term if it exists
+                    if inc_reg_const:
+                        temp_Tot += coef_Reg[-1]
+
+                    temp_Att_Results[:, output_vars.index('Tot'), i] = temp_Tot
 
                 # RESIDUAL WARMING
                 if 'Res' in extra_vars:
@@ -255,16 +295,21 @@ def GWI_faster(
                     # temperature at the later end of the timeseries which
                     # can happen when the truncation end is set to a later date
                     # then the end of the observations. 
-                    temp_Att_Results[:len(temp_Obs_kl), -1, i] = (temp_Obs_kl - temp_Tot[:len(temp_Obs_kl)])
+                    temp_Att_Results[:len(temp_Obs_kl), output_vars.index('Res'), i] = (temp_Obs_kl - temp_Tot[:len(temp_Obs_kl)])
                     # This next line replaces the empty numpy values from when
                     # temp_Att_Results is crated with nans. (Empty numpy values
                     # are random, which could be misleading in the output.)
-                    temp_Att_Results[len(temp_Obs_kl):, -1, i] = np.nan
+                    temp_Att_Results[len(temp_Obs_kl):, output_vars.index('Res'), i] = np.nan
+
                 # ANTROPOGENIC WARMING
                 if 'Ant' in extra_vars:
-                    temp_Ant = (temp_Att[:, var_list_ERF.index('GHG')] +
-                                temp_Att[:, var_list_ERF.index('OHF')])
-                    temp_Att_Results[:, -3, i] = temp_Ant
+                    # Ant = GHG + OHF. Find indices in output_vars, assuming
+                    # it exists.
+                    temp_Ant = (
+                        temp_Att_Results[:, output_vars.index('GHG'), i] +
+                        temp_Att_Results[:, output_vars.index('OHF'), i]
+                    )
+                    temp_Att_Results[:, output_vars.index('Ant'), i] = temp_Ant
 
                 # Visual display of progress through calculation ##############
                 # Turned off for now to avoid cluttering the slurm output,
@@ -277,7 +322,7 @@ def GWI_faster(
                 #           end='\r')
                 i += 1
                 # #############################################################
-    return temp_Att_Results
+    return temp_Att_Results, output_vars
 
 
 # def GWI(
@@ -603,6 +648,13 @@ if __name__ == "__main__":
         if not (all(tog in tog_avail for tog in tog_list)):
             raise ValueError('Invalid headline toggle(s) provided.')
 
+    # Determine whether to include sub-variables in the output.
+    if '--include-sub-vars' in argv_dict:
+        include_sub_vars = argv_dict['--include-sub-vars']
+        include_sub_vars = True if include_sub_vars == 'y' else False
+    else:
+        include_sub_vars = False
+
     # Specify years for headlines calculations
     # Format '2024', '2022,2023,2024', etc.
     if '--headline-years' in argv_dict:
@@ -712,7 +764,9 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members['ERF'])
+    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members['ERF'],
+                            include_sub_vars=include_sub_vars)
+
     if year_committed_to and year_committed_from:
         # Ensure that the ERF data goes up to the committed year.
         df_forc = defs.extend_ERF_to_committed_year(
@@ -742,12 +796,12 @@ if __name__ == "__main__":
     if year_committed_to and (end_trunc < year_committed_to):
         print(f'Warning: Truncation end year {end_trunc} is before committed '
               f'warming end year {year_committed_to}.')
-            
 
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
     # TEMPERATURE
-    df_temp_Obs = defs.load_Temp(scenario, ensemble_members['GMT'], start_pi, end_pi)
+    df_temp_Obs = defs.load_Temp(
+        scenario, ensemble_members['GMT'], start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
@@ -897,7 +951,7 @@ if __name__ == "__main__":
     # and averaging the resulting timeseries - see combine_results.py.
 
     # 1. Select random samples of the forcing data
-    print(f'Forcing ensemble all: ' +
+    print('Forcing ensemble all: ' +
           f'{len(df_forc.columns.get_level_values("ensemble").unique())}')
     # Select a random subset of the ensemble names from the forcing data.
     forc_sample = np.random.choice(
@@ -974,7 +1028,8 @@ if __name__ == "__main__":
             start_pi=start_pi,
             end_pi=end_pi,
             start_regress=start_regress,
-            end_regress=end_regress
+            end_regress=end_regress,
+            regress_vars=regress_vars
         )
         print('Calculating GWI (parallelised)', end=' ')
         results = p.map(partial_GWI, models)
@@ -982,9 +1037,10 @@ if __name__ == "__main__":
     # Create a list of the names of the attributed warming variables
     # TODO: rename this to vars_Att or something, since Python syntax makes
     # vars_list red, so probably a bad idea.
-    vars_list = forc_var_names.copy()
-    # print(vars_list)
-    vars_list.extend(defs.extra_vars(forc_var_names))
+
+    # Separate results and output_vars
+    temp_Att_Results_list = [r[0] for r in results]
+    vars_list = results[0][1]
 
     T1b = dt.datetime.now()
     print(f'... took {T1b - T1a}')
@@ -992,7 +1048,7 @@ if __name__ == "__main__":
     print('Concatenating Results', end=' ')
     # Combine results from temperature attributions from all parallel model
     # emulations ('results' above is a list of arrays, one for each emulation).
-    temp_Att_Results = np.concatenate(results, axis=2)
+    temp_Att_Results = np.concatenate(temp_Att_Results_list, axis=2)
     # print(temp_Att_Results.shape)
     T2a = dt.datetime.now()
     print(f'... took {T2a - T1b}')
@@ -1025,11 +1081,24 @@ if __name__ == "__main__":
 
     # CALCULATE PRIOR WARMING #################################################
     print('Calculating PRIORS (parallelised)', end=' ')
-    # Load in the forcings for the prior calculation
-    prior_vars = forc_var_names.copy()
-    prior_vars.extend(defs.extra_vars(forc_var_names))
-    prior_vars.remove('Res')  # No residual in prior ERFs
-    df_forc_priors = defs.load_ERF(scenario, prior_vars, ensemble_members['ERF'])
+
+    # Set new variable selection for priors calculation
+    prior_vars = regress_vars.copy()
+    # Add aggregate variables for prior calculation
+    prior_vars.extend(defs.extra_vars(regress_vars))
+    # Remove 'Res' from prior vars if present (it is added in extra_vars)
+    if 'Res' in prior_vars:
+        prior_vars.remove('Res')
+
+    # Load in the forcings for the prior calculation, specifying sub-variables
+    df_forc_priors = defs.load_ERF(
+        scenario, prior_vars, ensemble_members['ERF'],
+        include_sub_vars=include_sub_vars)
+    # This is a two level column MultiIndex dataframe, with levels
+    # 'variable' and 'ensemble'.
+    prior_vars_all = sorted(
+        df_forc_priors.columns.get_level_values("variable").unique().to_list())
+
     if year_committed_to:
         # Ensure that the ERF data goes up to the committed year.
         df_forc_priors = defs.extend_ERF_to_committed_year(
@@ -1099,11 +1168,11 @@ if __name__ == "__main__":
     dict_Results_priors = {
         (var, sigma):
         priors_timeseries_array[
-            sigmas_all.index(sigma), :, prior_vars.index(var)]
-        for var in prior_vars for sigma in sigmas_all
+            sigmas_all.index(sigma), :, prior_vars_all.index(var)]
+        for var in prior_vars_all for sigma in sigmas_all
     }
     df_Results_priors = pd.DataFrame(
-        dict_Results_priors, index=df_forc.index.to_numpy()
+        dict_Results_priors, index=df_forc_priors.index.to_numpy()
         )
     df_Results_priors.columns.names = ['variable', 'percentile']
     df_Results_priors.index.name = 'Year'

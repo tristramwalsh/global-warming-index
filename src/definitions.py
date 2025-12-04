@@ -14,9 +14,21 @@ import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
-def load_ERF(scenario, regress_vars, ensemble_members):
+
+SUB_VAR_MAPPING = {
+    'GHG': ['co2', 'ch4', 'n2o', 'halogen'],
+    'OHF': ['o3', 'aerosol-radiation_interactions', 'aerosol-cloud_interactions', 'contrails', 'land_use', 'bc_snow', 'h2o_strat'],
+    'Nat': ['solar', 'volcanic'],
+    'Ant': ['GHG', 'OHF'],
+    'Tot': ['Ant', 'Nat']
+}
+
+
+def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
+    """Load the ERFs for the specified scenario and variables."""
+
     if 'observed-20' in scenario:
-        df_ERF = load_ERF_CMIP6(scenario, regress_vars)
+        df_ERF = load_ERF_CMIP6(scenario, include_sub_vars=include_sub_vars)
     elif 'observed_JK' in scenario:
         df_ERF = load_ERF_SSP(scenario, regress_vars)
     elif 'observed-SSP' in scenario:
@@ -28,8 +40,65 @@ def load_ERF(scenario, regress_vars, ensemble_members):
     else:
         raise ValueError('Invalid scenario for ERF data.')
 
+    # Extract just the required variables
+    df_ERF = extract_variables(df_ERF,
+                               regress_vars,
+                               include_sub_vars=include_sub_vars)
+    # Extract just the required ensemble members
+    df_ERF = extract_ensembles(df_ERF, ensemble_members)
+
+    return df_ERF
+
+
+def extract_variables(df_ERF, regress_vars, include_sub_vars=False):
+    """Extract specific variables from the ERF dataframe."""
+
+    # Check that the regress_vars are present in the dataframe
+    available_vars = df_ERF.columns.get_level_values('variable').unique()
+    missing_vars = set(regress_vars) - set(available_vars)
+    if missing_vars:
+        raise ValueError(
+            'The following regression variables are not available in the '
+            f'ERF data: {missing_vars}')
+
     # Select vars:
-    df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+    if include_sub_vars:
+        # If including sub-variables, we need to keep the regression variables
+        # AND their sub-variables.
+
+        # Helper to recursively find all sub-variables
+        def get_all_sub_vars(var):
+            sub_vars = []
+            if var in SUB_VAR_MAPPING:
+                direct_subs = SUB_VAR_MAPPING[var]
+                sub_vars.extend(direct_subs)
+                for sv in direct_subs:
+                    sub_vars.extend(get_all_sub_vars(sv))
+            return sub_vars
+
+        # 1. We trivially need to keep the regress_vars
+        vars_to_keep = list(regress_vars)
+
+        # 2. For each regress_var, find and add its sub-variables
+        for rv in regress_vars:
+            vars_to_keep.extend(get_all_sub_vars(rv))
+
+        vars_to_keep = list(set(vars_to_keep))
+
+        # Filter dataframe
+        available_vars = df_ERF.columns.get_level_values('variable').unique()
+        vars_to_keep = [v for v in vars_to_keep if v in available_vars]
+
+        df_ERF = df_ERF.loc[:, (vars_to_keep, slice(None))]
+
+    else:
+        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+
+    return df_ERF
+
+
+def extract_ensembles(df_ERF, ensemble_members):
+    """Extract specific ensemble members from the ERF dataframe."""
 
     available_ens = df_ERF.columns.get_level_values('ensemble').unique()
 
@@ -43,20 +112,21 @@ def load_ERF(scenario, regress_vars, ensemble_members):
     elif ((len(available_ens) > 1) and (ensemble_members in available_ens)):
         # This is for NorESM scenarios that have multiple temperature
         # timeseries and multiple forcing timeseries, but a 1-1 correspondance
-        # between the single ensemble number in the forcing and temperature. 
+        # between the single ensemble number in the forcing and temperature.
         ens_mems = ensemble_members
     else:
-        print(f'Invalid ensemble members {ensemble_members} for ensemble:'
-              + f'{df_ERF.columns.get_level_values("ensemble").unique()}')
+        print(f'Invalid ensemble members {ensemble_members} for ensemble: '
+              f'{df_ERF.columns.get_level_values("ensemble").unique()}')
         raise ValueError('Invalid ensemble member {ensemble_member} for data.')
 
     return df_ERF.loc[:, (slice(None), ens_mems)]
 
 
-def extend_ERF_to_committed_year(
-    df_ERF, year_committed_to, year_committed_from=None):
+def extend_ERF_to_committed_year(df_ERF, year_committed_to,
+                                 year_committed_from=None):
     """Extend the ERF dataframe to the committed year by holding
     the ERF constant from the specified year."""
+
     if year_committed_from is not None:
         df_ERF = df_ERF.loc[:year_committed_from]
 
@@ -73,27 +143,51 @@ def extend_ERF_to_committed_year(
     return df_ERF
 
 
-def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
-    """Load the ERFs from Chris."""
-    # ERF location
-    here = Path(__file__).parent
-    end = scenario.split('-')[-1]
-    file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}.nc'
-    # import ERF_file to xarray dataset and convert to pandas dataframe
-    df_ERF = xr.open_dataset(file_ERF).to_dataframe()
-    # assign the columns the name 'variable'
-    df_ERF.columns.names = ['variable']
-    # remove the column called 'total' from df_ERF
-    df_ERF = df_ERF.drop(columns='total')
-    # rename the variable columns
-    df_ERF = df_ERF.rename(columns={'wmghg': 'GHG',
-                                    'other_ant': 'OHF',
-                                    'natural': 'Nat'})
-    # move the multi-index 'ensemble' level to a column,
-    # and then set the 'ensemble' column to second column level
-    df_ERF = df_ERF.reset_index(level='ensemble')
-    df_ERF['ensemble'] = 'ens' + df_ERF['ensemble'].astype(str)
-    df_ERF = df_ERF.pivot(columns='ensemble')
+def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
+    """Calculate aggregate forcings from sub-variables."""
+
+    # Iterate over SUB_VAR_MAPPING to calculate any possible aggregates
+    # This works because the mapping is ordered (GHG/OHF/Nat -> Ant -> Tot)
+    for agg_var, sub_vars in SUB_VAR_MAPPING.items():
+        # print('Preparing variable:', agg_var)
+
+        # Check that this doesn't already exist first
+        if agg_var not in df_ERF.columns:
+            # print("..", agg_var, "doesn't yet exist: calculating it now.")
+
+            # Check which sub-variables are present
+            present_sub_vars = [v for v in sub_vars if v in df_ERF.columns]
+
+            # If we have sub-variables, calculate the aggregate
+            if present_sub_vars:
+                # print("....", agg_var, 'has subvariables available:',
+                #       present_sub_vars)
+
+                # Check for missing sub-variables and warn if we have a partial
+                # set
+                missing_sub_vars = set(sub_vars) - set(present_sub_vars)
+
+                if missing_sub_vars:
+                    print(f"Warning: Missing sub-variables for {agg_var}: " +
+                          f"{missing_sub_vars}. "
+                          f"Aggregating only present variables:" +
+                          f"{present_sub_vars}")
+                else:
+                    # Sum across the columns (variables) for each row.
+                    df_ERF[agg_var] = df_ERF[present_sub_vars].sum(axis=1)
+            else:
+                pass
+                # print("....", agg_var,
+                #       ' has no sub-variables present: skipping aggregation.')
+        else:
+            pass
+            # print("..", agg_var, 'already exists; skipping aggregation.')
+
+    return df_ERF
+
+
+def check_ensemble_matching(df_ERF):
+    """Check that all variables have the same ensemble sets."""
 
     forc_var_names = sorted(df_ERF.columns.get_level_values(
         'variable').unique().to_list())
@@ -110,55 +204,56 @@ def load_ERF_CMIP6(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
 
     check_ens = all(
         [dict_ensemble_names[var] == dict_ensemble_names[forc_var_names[0]]
-         for var in forc_var_names]
-         )
+            for var in forc_var_names]
+        )
 
     if not check_ens:
         raise ValueError('Ensemble names are not the same for all variables.')
 
-    # Check whether the regress_vars is the same as the columns of df_ERF
-    check_vars = sorted(regress_vars) == sorted(forc_var_names)
+    return check_ens
 
-    # If regress_vars and forc_vars are the same, no need to do anything.
-    # If they are not the same, aggregate into requried variables:
-    if check_vars:
-        pass
 
-    if not check_vars and 'Tot' in regress_vars:
-        # If 'Tot' is one variable to regress, combine all variables:
-        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
-                                ].copy().rename(columns={'GHG': 'Tot'})
-        # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
-                               ].groupby(level='ensemble', axis=1
-                                         ).sum()
-        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
+def load_ERF_CMIP6(scenario, include_sub_vars=False):
+    """Load the ERFs from Chris."""
 
-    if not check_vars and 'Ant' in regress_vars:
-        # If 'Ant' is one variable to regress, combine
-        # 'GHG' and 'OHF' into 'Ant':
-        df_ERF_Ant = df_ERF.loc[:, ('GHG', slice(None))
-                                ].copy().rename(columns={'GHG': 'Ant'})
-        # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Ant[:] = df_ERF[['GHG', 'OHF']
-                               ].groupby(level='ensemble', axis=1
-                                         ).sum()
-        df_ERF = pd.concat([df_ERF_Ant, df_ERF], axis=1)
+    # ERF location
+    here = Path(__file__).parent
+    end = scenario.split('-')[-1]
 
-    # Final check and allocation:
-    # Final check and allocation:
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-    check_vars = set(regress_vars).issubset(forc_var_names)
-    if check_vars:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
+    if include_sub_vars:
+        file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}_full.nc'
     else:
-        raise ValueError('Invalid combination of variables for regression.')
+        file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}.nc'
+
+    # import ERF_file to xarray dataset and convert to pandas dataframe
+    df_ERF = xr.open_dataset(file_ERF).to_dataframe()
+    # assign the columns the name 'variable'
+    df_ERF.columns.names = ['variable']
+
+    # Drop total if exists
+    if 'total' in df_ERF.columns:
+        df_ERF = df_ERF.drop(columns='total')
+
+    # Rename columns from file names to internal names
+    RENAME_MAP = {'wmghg': 'GHG', 'other_ant': 'OHF', 'natural': 'Nat'}
+    df_ERF = df_ERF.rename(columns=RENAME_MAP)
+
+    # Calculate aggregates if missing (works both with/without sub-var toggle)
+    df_ERF = aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING)
+
+    # move the multi-index 'ensemble' level to a column,
+    # and then set the 'ensemble' column to second column level
+    df_ERF = df_ERF.reset_index(level='ensemble')
+    df_ERF['ensemble'] = 'ens' + df_ERF['ensemble'].astype(str)
+    df_ERF = df_ERF.pivot(columns='ensemble')
+
+    # Check that the ensembles names are all matching across variables
+    check_ensemble_matching(df_ERF)
 
     return df_ERF
 
 
-def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
+def load_ERF_SMILE(scenario, regress_vars=None):
     """Load the data from John Nicklas for Thorne et al., analyis."""
 
     # ERF location
@@ -171,66 +266,29 @@ def load_ERF_SMILE(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
                                            'ERF_anthro': 'Ant',
                                            'ERF_natural': 'Nat',
                                            'ERF_other_human': 'OHF',
-                                           'ERF_wmghg': 'GHG'
+                                           'ERF_wmghg': 'GHG',
+                                           'ERF_CO2': 'co2'
                                            }
                                   ).set_index('Year')
+    # Drop the column named 'CO2' as this is concentrations, not ERF
+    if 'CO2' in df_ERF.columns:
+        df_ERF = df_ERF.drop(columns='CO2')
+
+    # Calculate aggregates if missing
+    df_ERF = aggregate_missing_forcings(df_ERF)
 
     # Add a second level to the column names ,and set the name of the second
     # level to 'ensemble'. Make the value of this 'single' for all of the
     # columns. This keeps the data structure the same as the multi-ensemble
     # data.
-
-    if sorted(regress_vars) == sorted(['Ant', 'Nat']):
-        # Remove all columns not named 'Ant' or 'Nat':
-        df_ERF = df_ERF[['Ant', 'Nat']]
-    elif sorted(regress_vars) == sorted(['GHG', 'OHF', 'Nat']):
-        df_ERF = df_ERF[['GHG', 'OHF', 'Nat']]
-
     df_ERF.columns = pd.MultiIndex.from_tuples(
         [(col, 'single') for col in df_ERF.columns],
         names=['variable', 'ensemble'])
 
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-
-    check_vars = set(regress_vars).issubset(forc_var_names)
-    if check_vars:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
-    
-    if not check_vars and 'Tot' in regress_vars:
-        # If 'Tot' is one variable to regress, combine all variables:
-        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
-                                ].copy().rename(columns={'GHG': 'Tot'})
-        # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
-                               ].groupby(level='ensemble', axis=1
-                                         ).sum()
-        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
-    
-    if not check_vars and 'Ant' in regress_vars:
-        # If 'Ant' is one variable to regress, combine
-        # 'GHG' and 'OHF' into 'Ant':
-        df_ERF_Ant = df_ERF.loc[:, ('GHG', slice(None))
-                                ].copy().rename(columns={'GHG': 'Ant'})
-        # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Ant[:] = df_ERF[['GHG', 'OHF']
-                               ].groupby(level='ensemble', axis=1
-                                         ).sum()
-        df_ERF = pd.concat([df_ERF_Ant, df_ERF], axis=1)
-
-    # Final check and allocation:
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-    check_vars = set(regress_vars).issubset(forc_var_names)
-    if check_vars:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
-    else: 
-        raise ValueError('Invalid combination of variables for regression.')
-
     return df_ERF
 
 
-def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
+def load_ERF_NorESM(scenario, regress_vars=None):
     """Load the data from John Nicklas for Thorne et al., analyis."""
 
     here = Path(__file__).parent
@@ -250,9 +308,18 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
                                                'ERF_anthro': 'Ant',
                                                'ERF_natural': 'Nat',
                                                'ERF_other_human': 'OHF',
-                                               'ERF_wmghg': 'GHG'
+                                               'ERF_wmghg': 'GHG',
+                                               'ERF_CO2': 'co2'
                                                }
                                       ).set_index('Year')
+
+        # Drop the column named 'CO2' as this is concentrations, not ERF
+        if 'CO2' in df_ERF.columns:
+            df_ERF = df_ERF.drop(columns='CO2')
+
+        # Calculate aggregates if missing
+        df_ERF = aggregate_missing_forcings(df_ERF)
+
         df_ERF.columns = pd.MultiIndex.from_tuples(
             [(col, 'single') for col in df_ERF.columns],
             names=['variable', 'ensemble'])
@@ -271,6 +338,7 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         # columns. This keeps the data structure the same as the multi-ensemble
         # data.
         ens_num = df_ERF_natural.columns.to_list()
+
         df_ERF_natural.columns = pd.MultiIndex.from_tuples(
             [('Nat', col) for col in df_ERF_natural.columns],
             names=['variable', 'ensemble'])
@@ -285,9 +353,15 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
                              ).rename(columns={'year': 'Year',
                                                'ERF_anthro': 'Ant',
                                                'ERF_other_human': 'OHF',
-                                               'ERF_wmghg': 'GHG'
+                                               'ERF_wmghg': 'GHG',
+                                               'ERF_CO2': 'co2'
                                                }
                                       ).set_index('Year')
+
+        # Drop CO2 column if exists, as this is concentrations not ERF
+        if 'CO2' in df_ERF_anthro.columns:
+            df_ERF_anthro = df_ERF_anthro.drop(columns='CO2')
+
         # At the moment we have a single level column name, with just variable
         # names. Keep this in the first level, and add a second level with
         # 'ensemble' as the name, and '1' as the  value:
@@ -307,12 +381,11 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
             df_ERF_anthro_repeat = df_ERF_anthro_repeat.rename(
                 columns={'single': str(ii)}, level=1)
             copies.append(df_ERF_anthro_repeat)
-        df_ERF_anthro = pd.concat(copies, axis=1)
-
+        df_ERF_anthro = pd.concat(copies, axis=1)        
         # Check that '(GHG, i)' column is the same, regardless, of the number i:
         # Check that I haven't made a mistake in copying.
         check_ens = all(
-            [df_ERF_anthro['GHG', str(ens)].equals(df_ERF_anthro['GHG', '0'])
+            [df_ERF_anthro['GHG', str(ens)].equals(df_ERF_anthro['GHG', '1'])
              for ens in ens_num])
         if not check_ens:
             raise ValueError(
@@ -321,41 +394,11 @@ def load_ERF_NorESM(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         # Combine the two dataframes
         df_ERF = pd.concat([df_ERF_anthro, df_ERF_natural], axis=1)
 
-    if sorted(regress_vars) == sorted(['Ant', 'Nat']):
-        # Remove all columns not named 'Ant' or 'Nat':
-        df_ERF = df_ERF.loc[:, (['Ant', 'Nat'], slice(None))]
-    elif sorted(regress_vars) == sorted(['GHG', 'OHF', 'Nat']):
-        df_ERF = df_ERF.loc[:, (['GHG', 'OHF', 'Nat'], slice(None))]
-
-    # Check whether the regress_vars is the same as the columns of df_ERF
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-    check_vars = sorted(regress_vars) == sorted(forc_var_names)
-
-    # If regress_vars and forc_vars are the same, no need to do anything.
-    # If they are not the same, aggregate into requried variables:
-    if check_vars:
-        pass
-
-    if not check_vars and 'Tot' in regress_vars:
-        # If 'Tot' is the only variable to regress, combine all variables:
-        df_ERF_Tot = df_ERF.loc[:, ('GHG', slice(None))
-                                ].copy().rename(columns={'GHG': 'Tot'})
-        # Group df_ERF by ensemble name, and sum across variable names
-        df_ERF_Tot[:] = df_ERF[['GHG', 'OHF', 'Nat']
-                               ].groupby(level='ensemble', axis=1
-                                         ).sum()
-        df_ERF = pd.concat([df_ERF_Tot, df_ERF], axis=1)
-
-    # Final checks and allocation:
-    # Final check and allocation:
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-    check_vars = set(regress_vars).issubset(forc_var_names)
-    if check_vars:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
-    else:
-        raise ValueError('Invalid combination of variables for regression.')
+        # Calculate aggregates if missing
+        # Stack to get variables as columns, aggregate, then unstack
+        df_ERF = df_ERF.stack(level='ensemble')
+        df_ERF = aggregate_missing_forcings(df_ERF)
+        df_ERF = df_ERF.unstack(level='ensemble')
 
     return df_ERF
 
@@ -397,36 +440,15 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
         [['OHF'], df_ERF_OHF.columns])
     df_ERF = pd.concat([df_ERF, df_ERF_OHF], axis=1)
 
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-
-    # Check whether the regress_vars are within the columns of df_ERF
-    check_vars = set(regress_vars).issubset(forc_var_names)
-    if check_vars:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
-    else:
-        raise ValueError('Invalid combination of variables for regression.')
-
-    # Check that the ensemble names are the same for all variables.
-    dict_ensemble_names = {}
-    for var in regress_vars:
-        forc_subset = df_ERF.loc[:, (var, slice(None))]
-        forc_ens_names = sorted(
-            list(forc_subset.columns.get_level_values("ensemble").unique()))
-        dict_ensemble_names[var] = forc_ens_names
-
-    check_ens = all(
-        [dict_ensemble_names[var] == dict_ensemble_names[regress_vars[0]]
-         for var in regress_vars]
-         )
-
-    if not check_ens:
-        raise ValueError('Ensemble names are not the same for all variables.')
+    # Check that the ensemble names are all matching across variables
+    check_ensemble_matching(df_ERF)
 
     return df_ERF
 
 
 def load_Temp(scenario, ensemble_members, start_pi, end_pi):
+    """Load temperature scenario data, and remove pre-industrial baseline."""
+
     if 'observed-20' in scenario:
         df_temp = load_Temp_HadCRUT(scenario, start_pi, end_pi)
     elif 'observed_JK' in scenario:
@@ -458,6 +480,7 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
 
 def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     """Load HadCRUT5 observations and remove PI baseline."""
+
     here = Path(__file__).parent
     temp_ens_Path = (
         f'../data/{scenario}/Temp/HadCRUT/' +
@@ -477,9 +500,11 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
 
     return df_temp_Obs
 
+
 def load_Temp_JK(scenario, start_pi, end_pi):
     """Load multi-dataset observations from John Kennedy and
     remove PI baseline."""
+
     here = Path(__file__).parent
     temp_ens_Path = (
         f'../data/observed_JK-2024/Temp/JohnKennedy/' +
@@ -884,6 +909,38 @@ def extra_vars(forc_vars):
     return extra_vars
 
 
+def get_scaling_map(var_list_ERF, regress_vars):
+    """
+    Creates a mapping from each variable in var_list_ERF to its corresponding
+    regression variable in regress_vars.
+    """
+
+    # First, remove the extra variables that are a higher-level combination of
+    # the regression variables, so that the recursive search only finds the
+    # correct regression variable, and not anything "above it" which will be
+    # calculated as a linear combination later.
+    extra_vars_list = extra_vars(regress_vars)
+    reduced_mapping = {k: v for k, v in SUB_VAR_MAPPING.items()
+                       if k not in extra_vars_list}
+
+    def get_highest_parent(target, mapping):
+        for parent, children in mapping.items():
+            if target in children:
+                return get_highest_parent(parent, mapping)
+        return target
+
+    # Explicitly ensure regression variables map to themselves
+    # First, turn the inverse map function above into a dictionary map
+    mapped = {}
+    for v in var_list_ERF:
+        mapped[v] = get_highest_parent(v, reduced_mapping)
+    # Second, apply the identity mapping for regression variables
+    for rv in regress_vars:
+        mapped[rv] = rv
+
+    return mapped
+
+
 def check_steps(all_reg_ranges):
     """Check that the years are in steps of 1."""
     end_yrs = sorted([
@@ -894,7 +951,7 @@ def check_steps(all_reg_ranges):
 
     out_dict = {
         'check_bool': all_year_steps,
-        'range': f'{min(all_reg_ranges)} to {max(all_reg_ranges)}' ,
+        'range': f'{min(all_reg_ranges)} to {max(all_reg_ranges)}',
     }
 
     return out_dict
@@ -951,8 +1008,8 @@ def model_prior_warming(
     # Preparing lists to ensure that order of variables and ensemble members
     # are consistent across the different dataframes. I'm pretty sure that
     # pandas keeps column order consistent, but this is just extra safety
-    var_list_ERF = df_forc.columns.get_level_values(
-        "variable").unique().to_list()
+    var_list_ERF = sorted(df_forc.columns.get_level_values(
+        "variable").unique().to_list())
     ens_list_ERF = df_forc.columns.get_level_values(
         "ensemble").unique().to_list()
 
@@ -970,7 +1027,7 @@ def model_prior_warming(
     # Prepare results array for temperatures. Note that temp_Mod naming refers
     # to the fact that these temperatures are outputs from the model.
     temp_Mod_array = np.zeros(shape=(forc_Yrs.shape[0],
-                                     # -1 to get rid of Res
+                                    #  -1 to get rid of Res
                                     #  len(var_list_ERF) + len(vars_extra) - 1,
                                      len(var_list_ERF),
                                      len(ens_list_ERF)))
@@ -978,10 +1035,6 @@ def model_prior_warming(
     # Calculate temperatures from forcings for all ensembles at once,
     # leveraging FaIR's vectorisation
     for var in var_list_ERF:
-        # Select forcings for the specific variable. This selects all ensemble
-        # members available from the random subsample.
-        forc_var_All = df_forc.loc[:, (var, slice(None))]
-
         # FaIR won't run without emissions or concentrations, so specify
         # no zero emissions for input.
         emis_FAIR = fair.return_empty_emissions(
@@ -994,7 +1047,7 @@ def model_prior_warming(
             start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
             scen_names=ens_list_ERF)
         for ens in ens_list_ERF:
-            forc_FaIR[ens] = forc_var_All[(var, ens)].to_numpy()
+            forc_FaIR[ens] = df_forc.loc[:, (var, ens)].to_numpy()
 
         # Run FaIR. Convert output to numpy array for later regression.
         temp_All = fair.run_FaIR(emissions_in=emis_FAIR,
@@ -1003,18 +1056,4 @@ def model_prior_warming(
                                  show_run_info=False)['T'].to_numpy()
         temp_Mod_array[:, var_list_ERF.index(var), :] = temp_All
 
-
-
-    # # TOTAL WARMING
-    # # NOTE:'Tot' is in position -1 regardless of the number of variables:
-    # temp_Tot = temp_Mod_array[:, :-1, :].sum(axis=1)
-    # temp_Mod_array[:, -1, :] = temp_Tot
-
-    # # ANTROPOGENIC WARMING
-    # if 'Ant' in vars_extra:
-    #     temp_Ant = (temp_Mod_array[:, var_list_ERF.index('GHG')] +
-    #                 temp_Mod_array[:, var_list_ERF.index('OHF')])
-    #     temp_Mod_array[:, -2, :] = temp_Ant
-    
     return temp_Mod_array
-

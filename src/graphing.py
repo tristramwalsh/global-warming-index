@@ -191,6 +191,12 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                    plot_vars, plot_cols, sigmas='all', labels=True,
                    hatch=None, linestyle='solid'):
     """Plot the GWI timeseries for the given variables."""
+
+    if df_Results_ts is not None:
+        all_vars = df_Results_ts.columns.get_level_values('variable').unique()
+    else:
+        all_vars = []
+
     ax.set_ylabel(
         'Attributable change in surface temperature since 1850\N{EN DASH}1900 (°C)'
         )
@@ -232,7 +238,7 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
     if df_Results_ts is not None:
         for s in range(max(len(sigmas)//2, 1)):  # max to enable 50% only
             # Plot the GWI timeseries
-            for var in plot_vars:
+            for var in all_vars:
 
                 # Because ROF (Gillett) method has different percentile results
                 # available for different variables (ie Tot only has 50th), check
@@ -240,7 +246,7 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                 var_sigmas = df_Results_ts.iloc[\
                     :, df_Results_ts.columns.get_level_values('variable') == var
                     ].columns.get_level_values('percentile').unique()
-                if len(var_sigmas) > 1:
+                if (len(var_sigmas) > 1) and var in plot_vars:
                     ax.fill_between(
                         df_Results_ts.index,
                         df_Results_ts.loc[:, (var, sigmas[s])].values,

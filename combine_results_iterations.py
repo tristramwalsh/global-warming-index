@@ -11,6 +11,30 @@ import multiprocessing as mp
 import functools
 import pprint
 
+
+def get_dynamic_colours(reg_vars, plot_vars, base_colours):
+    """
+    Generate dynamic colors for sub-variables based on their parent variables.
+
+    Args:
+        reg_vars (str): The regression variables string (e.g., 'GHG-Nat').
+        plot_vars (list): List of variables to plot.
+        base_colours (dict): Dictionary of base colors.
+
+    Returns:
+        tuple: (current_var_colours, scaling_map)
+    """
+    regress_vars_list = reg_vars.split('-')
+    scaling_map = defs.get_scaling_map(plot_vars, regress_vars_list)
+
+    current_var_colours = base_colours.copy()
+    for var, parent in scaling_map.items():
+        if parent in current_var_colours:
+            current_var_colours[var] = current_var_colours[parent]
+
+    return current_var_colours, scaling_map
+
+
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
                     regressed_vars, iterations_folder, aggregated_folder):
     dict_iterations = {}
@@ -140,7 +164,6 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
     else:
         raise ValueError('Multiple start years in regressed ranges')
 
-
     # Filter the dataframe to only include the years that are
     # relevant for the historical-only dataset: these are years
     # that are >= smallest_end_year and <= largest_end_year.
@@ -229,9 +252,9 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
     """Plot single timeseries plots."""
     # print('Creating single timeseries plots for:',
     #       scen, ens, reg_vars, reg_range, end='\r')
-    plot_vars = results_dfs[
-        scen][ens][reg_vars][reg_range]['timeseries'].columns.get_level_values(
-            0).unique().to_list()
+
+    plot_vars = reg_vars.split('-')
+    plot_vars.extend(defs.extra_vars(plot_vars))
 
     fig = plt.figure(figsize=(12, 8))
     ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
@@ -258,7 +281,7 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
             reg_start:reg_end, :],
         plot_vars, var_colours)
 
-    
+
     ax.set_ylim(
         np.floor(np.min(results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].drop(columns='Res', level=0).values) * 2) / 2,
         # np.ceil(np.max(df_temp_Obs.values) * 2) / 2,
@@ -329,13 +352,13 @@ if __name__ == '__main__':
     print(argv_dict)
 
     var_colours = {'Tot': '#d7827e',
-                'Ant': '#b4637a',
-                'GHG': '#907aa9',
-                'Nat': '#56949f',
-                'OHF': '#ea9d34',
-                'Res': '#9893a5',
-                'Obs': '#797593',
-                'PiC': '#cecacd'}
+                   'Ant': '#b4637a',
+                   'GHG': '#907aa9',
+                   'Nat': '#56949f',
+                   'OHF': '#ea9d34',
+                   'Res': '#9893a5',
+                   'Obs': '#797593',
+                   'PiC': '#cecacd'}
 
     # Removed this for now: instead average across all iterations, weighting by
     # the number of samples in each iteration.
@@ -667,6 +690,14 @@ if __name__ == '__main__':
                 ###################################################################
                 print('    REGRESSED_VARIABLES:', reg_vars)
                 reg_ranges_all = sorted(list(results_dfs[scen][ens][reg_vars].keys()))
+                
+                # Define the colours for the sub-variables
+                # Get all variables present in the data (from the first available range)
+                first_range = reg_ranges_all[0]
+                plot_vars = results_dfs[scen][ens][reg_vars][first_range]['timeseries'].columns.get_level_values(0).unique().to_list()
+                
+                current_var_colours, scaling_map = get_dynamic_colours(reg_vars, plot_vars, var_colours)
+
                 if defs.check_steps(reg_ranges_all)['check_bool']:
                     print('      All years available for: ',
                         defs.check_steps(reg_ranges_all)['range'])
@@ -701,7 +732,7 @@ if __name__ == '__main__':
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 results_dfs=results_dfs,
                                 df_temp_Obs=df_temp_Obs,
-                                var_colours=var_colours),
+                                var_colours=current_var_colours),
                             reg_ranges_all)
 
                     # print('')
@@ -753,7 +784,7 @@ if __name__ == '__main__':
                 gr.gwi_timeseries(
                     ax, df_temp_Obs, None,
                     priors_dfs[scen][ens][reg_vars]['timeseries'],
-                    plot_vars_priors, var_colours,
+                    plot_vars_priors, current_var_colours,
                     hatch='x', linestyle='dashed')
 
                 ax.set_ylim(
@@ -811,6 +842,13 @@ if __name__ == '__main__':
                 print('    REGRESSED-VARIABLES:', reg_vars)
                 # Create a new empty dataframe to store the historical-only results:
                 reg_ranges_all = sorted(list(results_dfs[scen][ens][reg_vars].keys()))
+
+                # Define the colours for the sub-variables
+                # Get all variables present in the data (from the first available range)
+                first_range = reg_ranges_all[0]
+                plot_vars = results_dfs[scen][ens][reg_vars][first_range]['timeseries'].columns.get_level_values(0).unique().to_list()
+                
+                current_var_colours, scaling_map = get_dynamic_colours(reg_vars, plot_vars, var_colours)
 
                 min_regressed_range = min(reg_ranges_all)
                 max_regressed_range = max(reg_ranges_all)
@@ -880,7 +918,7 @@ if __name__ == '__main__':
                     gr.gwi_timeseries(
                         ax, df_temp_Obs, None,
                         results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline],
-                        plot_vars, var_colours,
+                        plot_vars, current_var_colours,
                         sigmas=['5', '95', '50'],
                         # hatch='\\', linestyle='dashed'
                         hatch=None, linestyle='solid'
@@ -929,12 +967,12 @@ if __name__ == '__main__':
                 gr.gwi_timeseries(
                     ax, df_temp_Obs, None,
                     results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY']['ANNUAL'],
-                    plot_vars, var_colours, sigmas=['5', '95', '50'],
+                    plot_vars, current_var_colours, sigmas=['5', '95', '50'],
                     hatch='\\', linestyle='dashed')
                 gr.gwi_timeseries(
                     ax, df_temp_Obs, None,
                     results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'],
-                    plot_vars, var_colours, sigmas=['5', '95', '50'],
+                    plot_vars, current_var_colours, sigmas=['5', '95', '50'],
                     hatch=None, linestyle='solid')
 
                 ax.set_ylim(-1, np.ceil(np.max(df_temp_Obs.values) * 2) / 2)
@@ -991,7 +1029,7 @@ if __name__ == '__main__':
                 for ax in [ax1, ax3]:
                     gr.gwi_timeseries(
                         ax, df_temp_Obs, None, None, None,
-                        var_colours, sigmas=['5', '95', '50'])
+                        current_var_colours, sigmas=['5', '95', '50'])
 
                 # Plot the centered 20-year rolling window on the 50th percentile Obs
                 df_temp_Obs_20yr = df_temp_Obs.quantile(q=0.5, axis=1).rolling(
@@ -1003,11 +1041,18 @@ if __name__ == '__main__':
                     unwanted_vars = ['GHG', 'OHF', 'Res']
                     plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
                     for vv in plot_vars_main:
+                        # Determine line style
+                        ls = line_style.get(vv)
+                        if ls is None:
+                            # Try to get style from parent
+                            parent = scaling_map.get(vv)
+                            ls = line_style.get(parent, 'solid')
+
                         # Plot the historical only timeseries
                         ax1.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
                                 results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
                                 label=f'{headline}-{vv}',
-                                linestyle=line_style[vv],
+                                linestyle=ls,
                                 color=headline_colours[headline]
                                 )
                         if vv != 'Nat':
@@ -1015,7 +1060,7 @@ if __name__ == '__main__':
                                 (results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
                                 - df_temp_Obs_20yr),
                                 label=f'{headline}-{vv}',
-                                linestyle=line_style[vv],
+                                linestyle=ls,
                                 color=headline_colours[headline]
                             )
 
@@ -1036,14 +1081,14 @@ if __name__ == '__main__':
 
                         ax3.plot(df_fullinfo_defs.index, df_fullinfo_defs,
                                 label=f'{headline}-{vv}',
-                                linestyle=line_style[vv],
+                                linestyle=ls,
                                 color=headline_colours[headline]
                                 )
                         if vv != 'Nat':
                             ax4.plot(
                                 (df_fullinfo_defs - df_temp_Obs_20yr),
                                 label=f'{headline}-{vv}',
-                                linestyle=line_style[vv],
+                                linestyle=ls,
                                 color=headline_colours[headline]
                             )
 
@@ -1097,18 +1142,25 @@ if __name__ == '__main__':
 
                 gr.gwi_timeseries(
                     ax, df_temp_Obs, None, None, None,
-                    var_colours,
+                    current_var_colours,
                     sigmas=['5', '95', '50']
                     # hatch='\\', linestyle='dashed'
                 )
                 # for headline in headlines:
                 for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
                     for vv in plot_vars_main:
+                        # Determine line style
+                        ls = line_style.get(vv)
+                        if ls is None:
+                            # Try to get style from parent
+                            parent = scaling_map.get(vv)
+                            ls = line_style.get(parent, 'solid')
+
                         # Plot the historical only timeseries
                         ax.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
                                 results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
                                 label=f'{headline}-{vv}',
-                                linestyle=line_style[vv],
+                                linestyle=ls,
                                 color=headline_colours[headline]
                                 )
                 ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
@@ -1154,7 +1206,7 @@ if __name__ == '__main__':
                 # SSP projections in future)
 
                 # constrained_year = int(max_regressed_range.split('-')[1])
-                constrained_year = 2100
+                constrained_year = largest_end_year
 
                 df_constrained = results_dfs[scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
                 df_constrained[:] = 0
@@ -1182,7 +1234,7 @@ if __name__ == '__main__':
                     shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
                 gr.gwi_timeseries(
                     ax1, None, None, df_constrained,
-                    plot_vars_priors, var_colours, sigmas=['5', '95', '50'])
+                    plot_vars_priors, current_var_colours, sigmas=['5', '95', '50'])
 
                 # ax1.set_ylim(
                 #     np.floor(np.min(df_constrained.values) * 2) / 2,
@@ -1206,7 +1258,7 @@ if __name__ == '__main__':
                     ax2.fill_between(
                         [plot_vars.index(vv), plot_vars.index(vv) + bar_width],
                         min_prior, max_prior,
-                        color=var_colours[vv],
+                        color=current_var_colours[vv],
                         alpha=0.6,
                         linewidth=0,
                         label=vv
@@ -1215,7 +1267,7 @@ if __name__ == '__main__':
                     ax2.plot(
                         [plot_vars.index(vv), plot_vars.index(vv) + bar_width],
                         [med_prior, med_prior],
-                        color=var_colours[vv],
+                        color=current_var_colours[vv],
                         lw=2)
 
                     # Add horizontal lines in the variable colours for the min,
@@ -1449,7 +1501,7 @@ if __name__ == '__main__':
                         df_temp_Obs.quantile(q=0.05, axis=1))
                 ax2.errorbar(df_temp_Obs.index, df_temp_Obs.quantile(q=0.5, axis=1),
                             yerr=(err_neg, err_pos),
-                            fmt='o', color=var_colours['Obs'], ms=2.5, lw=1,
+                            fmt='o', color=current_var_colours['Obs'], ms=2.5, lw=1,
                             label='Reference Temp: HadCRUT5')
 
                 ax2.set_ylabel('Global Warming, ⁰C')
