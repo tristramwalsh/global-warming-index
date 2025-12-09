@@ -221,7 +221,8 @@ def GWI_faster(
         temp_Mod_trunc_yrs_ens = temp_Mod_array_all_years_ens[yr_mask, :]
 
         # Get the mapping from variable to regression variable
-        scaling_map = defs.get_scaling_map(var_list_ERF, regress_vars)
+        scaling_map = defs.map_var_to_regression_aggregate(
+            var_list_ERF, regress_vars)
 
         # Now combine the coeffieicnts with the truncated model outputs:
         for c_k in range(coef_Obs_Results.shape[1]):
@@ -744,8 +745,11 @@ if __name__ == "__main__":
     )
     output_path_priors = (
         f'SCENARIO--{scenario_out}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
-        f'VARIABLES--{"-".join(regress_vars)}/'
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
+    )
+    out_path_obs = (
+        f'SCENARIO--{scenario_out}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
 
     # Create a folder to store the plots
@@ -758,6 +762,9 @@ if __name__ == "__main__":
     results_folder_priors = 'results/priors/'
     if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
         os.makedirs(f'{results_folder_priors}{output_path_priors}')
+    results_folder_obs = 'results/observations/'
+    if not os.path.exists(f'{results_folder_obs}{out_path_obs}'):
+        os.makedirs(f'{results_folder_obs}{out_path_obs}')
 
     ###########################################################################
     # READ IN THE DATA ########################################################
@@ -1140,6 +1147,11 @@ if __name__ == "__main__":
         f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
+    full_obs_size = (df_temp_Obs.shape[1])
+    variation_obs = (
+        f'SCENARIO--{scenario}_' +
+        f'ENSEMBLE-SIZE--{full_obs_size}'
+    )
 
     # NOTE TO SELF: multidimensional np.percentile() changes the order of
     # the axes, so that the axis along which you took the percentiles is
@@ -1239,7 +1251,8 @@ if __name__ == "__main__":
 
             years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
-
+            print('GWI SR1.5 definitoin shape: ', temp_Att_Results_SR15_recent.shape)
+            
             # Calculate SR15-definition warming for each var-ens combination
             # See SR15 Ch1 1.2.1
             # temp_Att_Results_SR15 = np.apply_along_axis(
@@ -1364,6 +1377,131 @@ if __name__ == "__main__":
     df_headlines = pd.concat(dfs, axis=0)
     df_headlines.to_csv(f'{results_folder}{output_path}' +
                         f'GWI_results_headlines_{variation}.csv')
+
+    # OBSERVATIONS HEADLINE RESULTS ###########################################
+    if headline_toggles:
+        print(f'Calculating headlines for observations {headline_years}')
+
+        dfs_obs = []
+
+        if 'annual' in headline_toggles:
+            print('Reading annual mean definition temps (Obs)', end=' ')
+
+            hl_years_annual = [y for y in hl_years
+                               if y in df_temp_Obs.index]
+            if ((headline_years == 'IGCC') and
+                (2017 not in hl_years_annual) and
+                (2017 in df_temp_Obs.index)
+                ):
+                hl_years_annual.append(2017)
+
+            for year in hl_years_annual:
+                temp_Obs_annual = df_temp_Obs.loc[year].to_numpy()
+                obs_headline_array = np.percentile(temp_Obs_annual, sigmas_all)
+
+                dict_Results_obs = {
+                    ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
+                    for sigma in sigmas_all
+                }
+
+                df_headlines_obs_i = pd.DataFrame(
+                    dict_Results_obs, index=[year])
+                df_headlines_obs_i.columns.names = ['variable', 'percentile']
+                df_headlines_obs_i.index.name = 'Year'
+                dfs_obs.append(df_headlines_obs_i)
+            print('... done')
+
+        if 'SR1.5' in headline_toggles:
+            print('Calculating SR15-definition temps (Obs)', end=' ')
+
+            hl_years_annual = [y for y in hl_years
+                               if y in df_temp_Obs.index]
+            if ((headline_years == 'IGCC') and
+                (2017 not in hl_years_annual) and
+                (2017 in df_temp_Obs.index)
+                ):
+                hl_years_annual.append(2017)
+
+            for year in hl_years_annual:
+                if ((year in df_temp_Obs.index) and (year-15 in df_temp_Obs.index)):
+                    temp_Obs_SR15_recent = df_temp_Obs.loc[year-15:year].to_numpy()
+                    # print(temp_Obs_SR15_recent)
+                    print('Obs SR1.5 definition shape: ', temp_Obs_SR15_recent.shape)
+
+                    results = []
+                    for ii in range(temp_Obs_SR15_recent.shape[1]):
+                        results.append(defs.final_value_of_trend(temp_Obs_SR15_recent[:, ii]))
+
+                    obs_headline_array = np.percentile(results, sigmas_all)
+
+                    dict_Results_obs = {
+                        ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
+                        for sigma in sigmas_all
+                    }
+
+                    df_headlines_obs_i = pd.DataFrame(
+                        dict_Results_obs, index=[f'{year} (SR15 definition)'])
+                    df_headlines_obs_i.columns.names = ['variable', 'percentile']
+                    df_headlines_obs_i.index.name = 'Year'
+                    dfs_obs.append(df_headlines_obs_i)
+            print('... done')
+
+        if 'AR6' in headline_toggles:
+            print('Calculating AR6-definition temps (Obs)', end=' ')
+
+            hl_years_decadal = [y for y in hl_years
+                                if ((y in df_temp_Obs.index) and
+                                    (y-9 in df_temp_Obs.index))]
+            if ((headline_years == 'IGCC') and
+                (2019 not in hl_years_decadal) and
+                (2019 in df_temp_Obs.index) and
+                (2010 in df_temp_Obs.index)):
+                hl_years_decadal.append(2019)
+
+            for year in hl_years_decadal:
+                temp_Obs_AR6 = df_temp_Obs.loc[year-9:year].mean(axis=0
+                                                                 ).to_numpy()
+
+                obs_headline_array = np.percentile(temp_Obs_AR6, sigmas_all)
+
+                dict_Results_obs = {
+                    ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
+                    for sigma in sigmas_all
+                }
+
+                df_headlines_obs_i = pd.DataFrame(
+                    dict_Results_obs, index=['-'.join([str(year-9), str(year)])])
+                df_headlines_obs_i.columns.names = ['variable', 'percentile']
+                df_headlines_obs_i.index.name = 'Year'
+                dfs_obs.append(df_headlines_obs_i)
+            print('... done')
+
+        if 'CGWL' in headline_toggles:
+            print('Calculating CGWL-definition temps (Obs)', end=' ')
+
+            for year in hl_years:
+                if ((year-9 in df_temp_Obs.index) and (year+10 in df_temp_Obs.index)):
+                    temp_Obs_CGWL = df_temp_Obs.loc[year-9:year+10].mean(axis=0).to_numpy()
+
+                    obs_headline_array = np.percentile(temp_Obs_CGWL, sigmas_all)
+
+                    dict_Results_obs = {
+                        ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
+                        for sigma in sigmas_all
+                    }
+
+                    df_headlines_obs_i = pd.DataFrame(
+                        dict_Results_obs, index=[f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"])
+                    df_headlines_obs_i.columns.names = ['variable', 'percentile']
+                    df_headlines_obs_i.index.name = 'Year'
+                    dfs_obs.append(df_headlines_obs_i)
+            print('... done')
+
+        if dfs_obs:
+            df_headlines_obs = pd.concat(dfs_obs, axis=0)
+            df_headlines_obs.to_csv(
+                f'{results_folder_obs}{out_path_obs}' +
+                f'Obs_results_headlines_{variation_obs}.csv')
 
     # RATE: AR6 DEFINITION
     if rate_toggle:

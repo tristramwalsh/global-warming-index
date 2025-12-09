@@ -17,7 +17,8 @@ import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 SUB_VAR_MAPPING = {
     'GHG': ['co2', 'ch4', 'n2o', 'halogen'],
-    'OHF': ['o3', 'aerosol-radiation_interactions', 'aerosol-cloud_interactions', 'contrails', 'land_use', 'bc_snow', 'h2o_strat'],
+    'OHF': ['aerosol-radiation_interactions', 'aerosol-cloud_interactions',
+            'contrails', 'land_use', 'bc_snow', 'h2o_strat', 'o3'],
     'Nat': ['solar', 'volcanic'],
     'Ant': ['GHG', 'OHF'],
     'Tot': ['Ant', 'Nat']
@@ -909,7 +910,7 @@ def extra_vars(forc_vars):
     return extra_vars
 
 
-def get_scaling_map(var_list_ERF, regress_vars):
+def map_var_to_regression_aggregate(var_list_ERF, regress_vars):
     """
     Creates a mapping from each variable in var_list_ERF to its corresponding
     regression variable in regress_vars.
