@@ -1144,7 +1144,6 @@ if __name__ == "__main__":
         len(df_forc.columns.get_level_values("ensemble").unique()))
     variation_priors = (
         f'SCENARIO--{scenario_out}_' +
-        f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
     full_obs_size = (df_temp_Obs.shape[1])

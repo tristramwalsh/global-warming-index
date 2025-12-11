@@ -6,7 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import scipy.stats as ss
 import seaborn as sns
-# from src.definitions import moving_average
+import src.definitions as defs
 import sys
 
 # font_family = 'Roboto'
@@ -84,6 +84,121 @@ def overall_legend(fig, loc, ncol, nrow=False, reorder=None):
     # elif loc == 'lower center':
     #     # fig.tight_layout(rect=(0.02, 0.12, 0.98, 0.94))
     #     fig.tight_layout(rect=(0.0, 0.12, 1.0, 0.94))
+
+
+def get_dynamic_colours(reg_vars, plot_vars, base_colours):
+    """
+    Generate dynamic colors for sub-variables based on their parent variables.
+
+    Args:
+        reg_vars (str): The regression variables string (e.g., 'GHG-Nat').
+        plot_vars (list): List of variables to plot.
+        base_colours (dict): Dictionary of base colors.
+
+    Returns:
+        tuple: (current_var_colours, scaling_map)
+    """
+    regress_vars_list = reg_vars.split('-')
+    scaling_map = defs.map_var_to_regression_aggregate(
+        plot_vars, regress_vars_list)
+
+    current_var_colours = base_colours.copy()
+    for var, parent in scaling_map.items():
+        if parent in current_var_colours:
+            current_var_colours[var] = current_var_colours[parent]
+
+    return current_var_colours, scaling_map
+
+
+def get_variable_linestyle(var):
+    """
+    Determine the linestyle for a variable based on its position in the hierarchy.
+    Aggregate variables get 'solid'.
+    Sub-variables get a unique linestyle based on their index among siblings.
+    """
+    # Aggregate variables are always solid
+    if var in defs.SUB_VAR_MAPPING:
+        return 'solid'
+
+    # Define a list of linestyles to cycle through
+    # Using tuples for more distinct patterns if needed, or standard strings
+    linestyles = [
+        '--',                          # Dashed
+        ':',                           # Dotted
+        '-.',                          # Dash-dot
+        (0, (1, 1)),                   # Densely dotted
+        (0, (5, 1)),                   # Densely dashed
+        (0, (3, 1, 1, 1)),             # Densely dash-dotted
+        (0, (3, 5, 1, 5)),             # Loosely dash-dotted
+        (0, (5, 5)),                   # Loosely dashed
+        (0, (1, 5)),                   # Loosely dotted
+        (0, (3, 1, 1, 1, 1, 1))        # Dash-dot-dot
+    ]
+
+    for parent, children in defs.SUB_VAR_MAPPING.items():
+        if var in children:
+            idx = children.index(var)
+            return linestyles[idx % len(linestyles)]
+
+    # Fallback for unknown variables
+    return 'solid'
+
+
+def get_dynamic_linestyles(plot_vars):
+    """
+    Generate a dictionary of linestyles for the given plot variables.
+    """
+    linestyles = {}
+    for var in plot_vars:
+        linestyles[var] = get_variable_linestyle(var)
+    return linestyles
+
+
+def get_legend_reorder_indices(fig):
+    """
+    Determine the order of indices for the legend based on a predefined hierarchy.
+    """
+    # Collect labels in order of appearance
+    all_labels = []
+    for ax in fig.axes:
+        _, labels = ax.get_legend_handles_labels()
+        all_labels.extend(labels)
+
+    # Get unique labels preserving order
+    unique_labels = []
+    seen = set()
+    for lbl in all_labels:
+        if lbl not in seen:
+            unique_labels.append(lbl)
+            seen.add(lbl)
+
+    # Define hierarchy
+    hierarchy = ['Reference Temp', 'Tot', 'Res']
+
+    def add_subs(var):
+        if var in defs.SUB_VAR_MAPPING:
+            for sub in defs.SUB_VAR_MAPPING[var]:
+                if sub not in hierarchy:
+                    hierarchy.append(sub)
+                add_subs(sub)
+    add_subs('Tot')
+
+    # Build desired order
+    desired_order = []
+    # 1. Items in hierarchy, in hierarchy order
+    for item in hierarchy:
+        if item in unique_labels:
+            desired_order.append(item)
+
+    # 2. Items in unique_labels not in hierarchy (append at end)
+    for item in unique_labels:
+        if item not in desired_order:
+            desired_order.append(item)
+
+    # Calculate indices
+    indices = [unique_labels.index(item) for item in desired_order]
+
+    return indices
 
 
 def running_mean_internal_variability(
@@ -189,13 +304,16 @@ def plot_internal_variability_sample(
 
 def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                    plot_vars, plot_cols, sigmas='all', labels=True,
-                   hatch=None, linestyle='solid'):
+                   hatch=None, linestyle='solid', plume_vars=None):
     """Plot the GWI timeseries for the given variables."""
 
     if df_Results_ts is not None:
         all_vars = df_Results_ts.columns.get_level_values('variable').unique()
     else:
         all_vars = []
+    
+    if plume_vars is None:
+        plume_vars = plot_vars
 
     ax.set_ylabel(
         'Attributable change in surface temperature since 1850\N{EN DASH}1900 (°C)'
@@ -240,23 +358,30 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
             # Plot the GWI timeseries
             for var in all_vars:
 
+                # Determine linestyle
+                if isinstance(linestyle, dict):
+                    ls = linestyle.get(var, 'solid')
+                else:
+                    ls = linestyle
+
                 # Because ROF (Gillett) method has different percentile results
                 # available for different variables (ie Tot only has 50th), check
                 # for each variable first whether to plot plume.
                 var_sigmas = df_Results_ts.iloc[\
                     :, df_Results_ts.columns.get_level_values('variable') == var
                     ].columns.get_level_values('percentile').unique()
-                if (len(var_sigmas) > 1) and var in plot_vars:
+                if (len(var_sigmas) > 1) and var in plume_vars:
                     ax.fill_between(
                         df_Results_ts.index,
                         df_Results_ts.loc[:, (var, sigmas[s])].values,
                         df_Results_ts.loc[:, (var, sigmas[-(s+2)])].values,
                         color=plot_cols[var], alpha=fill_alpha, linewidth=0.0,
-                        hatch=hatch, linestyle=linestyle)
+                        hatch=hatch, linestyle=ls)
                 ax.plot(df_Results_ts.index,
                         df_Results_ts.loc[:, (var, sigmas[-1])].values,
-                        color=plot_cols[var], alpha=line_alpha, label=labels*var,
-                        linestyle=linestyle)
+                        color=plot_cols[var], alpha=line_alpha,
+                        label=labels*var,
+                        linestyle=ls)
 
     if df_Results_ts is not None:
         end_tick = df_Results_ts.index[-1]
