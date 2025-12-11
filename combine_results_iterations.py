@@ -252,9 +252,20 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
         ax.axvline(int(reg_range.split('-')[1]),
                    color='darkslategray', linestyle='--')
 
-    fig.suptitle(
-        'GWI Warming Timeseries\n' +
-        f'Scenario: {scen} | Ensemble: {ens} | Regressed: {reg_vars} {reg_range}')
+    # Add title
+    fig.text(ax.get_position().x0, ax.get_position().y1+0.02,
+             'Global Warming Index Timeseries',
+             ha='left',
+             fontsize=plt.rcParams['axes.titlesize'],
+             fontweight='bold'
+             )
+
+    # Add configuration text
+    configuration = f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars} | Regressed range: {reg_range}'
+    if configuration:
+        fig.text(0.5, 0.01, configuration, ha='center',
+                 fontsize='x-small', fontfamily='monospace',
+                 )
 
     plot_path = ('plots/aggregated/' +
                  f'SCENARIO--{scen}/' +
@@ -270,6 +281,172 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
     # plot_names.append(plot_name)
+    fig.savefig(plot_name)
+    plt.close(fig)
+    return plot_name
+
+
+def single_spm2_plot(reg_range, scen, ens, reg_vars, results_dfs, obs_dfs, var_colours, var_names):
+    """Plot single SPM2 bar plot."""
+    # print(f'          Plotting SPM2 for range: {reg_range}')
+    
+    # Check if headlines exist for this range
+    if 'headlines' not in results_dfs[scen][ens][reg_vars][reg_range]:
+        print(f'            No headlines found for {reg_range}, skipping.')
+        return
+
+    df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
+
+    # Get observations headlines
+    if 'headlines' in obs_dfs[scen][ens][reg_range]:
+        df_obs_headlines = obs_dfs[scen][ens][reg_range]['headlines']
+    else:
+        df_obs_headlines = None
+
+    # Determine period (last year)
+    years = [idx for idx in df_headlines.index if str(idx).isdigit()]
+    if years:
+        period = years[-1]
+    else:
+        period = df_headlines.index[-1]
+
+    # Determine variables for SPM2 panels 2 and 3.
+    possible_vars_p2 = ['Tot', 'Ant', 'GHG', 'OHF', 'Nat', 'Res']
+    vars_panel2 = [v for v in possible_vars_p2
+                   if (v, '50') in df_headlines.columns]
+
+    # Panel 3: Components
+    vars_panel3 = []
+    if defs.SUB_VAR_MAPPING:
+        for group in ['GHG', 'OHF', 'Nat']:
+            if group in defs.SUB_VAR_MAPPING:
+                for sub_var in defs.SUB_VAR_MAPPING[group]:
+                    if (sub_var, '50') in df_headlines.columns:
+                        vars_panel3.append(sub_var)
+
+    # Calculate grid dimensions based on the number of variables in each panel
+    # in order to make the bars in each panel the same visual width.
+    # Panel 1 is fixed width of 3 for padding around observations.
+    x_width_1 = 3
+    x_width_2 = max(len(vars_panel2), 1)
+    spacer = 1
+
+    if vars_panel3:
+        x_width_3 = max(len(vars_panel3), 1)
+        total_width = x_width_1 + spacer + x_width_2 + spacer + x_width_3
+    else:
+        x_width_3 = 0
+        total_width = x_width_1 + spacer + x_width_2
+
+    # Create figure and axes
+    fig = plt.figure(figsize=(12, 10))
+    ax1 = plt.subplot2grid((1, total_width), (0, 0),
+                            colspan=x_width_1, fig=fig)
+    ax2 = plt.subplot2grid((1, total_width), (0, x_width_1 + spacer),
+                           colspan=x_width_2, fig=fig)
+    axes = [ax1, ax2]
+    if vars_panel3:
+        ax3 = plt.subplot2grid(
+            (1, total_width), (0, x_width_1 + spacer + x_width_2 + spacer),
+            colspan=x_width_3, fig=fig)
+        axes.append(ax3)
+
+    # Calculate dynamic ylim
+    vals_min = []
+    vals_max = []
+    for _df in [df_headlines, df_obs_headlines]:
+        if _df is not None and period in _df.index:
+            vals_max.append(_df.loc[period, (slice(None), '95')].max())
+            vals_min.append(_df.loc[period, (slice(None), '5')].min())
+    lower_ylim = np.floor(min(vals_min) * 2) / 2
+    upper_ylim = np.ceil(max(vals_max) * 2) / 2
+    ylim = (lower_ylim, upper_ylim)
+
+    # Panel 1: Observed
+    if df_obs_headlines is not None and period in df_obs_headlines.index:
+        gr.plot_spm2_panel(axes[0], df_obs_headlines, period, ['Obs'],
+                           var_colours, var_names,
+                           ylim, show_ylabel=True, show_yticklabels=True,
+                           xlim=(-1.5, 1.5))
+
+    # Panel 2: Aggregated
+    gr.plot_spm2_panel(axes[1], df_headlines, period, vars_panel2,
+                       var_colours, var_names,
+                       ylim, show_ylabel=False, show_yticklabels=False)
+
+    # Panel 3: Components
+    if vars_panel3 and len(axes) > 2:
+        gr.plot_spm2_panel(axes[2], df_headlines, period, vars_panel3,
+                           var_colours, var_names,
+                           ylim, show_ylabel=False, show_yticklabels=False)
+
+    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
+
+    # Add text
+    fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
+             f'Observed warming and contributions ({period})',
+             fontsize=plt.rcParams['axes.titlesize'],
+             fontweight='bold',
+             )
+    fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.02,
+             '(a) Observed warming',
+             ha='left',
+             fontsize=plt.rcParams['font.size'],
+             fontweight='regular',
+             #  fontstyle='italic'
+             )
+    # fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.08,
+    #          ('Contributions to observed warming'),
+    #          fontsize=plt.rcParams['axes.titlesize'],
+    #          fontweight='bold'
+    #          )
+    fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.02,
+             ('(b) Aggregated contributions'),
+             fontsize=plt.rcParams['font.size'],
+             fontweight='regular'
+             )
+    if len(axes) > 2:
+        fig.text(axes[2].get_position().x0, axes[2].get_position().y1+0.02,
+                 ('(c) Component contributions'),
+                 fontsize=plt.rcParams['font.size'],
+                 fontweight='regular'
+                 )
+
+    # Create plot
+    configuration = f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars} | Regressed range: {reg_range}'
+    if configuration:
+        fig.text(0.5, 0.01, configuration, ha='center',
+                 fontsize='x-small', fontfamily='monospace',
+                 )
+
+    # Draw arrows for Ant <- GHG + OHF
+    y_offsets = {
+        'Ant': 0.185,
+        'GHG': 0.215,
+        'OHF': 0.165
+    }
+    if set('GHG-OHF-Nat'.split('-')).issubset(set(vars_panel2)):
+        gr.draw_grouping_arrow(axes[1], vars_panel2, 'Ant', ['GHG', 'OHF'],
+                            y_offsets=y_offsets, line_y_offset=0.26)
+
+    # Set the grid to the back for the fig
+    for ax in axes:
+        ax.set_axisbelow(True)
+
+    # Save plot
+    plot_path = ('plots/aggregated/' +
+                    f'SCENARIO--{scen}/' +
+                    f'ENSEMBLE-MEMBER--{ens}/' +
+                    f'VARIABLES--{reg_vars}/' +
+                    f'REGRESSED-YEARS--{reg_range}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path)
+
+    plot_name = (f'{plot_path}/' +
+                    f'SPM2_BarPlot_Scenario--{scen}_' +
+                    f'ENSEMBLE-MEMBER--{ens}_' +
+                    f'VARIABLES--{reg_vars}_' +
+                    f'REGRESSED-YEARS--{reg_range}.png')
     fig.savefig(plot_name)
     plt.close(fig)
     return plot_name
@@ -315,6 +492,30 @@ if __name__ == '__main__':
                    'Res': '#9893a5',
                    'Obs': '#797593',
                    'PiC': '#cecacd'}
+
+
+    var_names = {
+        'Obs': 'Observed warming',
+        'Tot': 'Total forced warming',
+        'Ant': 'Human-induced warming',
+        'GHG': 'Well-mixed greenhouse gases',
+        'OHF': 'Other human forcings',
+        'Nat': 'Solar and volcanic drivers',
+        'Res': 'Residual (Internal variability)',
+        'co2': 'Carbon dioxide',
+        'ch4': 'Methane',
+        'n2o': 'Nitrous oxide',
+        'halogen': 'Halogenated gases',
+        'aerosol-radiation_interactions': 'Aerosol-radiation interactions',
+        'aerosol-cloud_interactions': 'Aerosol-cloud interactions',
+        'land_use': 'Land-use reflectance',
+        'bc_snow': 'Black carbon on snow',
+        'h2o_strat': 'Stratospheric water vapour',
+        'o3': 'Ozone',
+        'solar': 'Solar',
+        'volcanic': 'Volcanic',
+        'contrails': 'Aviation contrails'
+    }
 
     # Removed this for now: instead average across all iterations, weighting by
     # the number of samples in each iteration.
@@ -543,25 +744,20 @@ if __name__ == '__main__':
     print('Loading temperature observations...')
     for scen in results_dfs.keys():
         for ens in results_dfs[scen].keys():
-            # Ensure the structure exists in obs_dfs
-            if scen not in obs_dfs:
-                obs_dfs[scen] = {}
-            if ens not in obs_dfs[scen]:
-                obs_dfs[scen][ens] = {}
-            
+
             # Parse ensemble string for GMT
             # e.g. pull the 7 (or similar) out of: GMT-7_ERF-all
             try:
                 ens_GMT = {combo.split('-')[0]: combo.split('-')[1]
                            for combo in ens.split('_')
                            }['GMT']
-                
+
                 scen_in = scen.split('_const-ERF')[0]
-                
+
                 df_temp_Obs = defs.load_Temp(
                     scenario=scen_in, ensemble_members=ens_GMT,
                     start_pi=1850, end_pi=1900)
-                
+
                 obs_dfs[scen][ens]['timeseries'] = df_temp_Obs
             except Exception as e:
                 print(f'Warning: Could not load temperature observations for {scen} {ens}: {e}')
@@ -575,7 +771,7 @@ if __name__ == '__main__':
         print('SCENARIO:', scen)
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
-            
+
             df_temp_Obs = obs_dfs[scen][ens]['timeseries']
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
@@ -612,7 +808,7 @@ if __name__ == '__main__':
                 else:
                     single_toggle = False
                     print('      Skipping single_timeseries for:',
-                        scen, ens, reg_vars)
+                          scen, ens, reg_vars)
 
                 if single_toggle:
                     with mp.Pool(os.cpu_count()) as p:
@@ -638,7 +834,7 @@ if __name__ == '__main__':
                 gif_toggle = False
                 if gif_toggle:
                     print('  Creating gif of timeseries plots for:',
-                        scen, ens, reg_vars)
+                          scen, ens, reg_vars)
 
                     images_list = [Image.open(plot) for plot in plot_names]
                     # calculate the frame number of the last frame (ie the number of
@@ -680,11 +876,11 @@ if __name__ == '__main__':
 
                 # Determine legend location
                 sub_vars = [v for v in plot_vars_priors if v not in plume_vars]
-                
+
                 fig = plt.figure(figsize=(12, 8))
                 ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), 
-                                    rowspan=1, colspan=1)
-                
+                                      rowspan=1, colspan=1)
+
                 gr.gwi_timeseries(
                     ax, obs_dfs[scen][ens]['timeseries'], None,
                     priors_dfs[scen][ens]['timeseries'],
@@ -734,13 +930,24 @@ if __name__ == '__main__':
                 fig.savefig(plot_name)
                 plt.close(fig)
 
+
+
                 ############################################################
                 # PLOT THE BAR PLOT ########################################
                 ############################################################
-
-
-
-
+                with mp.Pool(os.cpu_count()) as p:
+                    print('        Plotting SPM2 for GWI in parallel')
+                    p.map(
+                        functools.partial(
+                            single_spm2_plot,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            results_dfs=results_dfs,
+                            obs_dfs=obs_dfs,
+                            var_colours=current_var_colours,
+                            var_names=var_names
+                        ),
+                        reg_ranges_all
+                    )
 
     ###########################################################################
     # Generate the historical-only timeseries #################################

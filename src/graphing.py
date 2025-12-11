@@ -728,6 +728,132 @@ def Fig_SPM2_plot(
                   )
 
 
+def plot_spm2_panel(ax, df, period, vars_list, var_colours, var_names, ylim,
+                    show_ylabel=False, show_yticklabels=False, xlim=None):
+    """
+    Helper to plot a single panel of bars.
+    """
+
+    for var in vars_list:
+        
+        med = df.loc[period, (var, '50')]
+        neg = med - df.loc[period, (var, '5')]
+        pos = df.loc[period, (var, '95')] - med
+
+        ax.bar(vars_list.index(var), med, yerr=[[neg], [pos]],
+               error_kw=dict(lw=0.8, capsize=2, capthick=0.8),
+               color=var_colours[var], width=0.5)
+
+    # X-axis labels
+    labels = [var_names.get(var, var) for var in vars_list]
+    
+    ax.set_xticks(range(len(vars_list)))
+    ax.set_xticklabels(labels, rotation=90)
+
+    ax.set_ylim(ylim)
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    else:
+        ax.set_xlim(-0.5, len(vars_list) - 0.5)
+        
+    ax.axhline(0, color='black', linewidth=0.5)
+    
+    if show_ylabel:
+        ax.set_ylabel('Change in global mean surface temperature'
+                      '\nrelative to 1850-1900 (°C)')
+    
+    if not show_yticklabels:
+        ax.set_yticklabels([])
+
+
+def draw_grouping_arrow(ax, vars_list, target, sources, y_offsets=None, line_y_offset=0.26):
+    """
+    Draw arrows grouping source variables to a target variable.
+    
+    Args:
+        ax: The axes to draw on.
+        vars_list: List of variables in the plot (to find indices).
+        target: The target variable name (e.g., 'Ant').
+        sources: List of source variable names (e.g., ['GHG', 'OHF']).
+        y_offsets: Dictionary of vertical offsets for each variable (from ax.y0).
+        line_y_offset: Vertical offset for the connecting horizontal line (from ax.y0).
+    """
+    if y_offsets is None:
+        y_offsets = {}
+
+    # Extract variable names from vars_list (handling tuples)
+    vars_names_only = [v[0] if isinstance(v, tuple) else v for v in vars_list]
+    
+    if target not in vars_names_only:
+        return
+    
+    # Get bounds of ax
+    bbox = ax.get_position()
+    x0 = bbox.x0
+    y0 = bbox.y0
+    wi = bbox.width
+    
+    n_vars = len(vars_list)
+    
+    def get_x_fig(name):
+        idx = vars_names_only.index(name)
+        # Center of bar is at index idx.
+        # Axis limits are -0.5 to n_vars - 0.5. Range is n_vars.
+        # Fraction = (idx - (-0.5)) / n_vars = (idx + 0.5) / n_vars
+        return x0 + wi * ((idx + 0.5) / n_vars)
+
+    # Build lists for the loop
+    xcoords = []
+    ycoords = []
+    arrow_styles = []
+    
+    # Target vertical line (Arrow pointing up to label)
+    tx = get_x_fig(target)
+    ty_start = y0 - y_offsets.get(target, 0.225)
+    ty_line = y0 - line_y_offset
+    
+    xcoords.append([tx, tx])
+    ycoords.append([ty_start, ty_line])
+    arrow_styles.append('<-') # Arrow at start (top)
+    
+    # Source vertical lines
+    source_xs = []
+    for src in sources:
+        if src in vars_names_only:
+            sx = get_x_fig(src)
+            source_xs.append(sx)
+            sy_start = y0 - y_offsets.get(src, 0.225)
+            sy_line = y0 - line_y_offset
+            
+            xcoords.append([sx, sx])
+            ycoords.append([sy_start, sy_line])
+            arrow_styles.append(']-') # Bracket at start (top)
+            
+    # Horizontal line connecting sources and target
+    if source_xs:
+        all_x = source_xs + [tx]
+        min_x = min(all_x)
+        max_x = max(all_x)
+        
+        xcoords.append([min_x, max_x])
+        ycoords.append([ty_line, ty_line])
+        arrow_styles.append('-')
+    
+    # Draw
+    for i in range(len(xcoords)):
+        ax.annotate('',
+                    xy=(xcoords[i][1], ycoords[i][1]),
+                    xytext=(xcoords[i][0], ycoords[i][0]),
+                    xycoords='figure fraction',
+                    textcoords='figure fraction',
+                    arrowprops=dict(arrowstyle=arrow_styles[i],
+                                    shrinkA=0, shrinkB=0,
+                                    color='gainsboro',
+                                    lw=1)
+                    )
+
+
 def definition_diagram(ax1, end_yr, df_headlines, df_temp_Obs, df_temp_Att,
                        var_colours):
     text_offset = 2
