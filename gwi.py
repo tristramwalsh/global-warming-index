@@ -750,6 +750,7 @@ if __name__ == "__main__":
     out_path_obs = (
         f'SCENARIO--{scenario_out}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
+        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
 
     # Create a folder to store the plots

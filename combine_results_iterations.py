@@ -467,18 +467,6 @@ if __name__ == '__main__':
                         priors_files[scenario][ensemble_selection][
                             'timeseries'] = os.path.join(_path_prior_dir, f)
 
-            # Load observations files
-            _path_obs_dir = ('results/observations/' +
-                             f'SCENARIO--{scenario}/' +
-                             f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            if os.path.exists(_path_obs_dir):
-                for f in os.listdir(_path_obs_dir):
-                    if f.startswith('Obs_results_headlines_'):
-                        # Format: Obs_results_headlines_SCENARIO--..._ENSEMBLE-SIZE--...
-                        obs_files[scenario][ensemble_selection][
-                            'headlines'] = os.path.join(_path_obs_dir, f)
-
-
             _path = (f'{aggregated_folder}/' +
                      f'SCENARIO--{scenario}/' +
                      f'ENSEMBLE-MEMBER--{ensemble_selection}/')
@@ -488,16 +476,19 @@ if __name__ == '__main__':
 
             for regressed_vars in regressed_variables_all:
                 results_files[scenario][ensemble_selection].update({regressed_vars: {}})
-                
+
                 _path = (f'{aggregated_folder}/' +
                          f'SCENARIO--{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                          f'VARIABLES--{regressed_vars}/')
-                
+
                 regressed_years_vars = sorted(
                         [d.split('REGRESSED-YEARS--')[1] for d in
                          os.listdir(_path) if os.path.isdir(f'{_path}{d}')])
+
                 for regressed_years in regressed_years_vars:
+
+                    # Load GWI results files
                     results_files[scenario][ensemble_selection][regressed_vars].update({
                         regressed_years: {
                             res_type: (
@@ -516,6 +507,32 @@ if __name__ == '__main__':
                             for res_type in ['timeseries', 'headlines']
                         }
                     })
+
+                    # Load observations files
+                    obs_files[scenario][ensemble_selection].update({regressed_years: {}})
+
+                    _path_obs_dir = ('results/observations/' +
+                                     f'SCENARIO--{scenario}/' +
+                                     f'ENSEMBLE-MEMBER--{ensemble_selection}/'
+                                     f'REGRESSED-YEARS--{regressed_years}/')
+                    # The observation headlines don't change for different
+                    # regression variables, which means that the file only
+                    # needs to be loaded once. It is faster to check this than
+                    # access os.listdir multiple times and keep overwriting the
+                    # file path in the dictionary.
+                    if 'headlines' not in obs_files[scenario
+                                                    ][ensemble_selection
+                                                      ][regressed_years]:
+                        if os.path.exists(_path_obs_dir):
+                            for f in os.listdir(_path_obs_dir):
+                                if f.startswith('Obs_results_headlines_'):
+                                    # Format: Obs_results_headlines_SCENARIO--..._ENSEMBLE-SIZE--...
+                                    obs_files[scenario
+                                              ][ensemble_selection
+                                                ][regressed_years
+                                                  ]['headlines'
+                                                    ] = os.path.join(
+                                                        _path_obs_dir, f)
 
     print('\nLoading all averaged datasets')
     results_dfs = load_nested_dfs(results_files)
