@@ -1251,8 +1251,7 @@ if __name__ == "__main__":
 
             years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
-            print('GWI SR1.5 definitoin shape: ', temp_Att_Results_SR15_recent.shape)
-            
+
             # Calculate SR15-definition warming for each var-ens combination
             # See SR15 Ch1 1.2.1
             # temp_Att_Results_SR15 = np.apply_along_axis(
@@ -1426,7 +1425,6 @@ if __name__ == "__main__":
                 if ((year in df_temp_Obs.index) and (year-15 in df_temp_Obs.index)):
                     temp_Obs_SR15_recent = df_temp_Obs.loc[year-15:year].to_numpy()
                     # print(temp_Obs_SR15_recent)
-                    print('Obs SR1.5 definition shape: ', temp_Obs_SR15_recent.shape)
 
                     results = []
                     for ii in range(temp_Obs_SR15_recent.shape[1]):
