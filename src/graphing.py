@@ -38,8 +38,8 @@ matplotlib.rcParams.update({
     'axes.spines.right': False,
     'axes.spines.top': False,
     'axes.linewidth': 0.5,
-    'axes.facecolor': '#f9f8f7',  # AR6 at 50% opacity.
-    # 'axes.facecolor': 'white',
+    # 'axes.facecolor': '#f9f8f7',  # AR6 at 50% opacity.
+    'axes.facecolor': 'white',
     # Axis labels
     'axes.titleweight': 'regular',
     # 'axes.labelcolor': 'gray',

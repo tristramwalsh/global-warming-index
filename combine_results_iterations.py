@@ -3,12 +3,24 @@ import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from highlight_text import ax_text
 from PIL import Image
 import src.graphing as gr
 import src.definitions as defs
 import multiprocessing as mp
 import functools
 import pprint
+
+
+def load_nested_dfs(d):
+    """Return nested dictionary with DataFrames instead of file paths."""
+    if isinstance(d, dict):
+        return {k: load_nested_dfs(v) for k, v in d.items()}
+    elif isinstance(d, str):
+        if os.path.exists(d):
+            return pd.read_csv(d, index_col=0, header=[0, 1], skiprows=0)
+        return None
+    return d
 
 
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
@@ -74,17 +86,6 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
         'AVERAGE.csv')
 
     return df_avg, dict_iterations, size_iterations
-
-
-def load_nested_dfs(d):
-    """Return nested dictionary with DataFrames instead of file paths."""
-    if isinstance(d, dict):
-        return {k: load_nested_dfs(v) for k, v in d.items()}
-    elif isinstance(d, str):
-        if os.path.exists(d):
-            return pd.read_csv(d, index_col=0, header=[0, 1], skiprows=0)
-        return None
-    return d
 
 
 def historical_only(scen, ens, reg_vars, reg_ranges_all,
@@ -180,7 +181,7 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
     return df_hist_headline, None
 
 
-def single_timeseries(reg_range, scen, ens, reg_vars,
+def figure_timeseries(reg_range, scen, ens, reg_vars,
                       results_dfs, df_temp_Obs,
                       var_colours
                       ):
@@ -286,7 +287,7 @@ def single_timeseries(reg_range, scen, ens, reg_vars,
     return plot_name
 
 
-def single_spm2_plot(reg_range, scen, ens, reg_vars, results_dfs, obs_dfs, var_colours, var_names):
+def figure_spm2(reg_range, scen, ens, reg_vars, results_dfs, obs_dfs, var_colours, var_names):
     """Plot single SPM2 bar plot."""
     # print(f'          Plotting SPM2 for range: {reg_range}')
     
@@ -380,8 +381,6 @@ def single_spm2_plot(reg_range, scen, ens, reg_vars, results_dfs, obs_dfs, var_c
                            var_colours, var_names,
                            ylim, show_ylabel=False, show_yticklabels=False)
 
-    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
-
     # Add text
     fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
              f'Observed warming and contributions ({period})',
@@ -433,23 +432,324 @@ def single_spm2_plot(reg_range, scen, ens, reg_vars, results_dfs, obs_dfs, var_c
     for ax in axes:
         ax.set_axisbelow(True)
 
+    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
+
     # Save plot
     plot_path = ('plots/aggregated/' +
-                    f'SCENARIO--{scen}/' +
-                    f'ENSEMBLE-MEMBER--{ens}/' +
-                    f'VARIABLES--{reg_vars}/' +
-                    f'REGRESSED-YEARS--{reg_range}/')
+                 f'SCENARIO--{scen}/' +
+                 f'ENSEMBLE-MEMBER--{ens}/' +
+                 f'VARIABLES--{reg_vars}/' +
+                 f'REGRESSED-YEARS--{reg_range}/')
     if not os.path.exists(plot_path):
         os.makedirs(plot_path)
 
     plot_name = (f'{plot_path}/' +
-                    f'SPM2_BarPlot_Scenario--{scen}_' +
-                    f'ENSEMBLE-MEMBER--{ens}_' +
-                    f'VARIABLES--{reg_vars}_' +
-                    f'REGRESSED-YEARS--{reg_range}.png')
+                 f'SPM2_BarPlot_Scenario--{scen}_' +
+                 f'ENSEMBLE-MEMBER--{ens}_' +
+                 f'VARIABLES--{reg_vars}_' +
+                 f'REGRESSED-YEARS--{reg_range}.png')
     fig.savefig(plot_name)
     plt.close(fig)
-    return plot_name
+
+
+def figure_waterfall(
+        reg_range, scen, ens, reg_vars,
+        results_dfs, obs_dfs,
+        var_colours, var_names):
+    """Plot single waterfall plot (Horizontal Design with Subtotals)."""
+
+    # Get headlines
+    df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
+    df_obs_headlines = obs_dfs[scen][ens][reg_range]['headlines']
+
+    # Determine period (last year)
+    years = [idx for idx in df_headlines.index if str(idx).isdigit()]
+    if years:
+        period = years[-1]
+    else:
+        period = df_headlines.index[-1]
+
+    # Helper to get stats
+    def get_stats(v, df=df_headlines):
+        if (v, '50') in df.columns:
+            med = df.loc[period, (v, '50')]
+            low = df.loc[period, (v, '5')]
+            high = df.loc[period, (v, '95')]
+            return med, low, high
+        else:
+            return 0, 0, 0
+
+    # 1. Identify variables and sort them
+    plot_items = []
+
+    # Helper to add sorted components
+    def add_components(source_vars):
+        # Filter and sort components
+        vars_in_group = [v for v in source_vars
+                         if (v, '50') in df_headlines.columns]
+        # Sort from largest to smallest warming contribution
+        vars_in_group.sort(key=lambda v: get_stats(v)[0], reverse=True)
+
+        for v in vars_in_group:
+            plot_items.append({'var': v, 'type': 'component'})
+
+    # Define the structure of the waterfall
+    # GHG Group
+    add_components(defs.SUB_VAR_MAPPING['GHG'])
+    plot_items.append({'var': 'GHG', 'type': 'subtotal'})
+
+    # OHF Group
+    add_components(defs.SUB_VAR_MAPPING['OHF'])
+    plot_items.append({'var': 'OHF', 'type': 'subtotal'})
+
+    # Ant Total
+    plot_items.append({'var': 'Ant', 'type': 'total'})
+
+    # Nat Group
+    add_components(defs.SUB_VAR_MAPPING['Nat'])
+    plot_items.append({'var': 'Nat', 'type': 'subtotal'})
+
+    # Tot Total
+    plot_items.append({'var': 'Tot', 'type': 'total'})
+
+    # Res (Components only)
+    add_components(['Res'])
+
+    # Obs Total
+    plot_items.append({'var': 'Obs', 'type': 'total'})
+
+    # 2. Prepare plot
+    # Increase height to accommodate more bars
+    fig, ax = plt.subplots(figsize=(13, 13))
+
+    # Initialize limits
+    min_val = 0
+    max_val = 0
+
+    # Invert Y axis logic: Start from top
+    y_pos = 0
+    current_left = 0
+
+    bar_height_component = 0.7
+    bar_height_aggregate = 0.35
+    bar_alpha_component = 0.6
+    bar_alpha_aggregate = 1.0
+    edge_colour = 'none'
+    err_colour = '#444444'
+
+    # Store positions for connecting lines
+    component_positions = []  # (y, start_x, end_x)
+
+    # Manually specify yticks and labels to enable arrows to be added to the
+    # labels
+    yticks = []
+    yticklabels = []
+
+    # Iterate and Plot
+    for item in plot_items:
+        var = item['var']
+        label = var_names.get(var, var)
+        item_type = item['type']
+
+        # Get Data
+        if var == 'Obs':
+            med, low, high = get_stats(var, df_obs_headlines)
+        else:
+            med, low, high = get_stats(var)
+        neg_err = med - low
+        pos_err = high - med
+
+        if item_type == 'component':
+            # Waterfall Component
+            left = current_left
+
+            # Update limits
+            min_val = min(min_val, left + low, left + high)
+            max_val = max(max_val, left + low, left + high)
+
+            # Plot Bar
+            ax.barh(
+                y_pos, med,
+                left=left,
+                height=bar_height_component,
+                xerr=[[neg_err], [pos_err]],
+                color=var_colours[var],
+                edgecolor=edge_colour,
+                alpha=bar_alpha_component,
+                error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
+                )
+
+            # Store for lines
+            component_positions.append(
+                {'y': y_pos, 'start': left, 'end': left + med})
+
+            # Update accumulator
+            current_left += med
+
+            # Label arrow to show direction of flow and aggregation
+            yticklabels.append(f"{label}  ↓ ")
+
+        elif item_type in ['subtotal', 'total']:
+
+            # Update limits
+            min_val = min(min_val, low)
+            max_val = max(max_val, high)
+
+            # Make the axhlne the same colour as the bar to signify aggregate
+            ax.axhline(y=y_pos, color=var_colours[var], linewidth=1.5)
+
+            # Plot Bar
+            ax.barh(
+                y_pos, med,
+                left=0,  # Bar starts from the axis
+                height=bar_height_aggregate,
+                xerr=[[neg_err], [pos_err]],
+                color=var_colours[var],
+                edgecolor=edge_colour,
+                alpha=bar_alpha_aggregate,
+                error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
+                )
+
+            yticklabels.append(label)
+
+            # Add Explanatory Text
+            s = ""
+            highlight_textprops = []
+
+            if var == 'Ant':
+                s = f"Sum of <{var_names['GHG']}> and <{var_names['OHF']}>"
+                highlight_textprops = [
+                    {"color": var_colours['GHG'], "fontweight": "bold"},
+                    {"color": var_colours['OHF'], "fontweight": "bold"}
+                ]
+            elif var == 'Tot':
+                s = f"Sum of <{var_names['Ant']}> and <{var_names['Nat']}>"
+                highlight_textprops = [
+                    {"color": var_colours['Ant'], "fontweight": "bold"},
+                    {"color": var_colours['Nat'], "fontweight": "bold"}
+                ]
+            elif var == 'Obs':
+                s = f"Sum of <{var_names['Tot']}> and <{var_names['Res']}>"
+                highlight_textprops = [
+                    {"color": var_colours['Tot'], "fontweight": "bold"},
+                    {"color": var_colours['Res'], "fontweight": "bold"}
+                ]
+            else:
+                s = f"Sum of <components>"
+                highlight_textprops = [
+                    {"color": var_colours.get(var, 'black')}
+                ]
+
+            if s:
+                ax_text(x=0.02, y=y_pos + bar_height_aggregate/2 + 0.1,
+                        s=s,
+                        highlight_textprops=highlight_textprops,
+                        ax=ax,
+                        fontsize=10,
+                        fontweight='regular',
+                        color='#555555',
+                        ha='left',
+                        va='bottom')
+
+        yticks.append(y_pos)
+
+        # Add gap after totals
+        if item_type in ['subtotal', 'total']:
+            y_pos -= 1.7
+        else:
+            y_pos -= 1.0
+
+    # Add padding and set limits
+    x_range = max_val - min_val
+    ax.set_xlim(min_val - x_range * 0.1, max_val + x_range * 0.1)
+
+    ################################################
+    # Draw Connecting Lines for Waterfall Components
+    ################################################
+
+    # We need to connect the *end* of one component to the *start* of the next
+    # component. Visually, the waterfall flow should persist across the
+    # subtotals.
+
+    # NOTE: The aggregates (subtotals GHG,OHF,Nat,Ant,Tot) will not necessarily
+    # line up perfectly with the ends of the component sums due to the the fact
+    # that these are percentiles across large ensembles and a multi-run mean
+    # of those percentiles. In reality, at the ensemble-member level, the
+    # variables will sum up to give the Obs (e.g. Tot + Res = Obs) exactly.
+
+    # Define destinations for the lines starting from each component
+    # For component i, the line goes to component i+1.
+    # For the last component, the line goes to Obs.
+    destinations = [{'y': p['y'], 'h': bar_height_component} 
+                    for p in component_positions[1:]]
+    destinations.append({'y': yticks[-1], 'h': bar_height_aggregate})
+
+    for start_comp, dest in zip(component_positions, destinations):
+        x = start_comp['end']
+        y1 = start_comp['y'] - bar_height_component/2
+        y2 = dest['y'] + dest['h']/2
+        ax.plot([x, x], [y1, y2],
+                color='#666666', linewidth=1.0, linestyle=':')
+
+    ######################################
+    # Figure details and style adjustments
+    ######################################
+
+    # Formatting labels
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(yticklabels)
+
+    # Style the tick labels (Bold and Colored for Aggregates)
+    labels = ax.get_yticklabels()
+    for i, label_obj in enumerate(labels):
+        # Match label to plot_item
+        # Note: yticks and plot_items are in the same order (top to bottom)
+        if plot_items[i]['type'] in ['subtotal', 'total']:
+            label_obj.set_fontweight('bold') 
+            label_obj.set_color(var_colours[plot_items[i]['var']])
+
+    # Remove spines
+    for location in ['top', 'left', 'right']:
+        ax.spines[location].set_visible(False)  # Clean up the look
+
+    # Add vertical grid
+    ax.grid(axis='x', linestyle='--', alpha=0.3)
+    # Vertical line at x=0
+    ax.axvline(0, color='black', linewidth=0.8)
+    # Set the grid to the back for the fig
+    ax.set_axisbelow(True)
+
+    ax.set_xlabel(
+        'Change in global mean surface temperature relative to 1850-1900 (°C)',
+        fontsize=12)
+
+    # Title
+    fig.text(0.05, 0.95, f'Attributable contributions to warming ({period})',
+             ha='left', fontsize=16, fontweight='bold')
+
+    # Configuration text
+    configuration = f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars} | Regressed range: {reg_range}'
+    fig.text(0.05, 0.93, configuration, ha='left', fontsize=8,
+             fontfamily='monospace', color='#555555')
+
+    fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
+
+    # Save plot
+    plot_path = ('plots/aggregated/' +
+                 f'SCENARIO--{scen}/' +
+                 f'ENSEMBLE-MEMBER--{ens}/' +
+                 f'VARIABLES--{reg_vars}/' +
+                 f'REGRESSED-YEARS--{reg_range}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path)
+
+    plot_name = (f'{plot_path}/' +
+                 f'Waterfall_BarPlot_Scenario--{scen}_' +
+                 f'ENSEMBLE-MEMBER--{ens}_' +
+                 f'VARIABLES--{reg_vars}_' +
+                 f'REGRESSED-YEARS--{reg_range}.png')
+    fig.savefig(plot_name)
+    plt.close(fig)
 
 
 if __name__ == '__main__':
@@ -793,7 +1093,7 @@ if __name__ == '__main__':
                         defs.check_steps(reg_ranges_all)['range'])
                 # for reg_range in reg_ranges_all:
 
-                # This code was just the code inside the single_timeseries function
+                # This code was just the code inside the figure_timeseries function
                 # above, separated in order to parallelise to speed up code.
 
                 # All specifications:
@@ -807,18 +1107,18 @@ if __name__ == '__main__':
                     single_toggle = True
                 else:
                     single_toggle = False
-                    print('      Skipping single_timeseries for:',
+                    print('      Skipping figure_timeseries for:',
                           scen, ens, reg_vars)
 
                 if single_toggle:
                     with mp.Pool(os.cpu_count()) as p:
-                        print('        Plotting single_timeseries for GWI')
+                        print('        Plotting figure_timeseries for GWI')
                         # print('  in parallel for:', reg_ranges_all)
                         plot_names = p.map(
                             functools.partial(
-                                # single_timeseries,
+                                # figure_timeseries,
                                 # scen=scen, ens=ens, reg_vars=reg_vars
-                                single_timeseries,
+                                figure_timeseries,
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 results_dfs=results_dfs,
                                 df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
@@ -862,8 +1162,8 @@ if __name__ == '__main__':
                 ###################################################################
                 # Plot timeseries for PRIOR warming ###############################
                 ###################################################################
-                print('        Plotting single_timeseries for PRIORS:')
-                            
+                print('        Plotting figure_timeseries for PRIORS:')
+
                 plot_vars_priors = priors_dfs[
                     scen][ens]['timeseries'].columns.get_level_values(
                         0).unique().to_list()
@@ -939,7 +1239,24 @@ if __name__ == '__main__':
                     print('        Plotting SPM2 for GWI in parallel')
                     p.map(
                         functools.partial(
-                            single_spm2_plot,
+                            figure_spm2,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            results_dfs=results_dfs,
+                            obs_dfs=obs_dfs,
+                            var_colours=current_var_colours,
+                            var_names=var_names
+                        ),
+                        reg_ranges_all
+                    )
+                
+                ###########################################################
+                # Plot the waterfall bar plot #############################
+                ###########################################################
+                print('        Plotting waterfall for GWI:')
+                with mp.Pool(os.cpu_count()) as p:
+                    p.map(
+                        functools.partial(
+                            figure_waterfall,
                             scen=scen, ens=ens, reg_vars=reg_vars,
                             results_dfs=results_dfs,
                             obs_dfs=obs_dfs,

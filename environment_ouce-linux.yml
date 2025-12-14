@@ -15,4 +15,5 @@ dependencies:
   - numexpr=2.8.4
   - pandas=1.5.3
   - open-fonts
+  - highlight_text
 prefix: /soge-home/students/newc4465/.conda/envs/gwi
