@@ -9,114 +9,108 @@ import src.graphing as gr
 import src.definitions as defs
 import multiprocessing as mp
 import functools
-import pprint
 
-
-# Constants
-
-VAR_COLOURS = {
-    'Tot': '#d7827e',
-    'Ant': '#b4637a',
-    'GHG': '#907aa9',
-    'Nat': '#56949f',
-    'OHF': '#ea9d34',
-    'Res': '#9893a5',
-    'Obs': '#797593',
-    'PiC': '#cecacd'
-}
-
-
-VAR_NAMES = {
-    'Obs': 'Observed warming',
-    'Tot': 'Total forced warming',
-    'Ant': 'Human-induced warming',
-    'GHG': 'Well-mixed greenhouse gases',
-    'OHF': 'Other human forcings',
-    'Nat': 'Solar and volcanic drivers',
-    'Res': 'Residual (Internal variability)',
-    'co2': 'Carbon dioxide',
-    'ch4': 'Methane',
-    'n2o': 'Nitrous oxide',
-    'halogen': 'Halogenated gases',
-    'aerosol-radiation_interactions': 'Aerosol-radiation interactions',
-    'aerosol-cloud_interactions': 'Aerosol-cloud interactions',
-    'land_use': 'Land-use reflectance',
-    'bc_snow': 'Black carbon on snow',
-    'h2o_strat': 'Stratospheric water vapour',
-    'o3': 'Ozone',
-    'solar': 'Solar',
-    'volcanic': 'Volcanic',
-    'contrails': 'Aviation contrails'
-}
-
-HEADLINE_COLOURS = {
-    'ANNUAL': '#5BA2D0',
-    'SR15': '#9CCFD8',
-    'AR6': '#EE8679',
-    'CGWL': '#A88BFA'
-}
-HEADLINE_LINE_STYLE = {
-    'Tot': 'solid',
-    'Ant': 'dashed',
-    'Nat': 'dotted'
-}
 
 PLOT_FOLDER = 'plots/'
 AGGREGATED_FOLDER = 'results/aggregated'
 ITERATIONS_FOLDER = 'results/iterations'
 
 
-def calculate_iterations(
-        re_calculate, headline_toggle,
-        iterations_folder, aggregated_folder
-):
+def get_subdirs(path, prefix):
+    """Get sorted list of subdirectories starting with a prefix."""
+    if not os.path.exists(path):
+        return []
+    return sorted([
+        d.split(prefix)[1] for d in os.listdir(path)
+        if d.startswith(prefix) and os.path.isdir(os.path.join(path, d))
+    ])
+
+
+def setup_plot_params(scen, ens, reg_vars, results_dfs):
+    """Extract common plotting parameters."""
+    reg_ranges_all = sorted(
+        [item for item in results_dfs[scen][ens][reg_vars].keys()
+            if item != 'HISTORICAL-ONLY']
+        )
+    min_regressed_range = reg_ranges_all[0]
+    max_regressed_range = reg_ranges_all[-1]
+    smallest_end_year = int(min_regressed_range.split('-')[1])
+    largest_end_year = int(max_regressed_range.split('-')[1])
+
+    first_range = reg_ranges_all[0]
+    plot_vars = results_dfs[scen][ens][reg_vars][first_range][
+        'timeseries'].columns.get_level_values(0).unique().to_list()
+    all_var_colours, scaling_map = gr.get_dynamic_colours(
+        reg_vars, plot_vars, gr.VAR_COLOURS)
+
+    return {
+        'min_range': min_regressed_range,
+        'max_range': max_regressed_range,
+        'start_year': smallest_end_year,
+        'end_year': largest_end_year,
+        'plot_vars': plot_vars,
+        'colours': all_var_colours,
+        'scaling_map': scaling_map,
+        'reg_ranges_all': reg_ranges_all
+    }
+
+
+def check_headlines_files(scenario, ensemble_selection,
+                          regressed_vars, regressed_years_vars):
+    """Check if any headline files exist for the given configuration."""
+    for reg_year in regressed_years_vars:
+        path = (f'{ITERATIONS_FOLDER}/'
+                f'SCENARIO--{scenario}/'
+                f'ENSEMBLE-MEMBER--{ensemble_selection}/'
+                f'VARIABLES--{regressed_vars}/'
+                f'REGRESSED-YEARS--{reg_year}/')
+        if os.path.exists(path):
+            for f in os.listdir(path):
+                if 'headlines' in f:
+                    return True
+    return False
+
+
+def calculate_iteration_averages():
     """Average the timeseries and headlines iterations."""
 
-    # Skip if not re-calculating
-    if not re_calculate:
-        return
-
-    scenarios_all = sorted(
-        [d.split('SCENARIO--')[1] for d in os.listdir(iterations_folder)])
+    scenarios_all = get_subdirs(ITERATIONS_FOLDER, 'SCENARIO--')
     print(scenarios_all)
 
     for scenario in scenarios_all:
         print('Calculating SCENARIO:', scenario)
 
-        ensemble_selections = sorted(
-            [d.split('ENSEMBLE-MEMBER--')[1]
-             for d
-             in os.listdir(f'{iterations_folder}/SCENARIO--{scenario}/')
-             ])
+        ensemble_selections = get_subdirs(
+            f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/', 'ENSEMBLE-MEMBER--')
+
         for ensemble_selection in ensemble_selections:
             print('  Calculating ensemble selection:', ensemble_selection)
 
-            regressed_variables_all = sorted(
-                [d.split('VARIABLES--')[1]
-                 for d in os.listdir(
-                     f'{iterations_folder}/' +
-                     f'SCENARIO--{scenario}/' +
-                     f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-                 ])
+            regressed_variables_all = get_subdirs(
+                f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/'
+                f'ENSEMBLE-MEMBER--{ensemble_selection}/',
+                'VARIABLES--')
 
             print('    All regressed variables for scenario:',
                   regressed_variables_all)
 
             for regressed_vars in regressed_variables_all:
                 print('      Calculating regressed variables:', regressed_vars)
-                _path = (f'{iterations_folder}/' +
+                _path = (f'{ITERATIONS_FOLDER}/' +
                          f'SCENARIO--{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                          f'VARIABLES--{regressed_vars}/')
-                regressed_years_vars = sorted(
-                    [d.split('REGRESSED-YEARS--')[1]
-                     for d in os.listdir(_path)
-                     if os.path.isdir(f'{_path}{d}')
-                     ])
+
+                regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
 
                 if defs.check_steps(regressed_years_vars)['check_bool']:
                     print(f'        All regressed years for {regressed_vars}:',
                           defs.check_steps(regressed_years_vars)['range'])
+
+                # Check if headlines are available
+                headline_toggle = check_headlines_files(
+                    scenario, ensemble_selection,
+                    regressed_vars, regressed_years_vars)
 
                 with mp.Pool(os.cpu_count()) as p:
                     print('        Calculating (parallel regressed_years) ',
@@ -127,9 +121,7 @@ def calculate_iterations(
                             combine_repeats,
                             result_type='timeseries', scenario=scenario,
                             ensemble_selection=ensemble_selection,
-                            regressed_vars=regressed_vars,
-                            iterations_folder=iterations_folder,
-                            aggregated_folder=aggregated_folder),
+                            regressed_vars=regressed_vars),
                         regressed_years_vars)
                     if headline_toggle:
                         p.map(
@@ -137,14 +129,12 @@ def calculate_iterations(
                                 combine_repeats,
                                 result_type='headlines', scenario=scenario,
                                 ensemble_selection=ensemble_selection,
-                                regressed_vars=regressed_vars,
-                                iterations_folder=iterations_folder,
-                                aggregated_folder=aggregated_folder),
+                                regressed_vars=regressed_vars),
                             regressed_years_vars)
 
 
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
-                    regressed_vars, iterations_folder, aggregated_folder):
+                    regressed_vars):
     """
     Average results across iterations for a specific configuration.
 
@@ -154,8 +144,6 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.
-        iterations_folder: Path to the iterations folder.
-        aggregated_folder: Path to the aggregated folder.
 
     Returns:
         A tuple containing the averaged DataFrame, a dictionary of all
@@ -166,7 +154,7 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
     size_iterations = {}
 
     base_path = (
-        f'{iterations_folder}/'
+        f'{ITERATIONS_FOLDER}/'
         f'SCENARIO--{scenario}/'
         f'ENSEMBLE-MEMBER--{ensemble_selection}/'
         f'VARIABLES--{regressed_vars}/'
@@ -208,7 +196,7 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
     df_avg /= sum(size_iterations.values())
 
     # Create the specific directory for these regressed years
-    out_path = base_path.replace(iterations_folder, aggregated_folder)
+    out_path = base_path.replace(ITERATIONS_FOLDER, AGGREGATED_FOLDER)
     os.makedirs(out_path, exist_ok=True)
 
     df_avg.to_csv(
@@ -234,25 +222,22 @@ def load_nested_dfs(d):
     return d
 
 
-def load_all_data(aggregated_folder):
+def load_gwi_priors_obs():
     """Load all averaged datasets."""
     results_files = {}
     priors_files = {}
     obs_files = {}
 
-    scenarios_all = sorted(
-            [d.split('SCENARIO--')[1] for d in os.listdir(aggregated_folder)])
-    print(scenarios_all)
+    scenarios_all = get_subdirs(AGGREGATED_FOLDER, 'SCENARIO--')
 
     for scenario in scenarios_all:
         results_files.update({scenario: {}})
         priors_files.update({scenario: {}})
         obs_files.update({scenario: {}})
 
-        _path = f'{aggregated_folder}/SCENARIO--{scenario}/'
+        _path = f'{AGGREGATED_FOLDER}/SCENARIO--{scenario}/'
 
-        ensembles_seletions_all = sorted(
-            [d.split('ENSEMBLE-MEMBER--')[1] for d in os.listdir(_path)])
+        ensembles_seletions_all = get_subdirs(_path, 'ENSEMBLE-MEMBER--')
 
         for ensemble_selection in ensembles_seletions_all:
             results_files[scenario].update({ensemble_selection: {}})
@@ -270,31 +255,28 @@ def load_all_data(aggregated_folder):
                         priors_files[scenario][ensemble_selection][
                             'timeseries'] = os.path.join(_path_prior_dir, f)
 
-            _path = (f'{aggregated_folder}/' +
+            _path = (f'{AGGREGATED_FOLDER}/' +
                      f'SCENARIO--{scenario}/' +
                      f'ENSEMBLE-MEMBER--{ensemble_selection}/')
 
-            regressed_variables_all = sorted(
-                    [d.split('VARIABLES--')[1] for d in os.listdir(_path)])
+            regressed_variables_all = get_subdirs(_path, 'VARIABLES--')
 
             for regressed_vars in regressed_variables_all:
                 results_files[scenario][ensemble_selection].update(
                     {regressed_vars: {}})
 
-                _path = (f'{aggregated_folder}/' +
+                _path = (f'{AGGREGATED_FOLDER}/' +
                          f'SCENARIO--{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                          f'VARIABLES--{regressed_vars}/')
 
-                regressed_years_vars = sorted(
-                        [d.split('REGRESSED-YEARS--')[1] for d in
-                         os.listdir(_path) if os.path.isdir(f'{_path}{d}')])
+                regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
 
                 for regressed_years in regressed_years_vars:
                     # Load GWI results files
                     res_type_dict = {
                         res_type: (
-                                f'{aggregated_folder}/' +
+                                f'{AGGREGATED_FOLDER}/' +
                                 f'SCENARIO--{scenario}/' +
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                                 f'VARIABLES--{regressed_vars}/' +
@@ -343,12 +325,15 @@ def load_all_data(aggregated_folder):
                                         os.path.join(_path_obs_dir, f)
 
     print('\nLoading all averaged datasets')
+    # Load results timeseries and headlines
     results_dfs = load_nested_dfs(results_files)
+    # Load priors timeseries
     priors_dfs = load_nested_dfs(priors_files)
+    # Load observation headlines
     obs_dfs = load_nested_dfs(obs_files)
 
-    # Load temperature observations
-    print('Loading temperature observations...')
+    # Load temperature observations timeseries
+    print('Loading temperature observations timeseries...')
     for scen in results_dfs.keys():
         for ens in results_dfs[scen].keys():
             # Parse ensemble string for GMT
@@ -372,58 +357,173 @@ def load_all_data(aggregated_folder):
     return results_dfs, priors_dfs, obs_dfs
 
 
-def historical_only(scen, ens, reg_vars, reg_ranges_all,
-                    headline, headline_toggle, results_dfs):
+def map_headline_to_index(
+        headline=None, year=None, index_str=None, invert=False):
+    """Map headline year to string format used in headlines dataframe."""
+
+    if not invert:
+        mapping = {
+            'ANNUAL': str(year),
+            'SR15': f'{year} (SR15 definition)',
+            'AR6': f'{year-9}-{year}',
+            'CGWL': f'{year-9}-{year+10} (CGWL definition)',
+        }
+
+        return mapping.get(headline, None)
+
+    elif invert:
+        if 'CGWL' in index_str:
+            return 'CGWL'
+        elif 'SR15' in index_str:
+            return 'SR15'
+        # Check whether index_str is of the form 'YYYY-YYYY'
+        elif '-' in index_str and index_str.replace('-', '').isdigit():
+            return 'AR6'
+        else:
+            return 'ANNUAL'
+
+
+def get_available_headlines(results_dfs, scen, ens, reg_vars, reg_ranges_all):
+    """Determine available headlines from the datasets.
+
+    Note this doesn't work out all the years that each headline is available
+    for; we just need to know which headlines are available for any regression
+    range for this configuration; the actual years will be handled later in
+    combine_historical_only, which handles gaps in the data on a case by case
+    basis.
+    """
+    # Assume to start that we do have headlines available
+    available_headlines = set()
+
+    for reg_range in reg_ranges_all:
+        if 'headlines' not in results_dfs[scen][ens][reg_vars][reg_range]:
+            continue
+        else:  # we do have headline file
+            df = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
+            for index_str in df.index:
+                available_headlines.add(
+                    map_headline_to_index(
+                        index_str=index_str, invert=True)
+                )
+
+    # Check if available_headlines is empty:
+    if not available_headlines:
+        valid_headlines = ['ANNUAL']
+        headline_toggle = False
+    else:
+        valid_headlines = list(available_headlines)
+        headline_toggle = True
+
+    print('valid headlines: ',  valid_headlines)
+    return valid_headlines, headline_toggle
+
+
+def calculate_historical_only(
+    results_dfs
+):
+    """Generate historical-only timeseries and plot them."""
+
+    print('\nGenerating historical-only timeseries')
+    for scen in sorted(results_dfs.keys()):
+        print('SCENARIO:', scen)
+
+        for ens in results_dfs[scen].keys():
+            print('  ENSEMBLE-MEMBER:', ens)
+
+            for reg_vars in sorted(results_dfs[scen][ens].keys()):
+                print('    REGRESSED-VARIABLES:', reg_vars)
+
+                # Get all available regressed year ranges
+                reg_ranges_all = sorted(
+                    list(results_dfs[scen][ens][reg_vars].keys()))
+
+                if len(reg_ranges_all) == 1:
+                    # No historical years to compare against, so skip to the
+                    # next set of variables.
+                    print('      Only one regressed range available; ' +
+                          'skipping historical-only calculation.')
+                    continue
+
+                # The +PRE variant also includes the years before the
+                # earliest regressed range, but with the same headline
+                # definitions as the historical-only dataset. This is
+                # inconsistent with the way the historical-only dataset is
+                # calculated, but is included as a reference for plotting.
+                # If I really want a full-information (instead of
+                # historical-only) dataset using the various definitions, this
+                # will need doing inside GWI.py (and could easily be added
+                # using a new argv of 'all' alongside 'y' and 'n' in the
+                # headline_toggles).
+
+                # Determine which headline definitions to calculate the
+                # historical-only timeseries for.
+
+                headlines, headline_toggle = get_available_headlines(
+                    results_dfs, scen, ens, reg_vars, reg_ranges_all)
+
+                print(f'      Available headlines: {headlines}')
+                print(f'      Using headlines dataframe: {headline_toggle}')
+
+                # Determine whether to pull the headline from the headlines or
+                # timeseries dataframe. You can only pull annual years from the
+                # both headlines and timeseries dataframes. The value of
+                # selecting, is that the headlines are much more
+                # computationally expensive to calculate, do you may not always
+                # calculate the headlines for all regressed_year ranges.
+
+                for headline in headlines:
+                    df_headlines, df_headlines_pre = combine_historical_only(
+                        scen, ens, reg_vars, reg_ranges_all,
+                        headline, headline_toggle,
+                        results_dfs)
+
+                return df_headlines, df_headlines_pre
+
+
+def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
+                            headline, headline_toggle, results_dfs):
     """Calculate historical-only timeseries for each headline."""
+
+    # Identift range of regressed years
+    min_regressed_range = min(reg_ranges_all)
+    max_regressed_range = max(reg_ranges_all)
+
+    print('      Creating historical-only timeseries for '
+          f'{headline}: between ' +
+          f'{min_regressed_range} and {max_regressed_range}')
+
     # Prepare empty timeseries for each headline
     df_hist_headline = results_dfs[
         scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
     df_hist_headline[:] = 0
 
+    # Collect the appropriate regressed range results
     for reg_range in reg_ranges_all:
-        # Extract the relevant headline values for this regressed range
+        # Extract the relevant headline names for this regressed range
         current_year = int(reg_range.split('-')[1])
-        if headline == 'ANNUAL':
-            headline_time = (
-                # headlines index string-y; timeseries index integer-y
-                str(current_year) if headline_toggle else current_year)
-        elif headline == 'AR6':
-            headline_time = f'{current_year-9}-{current_year}'
-        elif headline == 'SR15':
-            headline_time = f'{current_year} (SR15 definition)'
-        elif headline == 'CGWL':
-            headline_time = (
-                f'{current_year-9}-{current_year+10} (CGWL definition)'
-                )
+        headline_index = map_headline_to_index(headline, current_year)
 
-        # Determine whether to pull the headline from the headlines or
-        # timeseries dataframe. You can only pull annual years from the
-        # both headlines and timeseries dataframes. The value of
-        # selecting, is that the headlines are much more
-        # computationally expensive to calculate, do you may not always
-        # calculate the headlines for all regressed_year ranges.
+        # Select the type of dataset to pull the results from.
         res_type = 'headlines' if headline_toggle else 'timeseries'
 
-        if headline_time in results_dfs[scen
-                                        ][ens
-                                          ][reg_vars
-                                            ][reg_range
-                                              ][res_type
-                                                ].index:
-
+        # Check availability of this headline time for this configuration
+        if headline_index in results_dfs[scen
+                                         ][ens
+                                           ][reg_vars
+                                             ][reg_range
+                                               ][res_type
+                                                 ].index:
+            # Pull out the relevant headline/time data
             _df = results_dfs[scen
                               ][ens
                                 ][reg_vars
                                   ][reg_range
                                     ][res_type
-                                      ].loc[headline_time]
-
+                                      ].loc[headline_index]
             df_hist_headline.loc[current_year] = _df
 
         else:
-            pass
-            # print(f'FAILURE: Headline time {headline} {headline_time} not ' +
-            #       f'found in {scen} {reg_vars} {reg_range} {res_type}')
+            pass  # headline not available for this regressed range
 
     # Remove all years that are not the end of an attribution
     # period to avoid confusion (i.e. the longer earlier years
@@ -432,12 +532,6 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
                  for reg_range in reg_ranges_all]
     smallest_end_year = min(end_years)
     largest_end_year = max(end_years)
-    start_years = set([int(reg_range.split('-')[0])
-                       for reg_range in reg_ranges_all])
-    if len(start_years) == 1:
-        start_regress = list(start_years)[0]
-    else:
-        raise ValueError('Multiple start years in regressed ranges')
 
     # Filter the dataframe to only include the years that are
     # relevant for the historical-only dataset: these are years
@@ -469,9 +563,46 @@ def historical_only(scen, ens, reg_vars, reg_ranges_all,
     return df_hist_headline, None
 
 
+def load_historical_only_dfs(results_dfs):
+    """Load historical-only datasets; add to the results_files dictionary."""
+    print('\nLoading historical-only datasets into results_dfs structure')
+    # Load historical-only data from csv files if they are available
+    # Iterate over the structure identified in results_files
+    # This is reasonable because historical-only datasets can only exist in
+    # the same directories/configurations as the main results datasets.
+    for scen in results_dfs.keys():
+        for ens in results_dfs[scen].keys():
+            for reg_vars in results_dfs[scen][ens].keys():
+                # Find all historical dataset in the results/aggregated folder
+                # and add them all to the dictionary.
+                _path = (f'{AGGREGATED_FOLDER}/' +
+                         f'SCENARIO--{scen}/' +
+                         f'ENSEMBLE-MEMBER--{ens}/' +
+                         f'VARIABLES--{reg_vars}/')
+                hist_files = [
+                    f for f in os.listdir(_path)
+                    if f.startswith('GWI_results_') and 'HISTORICAL-ONLY' in f]
+
+                for hist_file in hist_files:
+                    _df = pd.read_csv(_path + hist_file,
+                                      index_col=0, header=[0, 1], skiprows=0)
+                    headline_name = hist_file.split('GWI_results_')[1].split(
+                        '_HISTORICAL-ONLY')[0]
+
+                    if 'HISTORICAL-ONLY' not in results_dfs[scen
+                                                            ][ens
+                                                              ][reg_vars]:
+                        results_dfs[scen][ens][reg_vars][
+                            'HISTORICAL-ONLY'] = {}
+
+                    results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'].update({headline_name: _df})
+
+    return results_dfs
+
+
 def figure_timeseries(reg_range, scen, ens, reg_vars,
-                      results_dfs, df_temp_Obs,
-                      VAR_COLOURS
+                      results_dfs, df_temp_Obs, params
                       ):
     """Plot single timeseries plots."""
     # print('Creating single timeseries plots for:',
@@ -509,13 +640,13 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
     gr.gwi_timeseries(
         ax, df_temp_Obs, None,
         df_ts.loc[reg_end:, :],
-        all_data_vars, VAR_COLOURS, hatch='x', linestyle='dashed',
+        all_data_vars, params['colours'], hatch='x', linestyle='dashed',
         plume_vars=plume_vars)
 
     gr.gwi_timeseries(
         ax, df_temp_Obs, None,
         df_ts.loc[reg_start:reg_end, :],
-        all_data_vars, VAR_COLOURS, linestyle=var_linestyles,
+        all_data_vars, params['colours'], linestyle=var_linestyles,
         plume_vars=plume_vars)
 
     ax.set_ylim(
@@ -532,7 +663,7 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
                           reorder=gr.get_legend_reorder_indices(fig))
         plt.subplots_adjust(right=0.77)
     else:
-        gr.overall_legend(fig, 'lower center', 7, legend_cols,
+        gr.overall_legend(fig, 'lower center', 7,
                           reorder=gr.get_legend_reorder_indices(fig))
 
     # Plot a box around the regressed years if the final truncation year is not
@@ -581,7 +712,7 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
 def figure_spm2(
         reg_range, scen, ens, reg_vars,
         results_dfs, obs_dfs,
-        var_colours, var_names):
+        params):
     """Plot single SPM2 bar plot."""
 
     # Check if headlines exist for this range
@@ -659,19 +790,19 @@ def figure_spm2(
     # Panel 1: Observed
     if df_obs_headlines is not None and period in df_obs_headlines.index:
         gr.plot_spm2_panel(axes[0], df_obs_headlines, period, ['Obs'],
-                           var_colours, var_names,
+                           params['colours'], defs.VAR_NAMES,
                            ylim, show_ylabel=True, show_yticklabels=True,
                            xlim=(-1.5, 1.5))
 
     # Panel 2: Aggregated
     gr.plot_spm2_panel(axes[1], df_headlines, period, vars_panel2,
-                       var_colours, var_names,
+                       params['colours'], defs.VAR_NAMES,
                        ylim, show_ylabel=False, show_yticklabels=False)
 
     # Panel 3: Components
     if vars_panel3 and len(axes) > 2:
         gr.plot_spm2_panel(axes[2], df_headlines, period, vars_panel3,
-                           var_colours, var_names,
+                           params['colours'], defs.VAR_NAMES,
                            ylim, show_ylabel=False, show_yticklabels=False)
 
     # Add text
@@ -751,7 +882,7 @@ def figure_spm2(
 def figure_waterfall(
         reg_range, scen, ens, reg_vars,
         results_dfs, obs_dfs,
-        VAR_COLOURS, VAR_NAMES):
+        params):
     """Plot single waterfall plot (Horizontal Design with Subtotals)."""
 
     # Get headlines
@@ -844,7 +975,7 @@ def figure_waterfall(
     # Iterate and Plot
     for item in plot_items:
         var = item['var']
-        label = VAR_NAMES.get(var, var)
+        label = defs.VAR_NAMES.get(var, var)
         item_type = item['type']
 
         # Get Data
@@ -869,7 +1000,7 @@ def figure_waterfall(
                 left=left,
                 height=bar_height_component,
                 xerr=[[neg_err], [pos_err]],
-                color=VAR_COLOURS[var],
+                color=params['colours'][var],
                 edgecolor=edge_colour,
                 alpha=bar_alpha_component,
                 error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
@@ -892,7 +1023,7 @@ def figure_waterfall(
             max_val = max(max_val, high)
 
             # Make the axhlne the same colour as the bar to signify aggregate
-            ax.axhline(y=y_pos, color=VAR_COLOURS[var], linewidth=1.5)
+            ax.axhline(y=y_pos, color=params['colours'][var], linewidth=1.5)
 
             # Plot Bar
             ax.barh(
@@ -900,7 +1031,7 @@ def figure_waterfall(
                 left=0,  # Bar starts from the axis
                 height=bar_height_aggregate,
                 xerr=[[neg_err], [pos_err]],
-                color=VAR_COLOURS[var],
+                color=params['colours'][var],
                 edgecolor=edge_colour,
                 alpha=bar_alpha_aggregate,
                 error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
@@ -913,27 +1044,27 @@ def figure_waterfall(
             highlight_textprops = []
 
             if var == 'Ant':
-                s = f"Sum of <{VAR_NAMES['GHG']}> and <{VAR_NAMES['OHF']}>"
+                s = f"Sum of <{defs.VAR_NAMES['GHG']}> and <{defs.VAR_NAMES['OHF']}>"
                 highlight_textprops = [
-                    {"color": VAR_COLOURS['GHG'], "fontweight": "bold"},
-                    {"color": VAR_COLOURS['OHF'], "fontweight": "bold"}
+                    {"color": params['colours']['GHG'], "fontweight": "bold"},
+                    {"color": params['colours']['OHF'], "fontweight": "bold"}
                 ]
             elif var == 'Tot':
-                s = f"Sum of <{VAR_NAMES['Ant']}> and <{VAR_NAMES['Nat']}>"
+                s = f"Sum of <{defs.VAR_NAMES['Ant']}> and <{defs.VAR_NAMES['Nat']}>"
                 highlight_textprops = [
-                    {"color": VAR_COLOURS['Ant'], "fontweight": "bold"},
-                    {"color": VAR_COLOURS['Nat'], "fontweight": "bold"}
+                    {"color": params['colours']['Ant'], "fontweight": "bold"},
+                    {"color": params['colours']['Nat'], "fontweight": "bold"}
                 ]
             elif var == 'Obs':
-                s = f"Sum of <{VAR_NAMES['Tot']}> and <{VAR_NAMES['Res']}>"
+                s = f"Sum of <{defs.VAR_NAMES['Tot']}> and <{defs.VAR_NAMES['Res']}>"
                 highlight_textprops = [
-                    {"color": VAR_COLOURS['Tot'], "fontweight": "bold"},
-                    {"color": VAR_COLOURS['Res'], "fontweight": "bold"}
+                    {"color": params['colours']['Tot'], "fontweight": "bold"},
+                    {"color": params['colours']['Res'], "fontweight": "bold"}
                 ]
             else:
                 s = "Sum of <components>"
                 highlight_textprops = [
-                    {"color": VAR_COLOURS.get(var, 'black')}
+                    {"color": params['colours'].get(var, 'black')}
                 ]
 
             if s:
@@ -1002,7 +1133,7 @@ def figure_waterfall(
         # Note: yticks and plot_items are in the same order (top to bottom)
         if plot_items[i]['type'] in ['subtotal', 'total']:
             label_obj.set_fontweight('bold')
-            label_obj.set_color(VAR_COLOURS[plot_items[i]['var']])
+            label_obj.set_color(params['colours'][plot_items[i]['var']])
 
     # Remove spines
     for location in ['top', 'left', 'right']:
@@ -1054,7 +1185,8 @@ def figure_waterfall(
 def figure_priors_timeseries(
         scen, ens, reg_vars,
         priors_dfs, obs_dfs,
-        var_colours):
+        params
+):
     """Plot timeseries for PRIOR warming."""
     plot_vars_priors = priors_dfs[
         scen][ens]['timeseries'].columns.get_level_values(
@@ -1077,7 +1209,7 @@ def figure_priors_timeseries(
     gr.gwi_timeseries(
         ax, obs_dfs[scen][ens]['timeseries'], None,
         priors_dfs[scen][ens]['timeseries'],
-        plot_vars_priors, var_colours,
+        plot_vars_priors, params['colours'],
         hatch='x', linestyle=var_linestyles,
         plume_vars=plume_vars)
 
@@ -1152,13 +1284,12 @@ def parse_argvs():
     return argv_dict
 
 
-def figure_gif_animation(plot_names):
+def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
     """Create a gif animation of timeseries plots.
 
     Accepts a list of plot names (file paths) to include in the gif.
     """
-    print('  Creating gif of timeseries plots for:',
-          scen, ens, reg_vars)
+    print('        Creating gif animation of timeseries plots')
 
     images_list = [Image.open(plot) for plot in plot_names]
     # calculate the frame number of the last frame (ie the number of
@@ -1213,12 +1344,711 @@ def toggle_single_timeseries(
     return single_toggle
 
 
+def figure_historical_only_timeseries(
+        scen, ens, reg_vars,
+        results_dfs, obs_dfs,
+        plot_path, params):
+    """Plot historical-only timeseries for each headline."""
+
+    print('      Plotting historical-only timeseries')
+
+    for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        print('        Plotting:', headline)
+        plot_vars = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][
+            headline].columns.get_level_values(0).unique().to_list()
+
+        # Define major variables (for plumes)
+        plume_vars = [v for v in plot_vars
+                      if v in defs.SUB_VAR_MAPPING or v == 'Res']
+
+        # Define linestyles for all variables
+        var_linestyles = gr.get_dynamic_linestyles(plot_vars)
+
+        # Determine legend location
+        sub_vars = [v for v in plot_vars if v not in plume_vars]
+
+        fig = plt.figure(figsize=(12, 8))
+        ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
+                              rowspan=1, colspan=1)
+
+        gr.gwi_timeseries(
+            ax, obs_dfs[scen][ens]['timeseries'], None,
+            results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline],
+            plot_vars, params['colours'],
+            sigmas=['5', '95', '50'],
+            hatch=None, linestyle=var_linestyles,
+            plume_vars=plume_vars
+            )
+
+        if sub_vars:
+            legend_loc = 'center right'
+            legend_cols = 1
+            reorder = gr.get_legend_reorder_indices(fig)
+        else:
+            legend_loc = 'lower center'
+            legend_cols = 7
+            reorder = None
+        ax.set_ylim(
+            -1,
+            np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
+        ax.set_xlim(params['start_year'], params['end_year'])
+        xticks = list(
+            np.arange(params['start_year'], params['end_year'] + 1, 5))
+        xticks.append(params['end_year'])
+        ax.set_xticks(xticks, xticks)
+        ax.set_title(
+            'Regressed years range: ' +
+            f"{params['min_range']} to {params['max_range']}")
+        gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
+
+        if legend_loc == 'center right':
+            plt.subplots_adjust(right=0.8)
+        fig.suptitle(f'Historical-only {headline}')
+
+        configuration = (f'Scenario: {scen} | '
+                         f'Ensemble: {ens} | '
+                         f'Regressed variables: {reg_vars}')
+        fig.text(0.5, 0.01, configuration, ha='center',
+                 fontsize='x-small', fontfamily='monospace')
+
+        fig.savefig(
+            plot_path +
+            f'Historical_only_{headline}_' +
+            f'{scen}_{ens}_{reg_vars}_' +
+            f"{params['min_range']}_to_{params['max_range']}.png")
+        plt.close(fig)
+
+
+def figure_historical_vs_full_timeseries(
+        scen, ens, reg_vars,
+        results_dfs, obs_dfs, priors_dfs,
+        plot_path, params):
+    """Plot historical-only vs full dataset timeseries."""
+
+    print('      Plotting historical-only vs full dataset')
+
+    plot_vars = results_dfs[scen][ens][reg_vars][
+        'HISTORICAL-ONLY'][
+            'ANNUAL'].columns.get_level_values(0).unique().to_list()
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
+
+    gr.gwi_timeseries(
+        ax, obs_dfs[scen][ens]['timeseries'], None,
+        results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY']['ANNUAL'],
+        plot_vars, params['colours'], sigmas=['5', '95', '50'],
+        hatch='\\', linestyle='dashed')
+    var_linestyles = gr.get_dynamic_linestyles(plot_vars)
+    gr.gwi_timeseries(
+        ax, obs_dfs[scen][ens]['timeseries'], None,
+        results_dfs[scen][ens][reg_vars][params['max_range']]['timeseries'],
+        plot_vars, params['colours'], sigmas=['5', '95', '50'],
+        hatch=None, linestyle=var_linestyles)
+
+    ax.set_ylim(
+        -1, np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
+    ax.set_xlim(params['start_year'], params['end_year'])
+    xticks = list(np.arange(params['start_year'], params['end_year'] + 1, 5))
+    xticks.append(params['end_year'])
+    ax.set_xticks(xticks, xticks)
+
+    ax.set_title(
+        'Regressed years range: ' +
+        f"{params['min_range']} to {params['max_range']}")
+    gr.overall_legend(fig, 'lower center', 6)
+
+    fig.suptitle(
+        'Historical-only (dashed) versus Full-information (solid)')
+
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace')
+
+    fig.savefig(
+        plot_path +
+        'ANNUAL_Historical_vs_Full_timeseries_' +
+        f'{scen}_{ens}_{reg_vars}_' +
+        f"{params['min_range']}_to_{params['max_range']}.png")
+    plt.close(fig)
+
+
+def figure_headlines_comparison(
+        scen, ens, reg_vars,
+        results_dfs, obs_dfs,
+        plot_path, params):
+    """Plot comparison of all headlines datasets."""
+
+    print('      Plotting historical-only and full-information headlines:',
+          scen, ens, reg_vars)
+
+    fig = plt.figure(figsize=(20, 10))
+    ax1 = plt.subplot2grid(shape=(4, 2), loc=(0, 0),
+                           rowspan=3, colspan=1)
+    ax2 = plt.subplot2grid(shape=(4, 2), loc=(3, 0),
+                           rowspan=1, colspan=1)
+    ax3 = plt.subplot2grid(shape=(4, 2), loc=(0, 1),
+                           rowspan=3, colspan=1)
+    ax4 = plt.subplot2grid(shape=(4, 2), loc=(3, 1),
+                           rowspan=1, colspan=1)
+
+    for ax in [ax1, ax3]:
+        gr.gwi_timeseries(
+            ax, obs_dfs[scen][ens]['timeseries'], None, None, None,
+            params['colours'], sigmas=['5', '95', '50'])
+
+    # Plot the centered 20-year rolling window on the 50th percentile Obs
+    df_temp_Obs_20yr = obs_dfs[scen][ens][
+        'timeseries'
+        ].quantile(
+            q=0.5, axis=1
+        ).rolling(
+            window=20, center=True, axis=0
+        ).mean()
+
+    # for headline in headlines:
+    for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        plot_vars_main = params['plot_vars'].copy()
+        unwanted_vars = ['GHG', 'OHF', 'Res']
+        plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
+        for vv in plot_vars_main:
+            # Determine line style
+            ls = gr.HEADLINE_LINE_STYLE.get(vv)
+            if ls is None:
+                # Try to get style from parent
+                parent = params['scaling_map'].get(vv)
+                ls = gr.HEADLINE_LINE_STYLE.get(parent, 'solid')
+
+            # Plot the historical only timeseries
+            ax1.plot(results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'][headline].index,
+                     results_dfs[scen][ens][reg_vars][
+                         'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
+                     label=f'{headline}-{vv}',
+                     linestyle=ls,
+                     color=gr.HEADLINE_COLOURS[headline]
+                     )
+            if vv != 'Nat':
+                ax2.plot(
+                    (results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
+                     - df_temp_Obs_20yr),
+                    label=f'{headline}-{vv}',
+                    linestyle=ls,
+                    color=gr.HEADLINE_COLOURS[headline]
+                )
+
+            # Calculate the full-information timeseries for the headlines
+
+            rolling_mean_map = {
+                'ANNUAL': {'window': 1, 'center': False},
+                'AR6': {'window': 10, 'center': False},
+                'SR15': {'window': 30, 'center': True},
+                'CGWL': {'window': 20, 'center': True}
+            }
+            df_fullinfo_defs = (
+                results_dfs[scen][ens][reg_vars][params['max_range']][
+                    'timeseries'].loc[:, (vv, '50')].rolling(
+                        window=rolling_mean_map[headline]['window'],
+                        center=rolling_mean_map[headline]['center']
+                    ).mean()
+            )
+
+            ax3.plot(df_fullinfo_defs.index, df_fullinfo_defs,
+                     label=f'{headline}-{vv}',
+                     linestyle=ls,
+                     color=gr.HEADLINE_COLOURS[headline]
+                     )
+            if vv != 'Nat':
+                ax4.plot(
+                    (df_fullinfo_defs - df_temp_Obs_20yr),
+                    label=f'{headline}-{vv}',
+                    linestyle=ls,
+                    color=gr.HEADLINE_COLOURS[headline]
+                )
+
+    # Plotting 20-year running means on observations moved to the
+    # end to sort ordering in the legend to look nicer.
+    for ax in [ax1, ax3]:
+        # Plot the Obs 20-year running mean
+        ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
+                label='Obs 20-year running mean',
+                color='black'
+                )
+    for ax in [ax2, ax4]:
+        # Plot the Obs 20-year running mean
+        ax.plot((df_temp_Obs_20yr - df_temp_Obs_20yr),
+                label='Obs 20-year running mean',
+                color='black'
+                )
+
+    # Slice the df_temp_Obs using the smallest and largest end years
+    min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].loc[
+            params['start_year']:params['end_year']
+        ].values) * 2) / 2
+    min_y = min([-0.5, min_y])
+    max_y = np.ceil(np.max(
+            obs_dfs[scen][ens][
+                'timeseries'].loc[params['start_year']:params['end_year']
+                                  ].values) * 2) / 2
+    # min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
+    # max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
+    ax1.set_ylim(min_y, max_y)
+    ax3.set_ylim(min_y, max_y)
+    for ax in [ax1, ax2]:
+        ax.set_xlim(params['start_year'], params['end_year'])
+    gr.overall_legend(fig, 'lower center', 5)
+
+    ax2.set_ylabel(r'$\Delta$ vs 20-year obs, ⁰C')
+    ax4.set_ylabel(r'$\Delta$ vs 20-year obs, ⁰C')
+    ax1.set_title('Historical-only')
+    ax3.set_title('Full-information')
+    fig.suptitle(
+        'Historical-only and Full-information vs 20-year Obs running mean')
+
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace')
+
+    fig.savefig(plot_path +
+                'Historical_and_full_headlines_' +
+                f'{scen}_{ens}_{reg_vars}_' +
+                f"{params['min_range']}_to_{params['max_range']}.png")
+
+    plt.close(fig)
+
+
+def figure_thorne_et_al(
+        scen, ens, reg_vars,
+        results_dfs, obs_dfs,
+        plot_path, params):
+    """Create one-off figure for Thorne et al paper."""
+
+    # Plot the centered 20-year rolling window on the 50th percentile Obs
+    df_temp_Obs_20yr = obs_dfs[scen][ens][
+        'timeseries'
+        ].quantile(
+            q=0.5, axis=1
+        ).rolling(
+            window=20, center=True, axis=0
+        ).mean()
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0))
+
+    gr.gwi_timeseries(
+        ax, obs_dfs[scen][ens]['timeseries'], None, None, None,
+        params['colours'],
+        sigmas=['5', '95', '50']
+        # hatch='\\', linestyle='dashed'
+    )
+    # for headline in headlines:
+    plot_vars_main = params['plot_vars'].copy()
+    unwanted_vars = ['GHG', 'OHF', 'Res']
+    plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
+
+    for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        for vv in plot_vars_main:
+            # Determine line style
+            ls = gr.HEADLINE_LINE_STYLE.get(vv)
+            if ls is None:
+                # Try to get style from parent
+                parent = params['scaling_map'].get(vv)
+                ls = gr.HEADLINE_LINE_STYLE.get(parent, 'solid')
+
+            # Plot the historical only timeseries
+            ax.plot(results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'][headline].index,
+                    results_dfs[scen][ens][reg_vars][
+                        'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
+                    label=f'{headline}-{vv}',
+                    linestyle=ls,
+                    color=gr.HEADLINE_COLOURS[headline]
+                    )
+    ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
+            label='Obs 20-year running mean',
+            color='black'
+            )
+
+    # Slice the df_temp_Obs using the smallest and largest end years
+    min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].loc[
+        params['start_year']:params['end_year']
+            ].values) * 2) / 2
+    min_y = min([-0.5, min_y])
+    max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].loc[
+        params['start_year']:params['end_year']
+            ].values) * 2) / 2
+
+    ax.set_ylim(min_y, max_y)
+    ax.set_xlim(params['start_year'], params['end_year'] + 0.5)
+    ax.set_title(
+        'Calculated as historical-only: annual-mean, AR6 decade-mean, '
+        'SR1.5 centered 30-year mean, and CGWL centered 20-year mean')
+    gr.overall_legend(fig, 'lower center', 5)
+
+    ax.set_ylabel('Attributable warming relative to 1850–1900 (⁰C)')
+    fig.suptitle(
+        'Global Warming Index (GWI)'
+    )
+
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace')
+
+    fig.savefig(plot_path +
+                'Historical_only_headlines_' +
+                f'{scen}_{ens}_{reg_vars}_' +
+                f"{params['min_range']}_to_{params['max_range']}.png")
+    plt.close(fig)
+
+
+def figure_constrained_warming(
+        scen, ens, reg_vars,
+        results_dfs, priors_dfs,
+        plot_path, params):
+    """Generate the projected warming for final constrained year."""
+
+    start_years = set([int(reg_range.split('-')[0])
+                       for reg_range in params['reg_ranges_all']])
+    if len(start_years) == 1:
+        start_regress = list(start_years)[0]
+    else:
+        start_regress = 'VAR'
+
+    plot_vars_priors = priors_dfs[scen][ens][
+        'timeseries'].columns.get_level_values(0).unique().to_list()
+
+    print('      Creating constrained results')
+    # Calculate how the expected final year of the timeseries changes
+    # depending on the years that are regressed. Expect that the attributed
+    # values in 2023 (end year of the full timeseries) will have larger
+    # uncertainties, the earlier/shorter the range of regressed years is.
+
+    # Create new empty dataframes to store the constrained results:
+    # NOTE: you could also do this using maximum of the truncation range
+    # if that's what you're interested in (possibly more relevant for
+    # SSP projections in future)
+
+    # constrained_year = int(max_regressed_range.split('-')[1])
+    constrained_year = params['end_year']
+
+    df_constrained = results_dfs[scen][ens][reg_vars][
+        params['reg_ranges_all'][0]]['timeseries'].copy()
+    df_constrained[:] = 0
+
+    # For each iteration, add the final row of the dataframe to the new
+    # df_hist. The row index it should be inserted at is the same as the
+    # second year in the iteration name.
+    for reg_range in params['reg_ranges_all']:
+        # print(iteration, iteration.split('-')[1], constrained_year)
+        df_constrained.loc[int(reg_range.split('-')[1])] = \
+            results_dfs[scen][ens][reg_vars][reg_range][
+                'timeseries'].loc[constrained_year]
+
+    # Remove all years that are not the end of an attribution period to
+    # avoid confusion:
+    df_constrained = df_constrained.loc[params['start_year']:, :]
+
+    #######################################################################
+    # Plot this dataframe df_constrined in the same way as df_hist
+
+    fig = plt.figure(figsize=(12, 8))
+    ax1 = plt.subplot2grid(
+        shape=(1, 4), loc=(0, 0), rowspan=1, colspan=3)
+    ax2 = plt.subplot2grid(
+        shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
+
+    var_linestyles = gr.get_dynamic_linestyles(plot_vars_priors)
+    gr.gwi_timeseries(
+        ax1, None, None, df_constrained,
+        plot_vars_priors, params['colours'], sigmas=['5', '95', '50'],
+        linestyle=var_linestyles)
+
+    # ax1.set_ylim(
+    #     np.floor(np.min(df_constrained.values) * 2) / 2,
+    #     np.ceil(np.max(df_constrained.values) * 2) / 2)
+    ax1.set_xlim(params['start_year'], params['end_year'])
+    ax1.set_ylabel(f'Warming in {constrained_year} ⁰C')
+    ax1.set_xlabel(f'Regressed years: {start_regress}-<year>')
+    xticks = list(np.arange(params['start_year'], params['end_year'] + 1, 5))
+    xticks.append(params['end_year'])
+    ax1.set_xticks(xticks, xticks)
+    ax1.set_title(
+        f'Constrained: {constrained_year} (with Obs only up to year <year>)')
+
+    # Create box and whisker plot for prior warming in each variable
+    bar_width = 0.4
+
+    for vv in plot_vars_priors:
+        # Plot the multi-method assessed results for the 2010-2019 period
+        med_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
+                                                            (vv, '50')]
+        min_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
+                                                            (vv, '5')]
+        max_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
+                                                            (vv, '95')]
+
+        ax2.fill_between(
+            [params['plot_vars'].index(vv),
+             params['plot_vars'].index(vv) + bar_width],
+            min_prior, max_prior,
+            color=params['colours'][vv],
+            alpha=0.6,
+            linewidth=0,
+            label=vv
+        )
+
+        ax2.plot(
+            [params['plot_vars'].index(vv),
+             params['plot_vars'].index(vv) + bar_width],
+            [med_prior, med_prior],
+            color=params['colours'][vv],
+            lw=2)
+
+    # Remove the xticks in ax2
+    ax2.set_xticks([])
+    ax2.set_yticklabels([])
+    # Get the ylims from ax1
+    ax2.set_ylim(ax1.get_ylim())
+    ax2.set_title(f'Unconstrained: {constrained_year}')
+
+    gr.overall_legend(fig, 'lower center', 6)
+
+    fig.suptitle(f'Constrained projected warming in {constrained_year}')
+
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace')
+
+    fig.savefig(
+        plot_path +
+        f'Projected_warming_in_{constrained_year}_' +
+        f'regressing_{reg_vars}_'
+        'constrained_by_regressed_years_' +
+        f"{params['min_range']}_to_{params['max_range']}.png")
+    plt.close(fig)
+
+    return df_constrained
+
+
+def figure_delta_contributions(
+        scen, ens, reg_vars,
+        results_dfs, obs_dfs, df_constrained,
+        plot_path, params):
+    """Generate timeseries showing source of changes in GWI value each year."""
+
+    start_years = set([int(reg_range.split('-')[0])
+                       for reg_range in params['reg_ranges_all']])
+    if len(start_years) == 1:
+        start_regress = list(start_years)[0]
+    else:
+        start_regress = 'VAR'
+
+    print('      Creating delta contributions')
+
+    fig = plt.figure(figsize=(12, 10))
+    ax1 = plt.subplot2grid(shape=(2, 2), loc=(1, 0), rowspan=1, colspan=1)
+    ax2 = plt.subplot2grid(shape=(2, 2), loc=(0, 0), rowspan=1, colspan=1)
+
+    # Create a new empty dataframe copied from before:
+    df_delta_additional_forcing_year = df_constrained.copy()
+    df_delta_revised_previous_year = df_constrained.copy()
+    df_delta_additional_forcing_year[:] = 0
+    df_delta_revised_previous_year[:] = 0
+
+    differ_years = sorted([r.split('-')[1] for r in params['reg_ranges_all']])
+    # switch the sorted order of the list years
+    differ_years = differ_years[::-1]
+    # remove the smallest year
+    differ_years = differ_years[:-1]
+
+    for y in differ_years:
+        # delta_new is the change from year Y to Y+1 in the new dataset.
+        delta_new = (
+            results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}'][
+                'timeseries'].loc[int(y)] -
+            results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}'][
+                'timeseries'].loc[int(y)-1])
+        # delta_rev is the change to the year Y from the previous to the
+        # new dataset.
+        delta_rev = (
+            results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}'][
+                'timeseries'].loc[int(y)-1] -
+            results_dfs[scen][ens][reg_vars][f'{start_regress}-{int(y)-1}'][
+                'timeseries'].loc[int(y)-1])
+        df_delta_additional_forcing_year.loc[int(y)] = delta_new
+        df_delta_revised_previous_year.loc[int(y)] = delta_rev
+
+    #######################################################################
+    # Plot the results
+
+    print('        Plotting delta contributions')
+
+    line_alpha = 0.9
+
+    changing_var = 'Ant' if 'Ant' in params['plot_vars'] else 'Tot'
+
+    df_hist = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY']['ANNUAL']
+
+    ax1.fill_between(
+        # df_delta_additional_forcing_year.index,
+        df_hist.loc[params['start_year']:, ('Res', '5')].index,
+        df_hist.loc[params['start_year']:, ('Res', '5')].values,
+        df_hist.loc[params['start_year']:, ('Res', '95')].values,
+        color='seagreen', alpha=0.1, lw=0)
+    ax1.fill_between(
+        df_delta_revised_previous_year.index,
+        # df_delta_revised_previous_year.loc[:, (changing_var, '5')].index,
+        df_delta_revised_previous_year.loc[:, (changing_var, '5')].values,
+        df_delta_revised_previous_year.loc[:, (changing_var, '95')].values,
+        color='steelblue', alpha=0.3, lw=0)
+    ax1.fill_between(
+        df_delta_additional_forcing_year.index,
+        # df_delta_additional_forcing_year.loc[:, (changing_var, '5')].index,
+        df_delta_additional_forcing_year.loc[:, (changing_var, '5')].values,
+        df_delta_additional_forcing_year.loc[:, (changing_var, '95')].values,
+        color='indianred', alpha=0.3, lw=0)
+    ax1.plot(
+        # df_delta_additional_forcing_year.index,
+        df_hist.loc[params['start_year']:, ('Res', '50')].index,
+        df_hist.loc[params['start_year']:, ('Res', '50')].values,
+        label='Residual (internal variability) in year Y+1',
+        color='seagreen', ls='dashed', alpha=line_alpha)
+    ax1.plot(
+        df_delta_revised_previous_year.index,
+        # df_delta_revised_previous_year.loc[:, (changing_var, '50')],
+        df_delta_revised_previous_year.loc[:, (changing_var, '50')].values,
+        label='Revised warming in year Y',
+        color='steelblue', alpha=line_alpha)
+    ax1.plot(
+        df_delta_additional_forcing_year.index,
+        # df_delta_additional_forcing_year.loc[:, (changing_var, '50')].index,
+        df_delta_additional_forcing_year.loc[:, (changing_var, '50')].values,
+        label='Additional warming from year Y to Y+1 in new dataset',
+        color='indianred', alpha=line_alpha)
+
+    # Add a zero line for reference
+    ax1.axhline(0, color='black', linestyle='solid')
+    xticks = list(np.arange(params['start_year'], params['end_year'] + 1, 5))
+    xticks.append(params['end_year'])
+    ax1.set_xticks(xticks, xticks)
+    ax1.set_xlim(int(min(differ_years)), int(max(differ_years))+0.5)
+    ax1.set_ylim(-0.3, +0.3)
+    ax1.set_ylabel('Interannual warming delta, ⁰C')
+
+    #######################################################################
+    # Plot schematic diagram
+    years = list(range(params['end_year'], params['end_year']-4, -1))
+    # which [2023, 2022, 2021, 2020] when the end year is 2023.
+    for year in years:
+        df_new = results_dfs[scen][ens][reg_vars][f'{start_regress}-{year}'][
+            'timeseries']
+        ax2.plot(df_new.loc[:year, :].index,
+                 df_new.loc[:year, (changing_var, '50')],
+                 label=f'{start_regress}-{year}',
+                 color='darkslategray', linestyle='solid',
+                 marker='o', markeredgewidth=0,
+                 alpha=(year-min(years)+1)/len(years),
+                 lw=2
+                 #  lw=(year-min(years))/len(years) * 2 + 0.5
+                 )
+        if year == max(years):
+            # Plot the red lines for the new year's extra year of forcing
+            ax2.plot([year-1, year],
+                     [df_new.loc[year-1, (changing_var, '50')],
+                      df_new.loc[year-1, (changing_var, '50')]],
+                     color='indianred', linestyle='dashed', lw=2,
+                     alpha=(year-min(years)+1)/len(years))
+            ax2.plot([year, year],
+                     [df_new.loc[year-1, (changing_var, '50')],
+                      df_new.loc[year, (changing_var, '50')]],
+                     color='indianred', linestyle='solid', lw=2,
+                     alpha=(year-min(years)+1)/len(years))
+            # Plot the blue line for the previous year's revision
+            df_old = results_dfs[scen][ens][reg_vars][
+                f'{start_regress}-{year-1}']['timeseries']
+
+            ax2.plot([year-1, year],
+                     [df_old.loc[year-1, (changing_var, '50')],
+                      df_old.loc[year-1, (changing_var, '50')]],
+                     color='steelblue', linestyle='dashed', lw=2,
+                     alpha=(year-min(years)+1)/len(years))
+            ax2.plot([year, year],
+                     [df_new.loc[year-1, (changing_var, '50')],
+                      df_old.loc[year-1, (changing_var, '50')]],
+                     color='steelblue', linestyle='solid', lw=2,
+                     alpha=(year-min(years)+1)/len(years))
+
+    ax2.plot(df_hist.index,
+             df_hist.loc[:, (changing_var, '50')].values,
+             label='Historical-only GWI',
+             color='slateblue', ls='dashed', alpha=line_alpha, lw=1.5,
+             marker='o', markeredgewidth=0)
+
+    #######################################################################
+    # Plot observations scatter with error:
+    # Plot the observations
+    err_pos = (obs_dfs[scen][ens]['timeseries'].quantile(q=0.95, axis=1) -
+               obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1))
+    err_neg = (obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1) -
+               obs_dfs[scen][ens]['timeseries'].quantile(q=0.05, axis=1))
+    ax2.errorbar(
+        obs_dfs[scen][ens]['timeseries'].index, obs_dfs[scen][ens][
+            'timeseries'].quantile(q=0.5, axis=1),
+        yerr=(err_neg, err_pos),
+        fmt='o', color=params['colours']['Obs'], ms=2.5, lw=1,
+        label='Reference Temp: HadCRUT5')
+
+    ax2.set_ylabel('Global Warming, ⁰C')
+    ax2.set_xticks(years, years)
+    # ax2.set_xlim(2019.5, 2023.5)
+    ax2.set_xlim(params['end_year']-4+0.5, params['end_year']+0.5)
+
+    fig.suptitle(
+        f'Contributions to the change in {changing_var} warming ' +
+        'each year Y → Y+1')
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace')
+    gr.overall_legend(fig, 'lower center', 3)
+    fig.tight_layout(rect=[0.05, 0.15, 0.95, 0.95])
+
+    fig.savefig(
+        plot_path +
+        'Historical_delta_contributions_' +
+        f"{reg_vars}_{params['min_range']}_to_{params['max_range']}.png")
+    plt.close(fig)
+
+    # Compare variation between internal variation (using Residual as a
+    # proxy for this, because ideally speaking, all forced warming is
+    # accounted for, so the remaining should largely be internal
+    # variability). Use RMS:
+    delta_rms = np.sqrt(
+        np.mean(df_delta_revised_previous_year.loc[:, (changing_var, '50')
+                                                   ].values**2))
+    residual_rms = np.sqrt(
+        np.mean(df_hist.loc[params['start_year']:, ('Res', '50')].values**2))
+
+    print(f'          Revision RMS for {reg_vars}: {delta_rms}')
+    print(f'          Residual RMS for {reg_vars}: {residual_rms}')
+    print(f'          Average fractional variation for {reg_vars}:',
+          delta_rms / residual_rms)
+
+
 def overarching_base_result_plotter(
     results_dfs,
     obs_dfs,
-    priors_dfs,
-    var_colours,
-    var_names
+    priors_dfs
 ):
     """Plot figures of base results."""
 
@@ -1230,22 +2060,9 @@ def overarching_base_result_plotter(
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED_VARIABLES:', reg_vars)
 
-                reg_ranges_all = sorted(
-                    list(results_dfs[scen][ens][reg_vars].keys()))
-
-                # Get all variables present in the data (from the first
-                # available range)
-                first_range = reg_ranges_all[0]
-                plot_vars = results_dfs[scen
-                                        ][ens
-                                          ][reg_vars
-                                            ][first_range
-                                              ]['timeseries'
-                                                ].columns.get_level_values(0).unique().to_list()
-
-                # Get dynamic colours for variables present
-                current_var_colours, scaling_map = gr.get_dynamic_colours(
-                    reg_vars, plot_vars, var_colours)
+                params = setup_plot_params(
+                    scen, ens, reg_vars, results_dfs)
+                reg_ranges_all = params['reg_ranges_all']
 
                 # Check if all years are available
                 if defs.check_steps(reg_ranges_all)['check_bool']:
@@ -1269,7 +2086,7 @@ def overarching_base_result_plotter(
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 results_dfs=results_dfs,
                                 df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                VAR_COLOURS=current_var_colours
+                                params=params
                                 ),
                             reg_ranges_all
                         )
@@ -1280,16 +2097,17 @@ def overarching_base_result_plotter(
                     # Add a toggle, because this is quite slow for the SMILE
                     # ensembles (e.g. where we have an entirely different
                     # set of results for a different ensemble member).
-                    gif_toggle = False
+                    gif_toggle = True
                     if gif_toggle:
-                        figure_gif_animation(plot_names)
+                        figure_gif_animation(
+                            plot_names, scen, ens, reg_vars, reg_ranges_all)
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
                 print('        Plotting figure_timeseries for PRIORS')
                 figure_priors_timeseries(
                     scen, ens, reg_vars, priors_dfs, obs_dfs,
-                    current_var_colours)
+                    params)
 
                 ###############################################################
                 # 4. Plot SPM2 Bar Plot
@@ -1301,8 +2119,7 @@ def overarching_base_result_plotter(
                             scen=scen, ens=ens, reg_vars=reg_vars,
                             results_dfs=results_dfs,
                             obs_dfs=obs_dfs,
-                            VAR_COLOURS=current_var_colours,
-                            VAR_NAMES=var_names
+                            params=params
                         ),
                         reg_ranges_all
                     )
@@ -1317,39 +2134,84 @@ def overarching_base_result_plotter(
                             scen=scen, ens=ens, reg_vars=reg_vars,
                             results_dfs=results_dfs,
                             obs_dfs=obs_dfs,
-                            VAR_COLOURS=current_var_colours,
-                            VAR_NAMES=var_names
+                            params=params
                         ),
                         reg_ranges_all
                     )
 
 
+def overarching_historical_only_plotter(
+    results_dfs,
+    obs_dfs,
+    priors_dfs
+):
+    """Plot figures of historical-only results."""
+
+    print('\nGenerating historical-only timeseries')
+    for scen in sorted(results_dfs.keys()):
+        print('SCENARIO:', scen)
+
+        for ens in results_dfs[scen].keys():
+            print('  ENSEMBLE-MEMBER:', ens)
+
+            for reg_vars in sorted(results_dfs[scen][ens].keys()):
+                print('    REGRESSED-VARIABLES:', reg_vars)
+
+                plot_path = f'{PLOT_FOLDER}aggregated/' + \
+                    f'SCENARIO--{scen}/' + \
+                    f'ENSEMBLE-MEMBER--{ens}/' + \
+                    f'VARIABLES--{reg_vars}/'
+                if not os.path.exists(plot_path):
+                    os.makedirs(plot_path)
+
+                params = setup_plot_params(
+                    scen, ens, reg_vars, results_dfs)
+
+                # 1. Plot historical-only timeseries for each headline
+                figure_historical_only_timeseries(
+                    scen, ens, reg_vars,
+                    results_dfs, obs_dfs,
+                    plot_path, params
+                )
+
+                # 2. Plot historical-only vs full dataset timeseries
+                figure_historical_vs_full_timeseries(
+                    scen, ens, reg_vars,
+                    results_dfs, obs_dfs, priors_dfs,
+                    plot_path, params
+                )
+
+                # 3. Plot comparison of all headlines datasets
+                figure_headlines_comparison(
+                    scen, ens, reg_vars,
+                    results_dfs, obs_dfs,
+                    plot_path, params
+                )
+
+                # 4. Create one-off figure for Thorne et al paper
+                figure_thorne_et_al(
+                    scen, ens, reg_vars,
+                    results_dfs, obs_dfs,
+                    plot_path, params
+                )
+
+                # 5. Generate the projected warming for final constrained year
+                df_constrained = figure_constrained_warming(
+                    scen, ens, reg_vars,
+                    results_dfs, priors_dfs,
+                    plot_path, params
+                )
+
+                # 6. Generate timeseries showing source of changes in GWI value
+                # each year
+                figure_delta_contributions(
+                    scen, ens, reg_vars,
+                    results_dfs, obs_dfs, df_constrained,
+                    plot_path, params,
+                )
+
+
 if __name__ == '__main__':
-
-    argv_dict = parse_argvs()
-    print(argv_dict)
-
-    # Configuration
-    if '--include-headlines' in argv_dict:
-        headline_toggle = argv_dict['--include-headlines'] == 'y'
-    else:
-        headline_toggle = input('Include headlines? (y/n): ') == 'y'
-
-    if '--re-calculate' in argv_dict:
-        re_calculate = argv_dict['--re-calculate'] == 'y'
-    else:
-        re_calculate = input('Re-calculate? (y/n): ') == 'y'
-
-    # Ensure directoriesfor plots and results exist
-    for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:
-        os.makedirs(folder, exist_ok=True)
-
-    # 1. Calculate Iterations
-    calculate_iterations(
-        re_calculate, headline_toggle, ITERATIONS_FOLDER, AGGREGATED_FOLDER)
-
-    # 2. Load Data
-    results_dfs, priors_dfs, obs_dfs = load_all_data(AGGREGATED_FOLDER)
 
     # NOTE:
     # results_files[reg_scen][reg_vars][reg_range][result_type].keys():
@@ -1359,736 +2221,37 @@ if __name__ == '__main__':
     # over, or 'historical-only', which is the range of years that the
     # historical-only dataset was calculated over.
 
-    # 3. Plot the basic results
+    argv_dict = parse_argvs()
+    print(argv_dict)
+
+    # Configuration
+    if '--re-calculate' in argv_dict:
+        re_calculate = argv_dict['--re-calculate'] == 'y'  # True/False y/n
+    else:
+        re_calculate = True  # Default to re-calculate if not specified
+
+    # Ensure directoriesfor plots and results exist
+    for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:
+        os.makedirs(folder, exist_ok=True)
+
+    # 1.Calculate gwi iteration averages
+    if re_calculate:
+        calculate_iteration_averages()
+
+    # 2. Load results (gwi, priors, obs) into dataframes
+    results_dfs, priors_dfs, obs_dfs = load_gwi_priors_obs()
+
+    # 3. Generate historical-only timeseries
+    if re_calculate:
+        calculate_historical_only(results_dfs)
+
+    # 4. Load the historical-only data into dataframes
+    results_dfs = load_historical_only_dfs(results_dfs)
+
+    # 5. Plot the basic results
     overarching_base_result_plotter(
-        results_dfs, obs_dfs, priors_dfs,
-        VAR_COLOURS, VAR_NAMES)
-
-    # 4. Generate historical-only timeseries and plot them.
-
-    print('\nGenerating historical-only timeseries')
-    for scen in sorted(results_dfs.keys()):
-        print('SCENARIO:', scen)
-
-        for ens in results_dfs[scen].keys():
-            print('  ENSEMBLE-MEMBER:', ens)
-
-
-            for reg_vars in sorted(results_dfs[scen][ens].keys()):
-                print('    REGRESSED-VARIABLES:', reg_vars)
-                # Create a new empty dataframe to store the historical-only results:
-                reg_ranges_all = sorted(list(results_dfs[scen][ens][reg_vars].keys()))
-
-                # Define the colours for the sub-variables
-                # Get all variables present in the data (from the first available range)
-                first_range = reg_ranges_all[0]
-                plot_vars = results_dfs[scen][ens][reg_vars][first_range]['timeseries'].columns.get_level_values(0).unique().to_list()
-                
-                current_var_colours, scaling_map = gr.get_dynamic_colours(reg_vars, plot_vars, VAR_COLOURS)
-
-                min_regressed_range = min(reg_ranges_all)
-                max_regressed_range = max(reg_ranges_all)
-                print(f'      Creating historical-only timeseries for {reg_vars}: between ' +
-                    min_regressed_range + ' and ' + max_regressed_range)
-
-                results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'] = {}
-                results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY-PREHIST'] = {}
-                # The prehist variant also includes the years before the earliest
-                # regressed range, but with the same headline definitions as the
-                # historical-only dataset. This is inconsistent with the way the
-                # historical-only dataset is calculated, but is included as a
-                # reference for plotting.
-                # TODO: If I really want a full-information (instead of
-                # historical-only) dataset using the various definitions, this will
-                # need doing inside GWI.py (and could easily be added using a new argv
-                # of 'all' alongside 'y' and 'n' in the headline_toggle).
-
-                if headline_toggle:
-                    headlines = ['ANNUAL', 'SR15', 'AR6', 'CGWL']
-                else:
-                    headlines = ['ANNUAL']
-                for headline in headlines:
-                    print(f'        Calculating historical-only for {headline}')
-                    df_results_headlines, df_results_headlines_prehist = historical_only(
-                        scen, ens, reg_vars, reg_ranges_all,
-                        headline, headline_toggle,
-                        results_dfs)
-
-                    if not df_results_headlines.empty:
-                        results_dfs[scen][ens][reg_vars][
-                            'HISTORICAL-ONLY'].update({headline: df_results_headlines})
-                        results_dfs[scen][ens][reg_vars][
-                            'HISTORICAL-ONLY-PREHIST'].update({headline: df_results_headlines_prehist})
-
-                smallest_end_year = min([int(reg_range.split('-')[1])
-                                        for reg_range in reg_ranges_all])
-                largest_end_year = max([int(reg_range.split('-')[1])
-                                        for reg_range in reg_ranges_all])
-                start_years = set([int(reg_range.split('-')[0])
-                                for reg_range in reg_ranges_all])
-                if len(start_years) == 1:
-                    start_regress = list(start_years)[0]
-
-                ###################################################################
-                # Create directory
-
-                # Create the overarching directory for the plots
-                out_path = f'plots/aggregated/' + \
-                    f'SCENARIO--{scen}/' + \
-                    f'ENSEMBLE-MEMBER--{ens}/' + \
-                    f'VARIABLES--{reg_vars}/'
-                if not os.path.exists(out_path):
-                    os.makedirs(out_path)
-
-                ###################################################################
-                # Plot each headline historical-only timeseries as its own plot
-                print('      Plotting historical-only timeseries for:', scen, ens, reg_vars)
-                for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
-                    print('        Plotting:', headline)
-                    plot_vars = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][
-                        headline].columns.get_level_values(0).unique().to_list()
-                    
-                    # Define major variables (for plumes)
-                    plume_vars = [v for v in plot_vars if v in defs.SUB_VAR_MAPPING or v == 'Res']
-                    
-                    # Define linestyles for all variables
-                    var_linestyles = gr.get_dynamic_linestyles(plot_vars)
-
-                    # Determine legend location
-                    sub_vars = [v for v in plot_vars if v not in plume_vars]
-
-                    fig = plt.figure(figsize=(12, 8))
-                    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
-                                        rowspan=1, colspan=1)
-
-                    gr.gwi_timeseries(
-                        ax, obs_dfs[scen][ens]['timeseries'], None,
-                        results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline],
-                        plot_vars, current_var_colours,
-                        sigmas=['5', '95', '50'],
-                        hatch=None, linestyle=var_linestyles,
-                        plume_vars=plume_vars
-                        )
-                    
-                    if sub_vars:
-                        legend_loc = 'center right'
-                        legend_cols = 1
-                        reorder = gr.get_legend_reorder_indices(fig)
-                    else:
-                        legend_loc = 'lower center'
-                        legend_cols = 7
-                        reorder = None
-                    ax.set_ylim(-1, np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
-                    ax.set_xlim(smallest_end_year, largest_end_year)
-                    xticks = list(np.arange(smallest_end_year, largest_end_year + 1, 5))
-                    xticks.append(largest_end_year)
-                    ax.set_xticks(xticks, xticks)
-                    ax.set_title(
-                        'Regressed years range: ' +
-                        f'{min_regressed_range} to {max_regressed_range}')
-                    gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
-                    
-                    if legend_loc == 'center right':
-                        plt.subplots_adjust(right=0.8)
-                    fig.suptitle(
-                        f'Historical-only {headline}\n' +
-                        f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}')
-                    fig.savefig(
-                        'plots/aggregated/' +
-                        f'SCENARIO--{scen}/' +
-                        f'ENSEMBLE-MEMBER--{ens}/' +
-                        f'VARIABLES--{reg_vars}/' +
-                        f'Historical_only_{headline}_' +
-                        f'{scen}_{ens}_{reg_vars}_' +
-                        f'{min_regressed_range}_to_{max_regressed_range}.png')
-                    plt.close(fig)
-
-                #######################################################################
-                # Plot the historical-only vs full dataset using gr.gwi_timeseries
-
-                print('      Plotting historical-only vs full dataset for:',
-                    scen, ens, reg_vars)
-                
-                # results_dfs are a very nested dictionary - please print the
-                # nested keys for all levels, except the data at the bottom level:
-                pprint.pprint({k: list(v.keys()) for k, v in results_dfs[scen][ens][reg_vars].items()})
-
-                plot_vars = results_dfs[scen][ens][reg_vars][
-                    'HISTORICAL-ONLY'][
-                        'ANNUAL'].columns.get_level_values(0).unique().to_list()
-                plot_vars_priors = priors_dfs[scen][ens][
-                    'timeseries'].columns.get_level_values(0).unique().to_list()
-
-                fig = plt.figure(figsize=(12, 8))
-                ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
-
-                gr.gwi_timeseries(
-                    ax, obs_dfs[scen][ens]['timeseries'], None,
-                    results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY']['ANNUAL'],
-                    plot_vars, current_var_colours, sigmas=['5', '95', '50'],
-                    hatch='\\', linestyle='dashed')
-                var_linestyles = gr.get_dynamic_linestyles(plot_vars)
-                gr.gwi_timeseries(
-                    ax, obs_dfs[scen][ens]['timeseries'], None,
-                    results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'],
-                    plot_vars, current_var_colours, sigmas=['5', '95', '50'],
-                    hatch=None, linestyle=var_linestyles)
-
-                ax.set_ylim(-1, np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
-                ax.set_xlim(smallest_end_year, largest_end_year)
-                xticks = list(np.arange(smallest_end_year, largest_end_year + 1, 5))
-                xticks.append(largest_end_year)
-                ax.set_xticks(xticks, xticks)
-
-                ax.set_title(
-                    'Regressed years range: ' +
-                    f'{min_regressed_range} to {max_regressed_range}')
-                gr.overall_legend(fig, 'lower center', 6)
-
-                fig.suptitle(
-                    'Historical-only (dashed) versus Full-information (solid)\n' +
-                    f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}')
-                fig.savefig(
-                    f'plots/aggregated/SCENARIO--{scen}/' +
-                    f'ENSEMBLE-MEMBER--{ens}/' +
-                    f'VARIABLES--{reg_vars}/' +
-                    'ANNUAL_Historical_vs_Full_timeseries_' +
-                    f'{scen}_{ens}_{reg_vars}_' +
-                    f'{min_regressed_range}_to_{max_regressed_range}.png')
-                plt.close(fig)
-
-                #######################################################################
-                # Plot comparison of all headlines datasets
-
-                print('      Plotting historical-only and full-information headlines:',
-                    scen, ens, reg_vars)
-
-                fig = plt.figure(figsize=(20, 10))
-                ax1 = plt.subplot2grid(shape=(4, 2), loc=(0, 0),
-                                    rowspan=3, colspan=1)
-                ax2 = plt.subplot2grid(shape=(4, 2), loc=(3, 0),
-                                    rowspan=1, colspan=1)
-                ax3 = plt.subplot2grid(shape=(4, 2), loc=(0, 1),
-                                    rowspan=3, colspan=1)
-                ax4 = plt.subplot2grid(shape=(4, 2), loc=(3, 1),
-                                    rowspan=1, colspan=1)
-
-
-                for ax in [ax1, ax3]:
-                    gr.gwi_timeseries(
-                        ax, obs_dfs[scen][ens]['timeseries'], None, None, None,
-                        current_var_colours, sigmas=['5', '95', '50'])
-
-                # Plot the centered 20-year rolling window on the 50th percentile Obs
-                df_temp_Obs_20yr = obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1).rolling(
-                    window=20, center=True, axis=0).mean()
-
-                # for headline in headlines:
-                for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
-                    plot_vars_main = plot_vars.copy()
-                    unwanted_vars = ['GHG', 'OHF', 'Res']
-                    plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
-                    for vv in plot_vars_main:
-                        # Determine line style
-                        ls = HEADLINE_LINE_STYLE.get(vv)
-                        if ls is None:
-                            # Try to get style from parent
-                            parent = scaling_map.get(vv)
-                            ls = HEADLINE_LINE_STYLE.get(parent, 'solid')
-
-                        # Plot the historical only timeseries
-                        ax1.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
-                                results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
-                                label=f'{headline}-{vv}',
-                                linestyle=ls,
-                                color=HEADLINE_COLOURS[headline]
-                                )
-                        if vv != 'Nat':
-                            ax2.plot(
-                                (results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
-                                - df_temp_Obs_20yr),
-                                label=f'{headline}-{vv}',
-                                linestyle=ls,
-                                color=HEADLINE_COLOURS[headline]
-                            )
-
-                        # Calculate the full-information timeseries for the headlines
-
-                        if headline == 'ANNUAL':
-                            # Use the full-information timeseries for the annual headline
-                            df_fullinfo_defs = results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'].loc[:, (vv, '50')]
-                        elif headline == 'AR6':
-                            # Calculate rolling 10-year mean, lagged
-                            df_fullinfo_defs = results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'].loc[:, (vv, '50')].rolling(window=10, center=False).mean()
-                        elif headline == 'SR15':
-                            # Calcualte the rolling 30-year mean, centered
-                            df_fullinfo_defs = results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'].loc[:, (vv, '50')].rolling(window=30, center=True).mean()
-                        elif headline == 'CGWL':
-                            # Calculate the rolling 20-year mean, centered
-                            df_fullinfo_defs = results_dfs[scen][ens][reg_vars][max_regressed_range]['timeseries'].loc[:, (vv, '50')].rolling(window=20, center=True).mean()
-
-                        ax3.plot(df_fullinfo_defs.index, df_fullinfo_defs,
-                                label=f'{headline}-{vv}',
-                                linestyle=ls,
-                                color=HEADLINE_COLOURS[headline]
-                                )
-                        if vv != 'Nat':
-                            ax4.plot(
-                                (df_fullinfo_defs - df_temp_Obs_20yr),
-                                label=f'{headline}-{vv}',
-                                linestyle=ls,
-                                color=HEADLINE_COLOURS[headline]
-                            )
-
-                # Plotting 20-year running means on observations moved to the
-                # end to sort ordering in the legend to look nicer.
-                for ax in [ax1, ax3]:
-                    # Plot the Obs 20-year running mean
-                    ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
-                            label='Obs 20-year running mean',
-                            color='black'
-                            )
-                for ax in [ax2, ax4]:
-                    # Plot the Obs 20-year running mean
-                    ax.plot((df_temp_Obs_20yr - df_temp_Obs_20yr),
-                            label='Obs 20-year running mean',
-                            color='black'
-                            )
-
-                # Slice the df_temp_Obs using the smallest and largest end years
-                min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].loc[smallest_end_year:largest_end_year].values) * 2) / 2
-                min_y = min([-0.5, min_y])
-                max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].loc[smallest_end_year:largest_end_year].values) * 2) / 2
-                # min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
-                # max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
-                ax1.set_ylim(min_y, max_y)
-                ax3.set_ylim(min_y, max_y)
-                for ax in [ax1, ax2]:
-                    ax.set_xlim(smallest_end_year, largest_end_year)
-                gr.overall_legend(fig, 'lower center', 5)
-
-                ax2.set_ylabel('$\Delta$ vs 20-year obs, ⁰C')
-                ax4.set_ylabel('$\Delta$ vs 20-year obs, ⁰C')
-                ax1.set_title('Historical-only')
-                ax3.set_title('Full-information')
-                fig.suptitle(
-                    f'Historical-only and Full-information vs 20-year Obs running mean\n' +
-                    f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}'
-                )
-                fig.savefig(f'plots/aggregated/SCENARIO--{scen}/' +
-                            f'ENSEMBLE-MEMBER--{ens}/' +
-                            f'VARIABLES--{reg_vars}/' +
-                            'Historical_and_full_headlines_' +
-                            f'{scen}_{ens}_{reg_vars}_' +
-                            f'{min_regressed_range}_to_{max_regressed_range}.png')
-
-                plt.close(fig)
-
-                # Create one-off figure for Thorne et al paper
-                fig = plt.figure(figsize=(12,8))
-                ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0))
-
-                gr.gwi_timeseries(
-                    ax, obs_dfs[scen][ens]['timeseries'], None, None, None,
-                    current_var_colours,
-                    sigmas=['5', '95', '50']
-                    # hatch='\\', linestyle='dashed'
-                )
-                # for headline in headlines:
-                for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
-                    for vv in plot_vars_main:
-                        # Determine line style
-                        ls = HEADLINE_LINE_STYLE.get(vv)
-                        if ls is None:
-                            # Try to get style from parent
-                            parent = scaling_map.get(vv)
-                            ls = HEADLINE_LINE_STYLE.get(parent, 'solid')
-
-                        # Plot the historical only timeseries
-                        ax.plot(results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].index,
-                                results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
-                                label=f'{headline}-{vv}',
-                                linestyle=ls,
-                                color=HEADLINE_COLOURS[headline]
-                                )
-                ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
-                        label='Obs 20-year running mean',
-                        color='black'
-                        )
-
-                # Slice the df_temp_Obs using the smallest and largest end years
-                ax.set_ylim(min_y, max_y)
-                ax.set_xlim(smallest_end_year, largest_end_year + 0.5)
-                ax.set_title('Calculated as historical-only: annual-mean, AR6 decade-mean, SR1.5 centered 30-year mean, and CGWL centered 20-year mean')
-                gr.overall_legend(fig, 'lower center', 5)
-
-                ax.set_ylabel('Attributable warming relative to 1850–1900 (⁰C)')
-                fig.suptitle(
-                    'Global Warming Index (GWI)'
-                )
-
-                fig.savefig(f'plots/aggregated/SCENARIO--{scen}/' +
-                            f'ENSEMBLE-MEMBER--{ens}/' +
-                            f'VARIABLES--{reg_vars}/' +
-                            'Historical_only_headlines_' +
-                            f'{scen}_{ens}_{reg_vars}_' +
-                            f'{min_regressed_range}_to_{max_regressed_range}.png')
-                plt.close(fig)
-
-
-        ###############################################################################
-        # Generate the projected warming for final constrained year ###################
-        ###############################################################################
-                # TODO: Add to constrained warming dictionary.
-                # TODO: Move calculation higher up in script.
-
-                print('      Creating constrained results for:', reg_vars)
-                # Calculate how the expected final year of the timeseries changes
-                # depending on the years that are regressed. Expect that the attributed
-                # values in 2023 (end year of the full timeseries) will have larger
-                # uncertainties, the earlier/shorter the range of regressed years is.
-
-                # Create new empty dataframes to store the constrained results:
-                # NOTE: you could also do this using maximum of the truncation range
-                # if that's what you're interested in (possibly more relevant for
-                # SSP projections in future)
-
-                # constrained_year = int(max_regressed_range.split('-')[1])
-                constrained_year = largest_end_year
-
-                df_constrained = results_dfs[scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
-                df_constrained[:] = 0
-
-                # For each iteration, add the final row of the dataframe to the new
-                # df_hist. The row index it should be inserted at is the same as the
-                # second year in the iteration name.
-                for reg_range in reg_ranges_all:
-                    # print(iteration, iteration.split('-')[1], constrained_year)
-                    df_constrained.loc[int(reg_range.split('-')[1])] = \
-                        results_dfs[scen][ens][reg_vars][reg_range]['timeseries'].loc[constrained_year]
-
-                # Remove all years that are not the end of an attribution period to
-                # avoid confusion:
-                df_constrained = df_constrained.loc[smallest_end_year:, :]
-
-                #######################################################################
-                # Plot this dataframe df_constrined in the same way as df_hist
-
-                print('        Plotting constrained results for:', reg_vars)
-                fig = plt.figure(figsize=(12, 8))
-                ax1 = plt.subplot2grid(
-                    shape=(1, 4), loc=(0, 0), rowspan=1, colspan=3)
-                ax2 = plt.subplot2grid(
-                    shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
-                
-                var_linestyles = gr.get_dynamic_linestyles(plot_vars_priors)
-                gr.gwi_timeseries(
-                    ax1, None, None, df_constrained,
-                    plot_vars_priors, current_var_colours, sigmas=['5', '95', '50'],
-                    linestyle=var_linestyles)
-
-                # ax1.set_ylim(
-                #     np.floor(np.min(df_constrained.values) * 2) / 2,
-                #     np.ceil(np.max(df_constrained.values) * 2) / 2)
-                ax1.set_xlim(smallest_end_year, largest_end_year)
-                ax1.set_ylabel(f'Warming in {constrained_year} ⁰C')
-                ax1.set_xlabel(f'Regressed years: {start_regress}-<year>')
-                ax1.set_xticks(xticks, xticks)
-                ax1.set_title(f'Constrained: {constrained_year} (with Obs only up to year <year>)')
-
-
-                # Create box and whisker plot for prior warming in each variable
-                bar_width = 0.4
-
-                for vv in plot_vars_priors:
-                    # Plot the multi-method assessed results for the 2010-2019 period
-                    med_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year, (vv, '50')]
-                    min_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year, (vv, '5')]
-                    max_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year, (vv, '95')]
-
-                    ax2.fill_between(
-                        [plot_vars.index(vv), plot_vars.index(vv) + bar_width],
-                        min_prior, max_prior,
-                        color=current_var_colours[vv],
-                        alpha=0.6,
-                        linewidth=0,
-                        label=vv
-                        )
-
-                    ax2.plot(
-                        [plot_vars.index(vv), plot_vars.index(vv) + bar_width],
-                        [med_prior, med_prior],
-                        color=current_var_colours[vv],
-                        lw=2)
-
-                    # Add horizontal lines in the variable colours for the min,
-                    # med, and max values of each variable in ax1
-                    # for val in [min_prior, med_prior, max_prior]:
-                    #     ax1.hlines(
-                    #         y=val, xmin=smallest_end_year,
-                    #         xmax=largest_end_year,
-                    #         colors=VAR_COLOURS[vv], linestyles='dotted', lw=1)
-                    
-                # Remove the xticks in ax2
-                ax2.set_xticks([])
-                ax2.set_yticklabels([])
-                # Get the ylims from ax1
-                ax2.set_ylim(ax1.get_ylim())
-                ax2.set_title(f'Unconstrained: {constrained_year}')
-
-                gr.overall_legend(fig, 'lower center', 6)
-
-
-                fig.suptitle(f'Constrained projected warming in {constrained_year}\n' +
-                             f'Scenario: {scen} | Ensemble: {ens} | Regressed variables: {reg_vars}')
-                fig.savefig(
-                    f'plots/aggregated/SCENARIO--{scen}/' +
-                    f'ENSEMBLE-MEMBER--{ens}/' +
-                    f'VARIABLES--{reg_vars}/' +
-                    f'Projected_warming_in_{constrained_year}_' +
-                    f'regressing_{reg_vars}_'
-                    'constrained_by_regressed_years_' +
-                    f'{min_regressed_range}_to_{max_regressed_range}.png')
-                plt.close(fig)
-
-
-        ###############################################################################
-        # Generate timeseries showing source of changes in GWI value each year ########
-        ###############################################################################
-                # TODO: This whole multi-plot figure needs fixing, revising,
-                # sorting, etc
-
-                # From year Y to year Y+1, you have contributions from:
-                # 1. the change in temp in year Y in the old dataset to year Y in the
-                # new dataset
-                # 2. the change in temp in year Y+1 in the old dataset to the temp in
-                # year Y in the new dataset.
-                # 3. any changes in historical forcing in the new dataset
-                # 4. any changes in HadCRUT temperatures in the new dataset
-                # Only factor 1 and 2 are considered in this calcualtion. The other
-                # factors may be added later, but sourcing historical T and ERF data is
-                # significantly more wrangling.
-
-                print('      Creating delta contributions for:', scen, reg_vars)
-
-                fig = plt.figure(figsize=(12, 10))
-                ax1 = plt.subplot2grid(shape=(2, 2), loc=(1, 0), rowspan=1, colspan=1)
-                ax2 = plt.subplot2grid(shape=(2, 2), loc=(0, 0), rowspan=1, colspan=1)
-
-                # Create a new empty dataframe copied from before:
-                df_delta_additional_forcing_year = df_constrained.copy()
-                df_delta_revised_previous_year = df_constrained.copy()
-                df_delta_additional_forcing_year[:] = 0
-                df_delta_revised_previous_year[:] = 0
-
-                differ_years = sorted([r.split('-')[1] for r in reg_ranges_all])
-                # switch the sorted order of the list years
-                differ_years = differ_years[::-1]
-                # remove the smallest year
-                differ_years = differ_years[:-1]
-
-                for y in differ_years:
-                    # delta_new is the change from year Y to Y+1 in the new dataset.
-                    delta_new = (
-                        results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}']['timeseries'].loc[int(y)] -
-                        results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}']['timeseries'].loc[int(y)-1])
-                    # delta_rev is the change to the year Y from the previous to the
-                    # new dataset.
-                    delta_rev = (
-                        results_dfs[scen][ens][reg_vars][f'{start_regress}-{y}']['timeseries'].loc[int(y)-1] -
-                        results_dfs[scen][ens][reg_vars][f'{start_regress}-{int(y)-1}']['timeseries'].loc[int(y)-1])
-                    df_delta_additional_forcing_year.loc[int(y)] = delta_new
-                    df_delta_revised_previous_year.loc[int(y)] = delta_rev
-                
-                #######################################################################
-                # Plot the results
-
-                # The red line is the additional warming in year Y+1 relative to year
-                # Y in the new dataset.
-                # The blue line is the revised warming in year Y calculated in the year
-                # Y+1 dataset relative to the year Y calculated in the year Y dataset.
-                # The green dashed line is the residual warming in year Y relative in
-                # the dataset for year Y. That is so say, this line comes from the
-                # historical-only dataset.
-                print('        Plotting delta contributions for:', reg_vars)
-
-                line_alpha = 0.9
-
-                changing_var = 'Ant' if 'Ant' in plot_vars else 'Tot'
-                # Plot the residual in the
-
-                df_hist = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY']['ANNUAL']
-
-                # Plot the 
-                ax1.fill_between(
-                    # df_delta_additional_forcing_year.index,
-                    df_hist.loc[smallest_end_year:, ('Res', '5')].index,
-                    df_hist.loc[smallest_end_year:, ('Res', '5')].values,
-                    df_hist.loc[smallest_end_year:, ('Res', '95')].values,
-                    color='seagreen', alpha=0.1, lw=0)
-                ax1.fill_between(
-                    df_delta_revised_previous_year.index,
-                    # df_delta_revised_previous_year.loc[:, (changing_var, '5')].index,
-                    df_delta_revised_previous_year.loc[:, (changing_var, '5')].values,
-                    df_delta_revised_previous_year.loc[:, (changing_var, '95')].values,
-                    color='steelblue', alpha=0.3, lw=0)
-                ax1.fill_between(
-                    df_delta_additional_forcing_year.index,
-                    # df_delta_additional_forcing_year.loc[:, (changing_var, '5')].index,
-                    df_delta_additional_forcing_year.loc[:, (changing_var, '5')].values,
-                    df_delta_additional_forcing_year.loc[:, (changing_var, '95')].values,
-                    color='indianred', alpha=0.3, lw=0)
-                ax1.plot(
-                    # df_delta_additional_forcing_year.index,
-                    df_hist.loc[smallest_end_year:, ('Res', '50')].index,
-                    df_hist.loc[smallest_end_year:, ('Res', '50')].values,
-                    label='Residual (internal variability) in year Y+1',
-                    color='seagreen', ls='dashed', alpha=line_alpha)
-                ax1.plot(
-                    df_delta_revised_previous_year.index,
-                    # df_delta_revised_previous_year.loc[:, (changing_var, '50')],
-                    df_delta_revised_previous_year.loc[:, (changing_var, '50')].values,
-                    label='Revised warming in year Y',
-                    color='steelblue', alpha=line_alpha)
-                ax1.plot(
-                    df_delta_additional_forcing_year.index,
-                    # df_delta_additional_forcing_year.loc[:, (changing_var, '50')].index,
-                    df_delta_additional_forcing_year.loc[:, (changing_var, '50')].values,
-                    label='Additional warming from year Y to Y+1 in new dataset',
-                    color='indianred', alpha=line_alpha)
-
-                # Add a zero line for reference
-                ax1.axhline(0, color='black', linestyle='solid')
-                xticks.append(int(min(differ_years)))
-                ax1.set_xticks(xticks, xticks)
-                ax1.set_xlim(int(min(differ_years)), int(max(differ_years))+0.5)
-                ax1.set_ylim(-0.3, +0.3)
-                ax1.set_ylabel('Interannual warming delta, ⁰C')
-
-                # #######################################################################
-                # # Plot correlation between interannual delta and residual warming
-                # TODO: Complete this plot - commented out to keep commit clean.
-
-                # # Calculate the correlation between the residual warming and the
-                # # interannual delta in the new dataset.
-                # ax3 = plt.subplot2grid(shape=(2, 2), loc=(1, 1), rowspan=1, colspan=1)
-
-                # ax3.plot(
-                #     df_hist.loc[smallest_end_year:, ('Res', '50')].values,
-                #     df_delta_revised_previous_year.loc[:, (changing_var, '50')].values,
-                #     # label='Residual (internal variability) in year Y+1',
-                #     # color='seagreen', ls='dashed', alpha=line_alpha)
-                # )
-                # ax3.set_ylabel('Revised warming in year Y')
-                # ax3.set_xlabel('Residual (internal variability) in year Y+1')
-
-                # # Calculate the correlation between these two, and plot the line
-                # corr = np.corrcoef(
-                #     df_hist.loc[smallest_end_year:, ('Res', '50')].values,
-                #     df_delta_revised_previous_year.loc[:, (changing_var, '50')].values)
-                # print(corr)
-                # # ax3.plot(df_hist.loc[smallest_end_year:, ('Res', '50')].values,
-                # #          np.poly1d(np.polyfit(
-                # #              df_hist.loc[smallest_end_year:, ('Res', '50')].values,
-                # #              df_delta_revised_previous_year.loc[:, (changing_var, '50')].values,
-                # #              1)))
-
-                # ax3.set_title(f'Correlation: {corr[0, 1]:.2f}')
-
-                #######################################################################
-                # Plot schematic diagram
-                years = list(range(largest_end_year, largest_end_year-4, -1))
-                # which [2023, 2022, 2021, 2020] when the end year is 2023.
-                for year in years:
-                    df_new = results_dfs[scen][ens][reg_vars][f'{start_regress}-{year}']['timeseries']
-                    ax2.plot(df_new.loc[:year, :].index,
-                            df_new.loc[:year, (changing_var, '50')],
-                            label=f'{start_regress}-{year}',
-                            color='darkslategray', linestyle='solid',
-                            marker='o', markeredgewidth=0,
-                            alpha=(year-min(years)+1)/len(years),
-                            lw=2
-                            #  lw=(year-min(years))/len(years) * 2 + 0.5
-                            )
-                    if year == max(years):
-                        # Plot the red lines for the new year's extra year of forcing
-                        ax2.plot([year-1, year],
-                                [df_new.loc[year-1, (changing_var, '50')],
-                                df_new.loc[year-1, (changing_var, '50')]],
-                                color='indianred', linestyle='dashed', lw=2,
-                                alpha=(year-min(years)+1)/len(years))
-                        ax2.plot([year, year],
-                                [df_new.loc[year-1, (changing_var, '50')],
-                                df_new.loc[year, (changing_var, '50')]],
-                                color='indianred', linestyle='solid', lw=2,
-                                alpha=(year-min(years)+1)/len(years))
-                        # Plot the blue line for the previous year's revision
-                        df_old = results_dfs[scen][ens][reg_vars][
-                            f'{start_regress}-{year-1}']['timeseries']
-
-                        ax2.plot([year-1, year],
-                                [df_old.loc[year-1, (changing_var, '50')],
-                                df_old.loc[year-1, (changing_var, '50')]],
-                                color='steelblue', linestyle='dashed', lw=2,
-                                alpha=(year-min(years)+1)/len(years))
-                        ax2.plot([year, year],
-                                [df_new.loc[year-1, (changing_var, '50')],
-                                df_old.loc[year-1, (changing_var, '50')]],
-                                color='steelblue', linestyle='solid', lw=2,
-                                alpha=(year-min(years)+1)/len(years))
-
-                ax2.plot(df_hist.index,
-                        df_hist.loc[:, (changing_var, '50')].values,
-                        label='Historical-only GWI',
-                        color='slateblue', ls='dashed', alpha=line_alpha, lw=1.5,
-                        marker='o', markeredgewidth=0)
-
-                #######################################################################
-                # Plot observations scatter with error:
-                # Plot the observations
-                err_pos = (obs_dfs[scen][ens]['timeseries'].quantile(q=0.95, axis=1) -
-                        obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1))
-                err_neg = (obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1) -
-                        obs_dfs[scen][ens]['timeseries'].quantile(q=0.05, axis=1))
-                ax2.errorbar(obs_dfs[scen][ens]['timeseries'].index, obs_dfs[scen][ens]['timeseries'].quantile(q=0.5, axis=1),
-                            yerr=(err_neg, err_pos),
-                            fmt='o', color=current_var_colours['Obs'], ms=2.5, lw=1,
-                            label='Reference Temp: HadCRUT5')
-
-                ax2.set_ylabel('Global Warming, ⁰C')
-                ax2.set_xticks(years, years)
-                # ax2.set_xlim(2019.5, 2023.5)
-                ax2.set_xlim(largest_end_year-4+0.5, largest_end_year+0.5)
-                # ax2.set_ylim(
-                #     np.floor(obs_dfs[scen][ens]['timeseries'].loc[largest_end_year-4:, :].min().min() * 10) / 10,
-                #     np.ceil(obs_dfs[scen][ens]['timeseries'].loc[largest_end_year-4:, :].min().min() * 10) / 10
-                #     # 1.1, 1.5
-                #     )
-
-                fig.suptitle(
-                    f'Contributions to the change in {changing_var} warming ' +
-                    'each year Y → Y+1')
-                gr.overall_legend(fig, 'lower center', 3)
-                fig.tight_layout(rect=[0.05, 0.15, 0.95, 0.95])
-                fig.savefig(
-                    f'plots/aggregated/SCENARIO--{scen}/' +
-                    f'ENSEMBLE-MEMBER--{ens}/' +
-                    f'VARIABLES--{reg_vars}/' +
-                    'Historical_delta_contributions_' +
-                    f'{reg_vars}_{min_regressed_range}_to_{max_regressed_range}.png')
-                plt.close(fig)
-
-                # Compare variation between internal variation (using Residual as a
-                # proxy for this, because ideally speaking, all forced warming is
-                # accounted for, so the remaining should largely be internal
-                # variability). Use RMS:
-                delta_rms = np.sqrt(
-                    np.mean(df_delta_revised_previous_year.loc[:, (changing_var, '50')
-                                                            ].values**2))
-                residual_rms = np.sqrt(
-                    np.mean(df_hist.loc[smallest_end_year:, ('Res', '50')].values**2))
-
-                print(f'          Revision RMS for {reg_vars}: {delta_rms}')
-                print(f'          Residual RMS for {reg_vars}: {residual_rms}')
-                print(f'          Average fractional variation for {reg_vars}:',
-                    delta_rms / residual_rms)
+        results_dfs, obs_dfs, priors_dfs)
+
+    # 6. Plot the historical-only results
+    overarching_historical_only_plotter(
+        results_dfs, obs_dfs, priors_dfs)

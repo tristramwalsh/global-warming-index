@@ -57,6 +57,55 @@ matplotlib.rcParams.update({
 # Fontweights~: light, regular, normal,
 
 
+# Constants
+
+VAR_COLOURS = {
+    'Tot': '#d7827e',
+    'Ant': '#b4637a',
+    'GHG': '#907aa9',
+    'Nat': '#56949f',
+    'OHF': '#ea9d34',
+    'Res': '#9893a5',
+    'Obs': '#797593',
+    'PiC': '#cecacd'
+}
+
+VAR_NAMES = {
+    'Obs': 'Observed warming',
+    'Tot': 'Total forced warming',
+    'Ant': 'Human-induced warming',
+    'GHG': 'Well-mixed greenhouse gases',
+    'OHF': 'Other human forcings',
+    'Nat': 'Solar and volcanic drivers',
+    'Res': 'Residual (Internal variability)',
+    'co2': 'Carbon dioxide',
+    'ch4': 'Methane',
+    'n2o': 'Nitrous oxide',
+    'halogen': 'Halogenated gases',
+    'aerosol-radiation_interactions': 'Aerosol-radiation interactions',
+    'aerosol-cloud_interactions': 'Aerosol-cloud interactions',
+    'land_use': 'Land-use reflectance',
+    'bc_snow': 'Black carbon on snow',
+    'h2o_strat': 'Stratospheric water vapour',
+    'o3': 'Ozone',
+    'solar': 'Solar',
+    'volcanic': 'Volcanic',
+    'contrails': 'Aviation contrails'
+}
+
+HEADLINE_COLOURS = {
+    'ANNUAL': '#5BA2D0',
+    'SR15': '#9CCFD8',
+    'AR6': '#EE8679',
+    'CGWL': '#A88BFA'
+}
+HEADLINE_LINE_STYLE = {
+    'Tot': 'solid',
+    'Ant': 'dashed',
+    'Nat': 'dotted'
+}
+
+
 def overall_legend(fig, loc, ncol, nrow=False, reorder=None):
     """Add a clean legend to a figure with multiple subplots."""
     handles, labels = [], []

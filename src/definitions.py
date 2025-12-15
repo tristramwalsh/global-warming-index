@@ -25,6 +25,29 @@ SUB_VAR_MAPPING = {
 }
 
 
+VAR_NAMES = {
+    'Obs': 'Observed warming',
+    'Tot': 'Total forced warming',
+    'Ant': 'Human-induced warming',
+    'GHG': 'Well-mixed greenhouse gases',
+    'OHF': 'Other human forcings',
+    'Nat': 'Solar and volcanic drivers',
+    'Res': 'Residual (Internal variability)',
+    'co2': 'Carbon dioxide',
+    'ch4': 'Methane',
+    'n2o': 'Nitrous oxide',
+    'halogen': 'Halogenated gases',
+    'aerosol-radiation_interactions': 'Aerosol-radiation interactions',
+    'aerosol-cloud_interactions': 'Aerosol-cloud interactions',
+    'land_use': 'Land-use reflectance',
+    'bc_snow': 'Black carbon on snow',
+    'h2o_strat': 'Stratospheric water vapour',
+    'o3': 'Ozone',
+    'solar': 'Solar',
+    'volcanic': 'Volcanic',
+    'contrails': 'Aviation contrails'
+}
+
 def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
     """Load the ERFs for the specified scenario and variables."""
 
