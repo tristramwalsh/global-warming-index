@@ -745,9 +745,15 @@ def figure_spm2(
     if defs.SUB_VAR_MAPPING:
         for group in ['GHG', 'OHF', 'Nat']:
             if group in defs.SUB_VAR_MAPPING:
-                for sub_var in defs.SUB_VAR_MAPPING[group]:
-                    if (sub_var, '50') in df_headlines.columns:
-                        vars_panel3.append(sub_var)
+                # Identify available variables in this group
+                group_vars = [
+                    sub_var for sub_var in defs.SUB_VAR_MAPPING[group]
+                    if (sub_var, '50') in df_headlines.columns]
+                # Sort by median value (largest to smallest)
+                group_vars.sort(
+                    key=lambda v: df_headlines.loc[period, (v, '50')],
+                    reverse=True)
+                vars_panel3.extend(group_vars)
 
     # Calculate grid dimensions based on the number of variables in each panel
     # in order to make the bars in each panel the same visual width.
@@ -805,6 +811,8 @@ def figure_spm2(
                            params['colours'], defs.VAR_NAMES,
                            ylim, show_ylabel=False, show_yticklabels=False)
 
+    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
+
     # Add text
     fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
              f'Observed warming and contributions ({period})',
@@ -858,8 +866,6 @@ def figure_spm2(
     # Set the grid to the back for the fig
     for ax in axes:
         ax.set_axisbelow(True)
-
-    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
 
     # Save plot
     plot_path = ('plots/aggregated/' +
