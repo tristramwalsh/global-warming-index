@@ -9,6 +9,7 @@ import src.graphing as gr
 import src.definitions as defs
 import multiprocessing as mp
 import functools
+from pprint import pprint
 
 
 PLOT_FOLDER = 'plots/'
@@ -222,10 +223,11 @@ def load_nested_dfs(d):
     return d
 
 
-def load_gwi_priors_obs():
+def load_gwi_priors_erf_obs():
     """Load all averaged datasets."""
     results_files = {}
     priors_files = {}
+    erf_files = {}
     obs_files = {}
 
     scenarios_all = get_subdirs(AGGREGATED_FOLDER, 'SCENARIO--')
@@ -233,6 +235,7 @@ def load_gwi_priors_obs():
     for scenario in scenarios_all:
         results_files.update({scenario: {}})
         priors_files.update({scenario: {}})
+        erf_files.update({scenario: {}})
         obs_files.update({scenario: {}})
 
         _path = f'{AGGREGATED_FOLDER}/SCENARIO--{scenario}/'
@@ -242,18 +245,26 @@ def load_gwi_priors_obs():
         for ensemble_selection in ensembles_seletions_all:
             results_files[scenario].update({ensemble_selection: {}})
             priors_files[scenario].update({ensemble_selection: {}})
+            erf_files[scenario].update({ensemble_selection: {}})
             obs_files[scenario].update({ensemble_selection: {}})
 
             # Load priors files
             _path_prior_dir = ('results/priors/' +
                                f'SCENARIO--{scenario}/' +
                                f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-
+            _path_erf_dir = ('results/erfs/' +
+                             f'SCENARIO--{scenario}/' +
+                             f'ENSEMBLE-MEMBER--{ensemble_selection}/')
             if os.path.exists(_path_prior_dir):
                 for f in os.listdir(_path_prior_dir):
                     if f.startswith('PRIOR_results_timeseries_'):
                         priors_files[scenario][ensemble_selection][
                             'timeseries'] = os.path.join(_path_prior_dir, f)
+            if os.path.exists(_path_erf_dir):
+                for f in os.listdir(_path_erf_dir):
+                    if f.startswith('ERF_results_timeseries_'):
+                        erf_files[scenario][ensemble_selection][
+                            'timeseries'] = os.path.join(_path_erf_dir, f)
 
             _path = (f'{AGGREGATED_FOLDER}/' +
                      f'SCENARIO--{scenario}/' +
@@ -329,6 +340,8 @@ def load_gwi_priors_obs():
     results_dfs = load_nested_dfs(results_files)
     # Load priors timeseries
     priors_dfs = load_nested_dfs(priors_files)
+    # Load ERF timeseries
+    erf_dfs = load_nested_dfs(erf_files)
     # Load observation headlines
     obs_dfs = load_nested_dfs(obs_files)
 
@@ -354,7 +367,7 @@ def load_gwi_priors_obs():
                 print('Warning: Could not load temperature observations for '
                       f'{scen} {ens}: {e}')
 
-    return results_dfs, priors_dfs, obs_dfs
+    return results_dfs, priors_dfs, erf_dfs, obs_dfs
 
 
 def map_headline_to_index(
@@ -414,7 +427,7 @@ def get_available_headlines(results_dfs, scen, ens, reg_vars, reg_ranges_all):
         valid_headlines = list(available_headlines)
         headline_toggle = True
 
-    print('valid headlines: ',  valid_headlines)
+    print('      Valid headlines: ',  valid_headlines)
     return valid_headlines, headline_toggle
 
 
@@ -472,12 +485,10 @@ def calculate_historical_only(
                 # calculate the headlines for all regressed_year ranges.
 
                 for headline in headlines:
-                    df_headlines, df_headlines_pre = combine_historical_only(
+                    combine_historical_only(
                         scen, ens, reg_vars, reg_ranges_all,
                         headline, headline_toggle,
                         results_dfs)
-
-                return df_headlines, df_headlines_pre
 
 
 def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
@@ -559,8 +570,6 @@ def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
             f'VARIABLES--{reg_vars}_' +
             f'REGRESSED-YEARS--{min_regressed_range}' +
             f'_to_{max_regressed_range}.csv')
-
-    return df_hist_headline, None
 
 
 def load_historical_only_dfs(results_dfs):
@@ -1260,6 +1269,84 @@ def figure_priors_timeseries(
     plot_name = (
         f'{plot_path}/' +
         f'Prior_Timeseries_Scenario--{scen}_' +
+        f'ENSEMBLE-MEMBER--{ens}_' +
+        f'VARIABLES--{reg_vars}.png')
+    fig.savefig(plot_name)
+    plt.close(fig)
+
+
+def figure_erf_timeseries(
+        scen, ens, reg_vars,
+        erf_dfs, params
+):
+    """Plot timeseries for ERF."""
+    plot_vars_erf = erf_dfs[
+        scen][ens]['timeseries'].columns.get_level_values(
+            0).unique().to_list()
+
+    # Define major variables (for plumes)
+    plume_vars = [v for v in plot_vars_erf
+                  if v in defs.SUB_VAR_MAPPING or v == 'Res']
+
+    # Define linestyles for all variables
+    var_linestyles = gr.get_dynamic_linestyles(plot_vars_erf)
+
+    # Determine legend location
+    sub_vars = [v for v in plot_vars_erf if v not in plume_vars]
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
+                          rowspan=1, colspan=1)
+
+    gr.gwi_timeseries(
+        ax, None, None,
+        erf_dfs[scen][ens]['timeseries'],
+        plot_vars_erf, params['colours'],
+        hatch='x', linestyle=var_linestyles,
+        plume_vars=plume_vars,
+        ylabel='Effective Radiative Forcing (W m⁻²)')
+
+    if sub_vars:
+        legend_loc = 'center right'
+        legend_cols = 1
+        reorder = gr.get_legend_reorder_indices(fig)
+    else:
+        legend_loc = 'lower center'
+        legend_cols = 7
+        reorder = None
+
+    ax.set_ylim(
+        np.floor(np.min(
+            erf_dfs[scen][ens]['timeseries'].values)
+            * 2) / 2,
+        np.ceil(np.max(
+            erf_dfs[scen][ens]['timeseries'].values)
+            * 2) / 2
+        )
+    # ax.set_ylim(-2,5)
+    ax.set_xlim(
+        max(1750,
+            erf_dfs[scen][ens]['timeseries'].index.min()),
+        erf_dfs[scen][ens]['timeseries'].index.max())
+    gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
+
+    if legend_loc == 'center right':
+        plt.subplots_adjust(right=0.8)
+    fig.suptitle(
+        f'Effective Radiative Forcing Timeseries\n'
+        f'Scenario: {scen} | '
+        f'Ensemble: {ens} | '
+        f'Regressed variables: {reg_vars}')
+    plot_path = (
+        'plots/erfs/' +
+        f'SCENARIO--{scen}/' +
+        f'ENSEMBLE-MEMBER--{ens}/' +
+        f'VARIABLES--{reg_vars}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path)
+    plot_name = (
+        f'{plot_path}/' +
+        f'ERF_Timeseries_Scenario--{scen}_' +
         f'ENSEMBLE-MEMBER--{ens}_' +
         f'VARIABLES--{reg_vars}.png')
     fig.savefig(plot_name)
@@ -2054,6 +2141,7 @@ def figure_delta_contributions(
 def overarching_base_result_plotter(
     results_dfs,
     obs_dfs,
+    erf_dfs,
     priors_dfs
 ):
     """Plot figures of base results."""
@@ -2112,8 +2200,13 @@ def overarching_base_result_plotter(
                 # 3. Plot Priors Timeseries
                 print('        Plotting figure_timeseries for PRIORS')
                 figure_priors_timeseries(
-                    scen, ens, reg_vars, priors_dfs, obs_dfs,
-                    params)
+                    scen, ens, reg_vars, priors_dfs, obs_dfs,  params)
+
+                ###############################################################
+                # 3b. Plot ERF Timeseries
+                print('        Plotting figure_timeseries for ERF')
+                figure_erf_timeseries(
+                    scen, ens, reg_vars, erf_dfs, params)
 
                 ###############################################################
                 # 4. Plot SPM2 Bar Plot
@@ -2245,9 +2338,9 @@ if __name__ == '__main__':
         calculate_iteration_averages()
 
     # 2. Load results (gwi, priors, obs) into dataframes
-    results_dfs, priors_dfs, obs_dfs = load_gwi_priors_obs()
+    results_dfs, priors_dfs, erf_dfs, obs_dfs = load_gwi_priors_erf_obs()
 
-    # 3. Generate historical-only timeseries
+    # 3. Generate historical-only timeseries and save to CSVs.
     if re_calculate:
         calculate_historical_only(results_dfs)
 
@@ -2256,7 +2349,7 @@ if __name__ == '__main__':
 
     # 5. Plot the basic results
     overarching_base_result_plotter(
-        results_dfs, obs_dfs, priors_dfs)
+        results_dfs, obs_dfs, erf_dfs, priors_dfs)
 
     # 6. Plot the historical-only results
     overarching_historical_only_plotter(

@@ -353,7 +353,8 @@ def plot_internal_variability_sample(
 
 def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                    plot_vars, plot_cols, sigmas='all', labels=True,
-                   hatch=None, linestyle='solid', plume_vars=None):
+                   hatch=None, linestyle='solid', plume_vars=None,
+                   ylabel=None):
     """Plot the GWI timeseries for the given variables."""
 
     if df_Results_ts is not None:
@@ -364,9 +365,9 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
     if plume_vars is None:
         plume_vars = plot_vars
 
-    ax.set_ylabel(
-        'Attributable change in surface temperature since 1850\N{EN DASH}1900 (°C)'
-        )
+    if ylabel is None:
+        ylabel = 'Attributable change in surface temperature since 1850\N{EN DASH}1900 (°C)'
+    ax.set_ylabel(ylabel)
     fill_alpha = 0.25
     line_alpha = 0.7
     if sigmas == 'all':

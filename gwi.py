@@ -728,7 +728,7 @@ if __name__ == "__main__":
     else:
         # Default: use all ensemble members for all sources.
         ensemble_members = {'GMT': 'all', 'ERF': 'all'}
-    
+
     # Currently this gives a dict of the form:
     # {'GMT': 'GMTmems', 'ERF': 'ERFmems'}
     # Turn that into a string of this form": ""ERF-ERFmems_GMT-GMTmems"
@@ -744,6 +744,10 @@ if __name__ == "__main__":
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
     output_path_priors = (
+        f'SCENARIO--{scenario_out}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
+    )
+    output_path_erfs = (
         f'SCENARIO--{scenario_out}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
@@ -763,6 +767,9 @@ if __name__ == "__main__":
     results_folder_priors = 'results/priors/'
     if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
         os.makedirs(f'{results_folder_priors}{output_path_priors}')
+    results_folder_erfs = 'results/erfs/'
+    if not os.path.exists(f'{results_folder_erfs}{output_path_erfs}'):
+        os.makedirs(f'{results_folder_erfs}{output_path_erfs}')
     results_folder_obs = 'results/observations/'
     if not os.path.exists(f'{results_folder_obs}{out_path_obs}'):
         os.makedirs(f'{results_folder_obs}{out_path_obs}')
@@ -1147,6 +1154,13 @@ if __name__ == "__main__":
         f'SCENARIO--{scenario_out}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
+    full_erf_size = (
+        len(df_forc.columns.get_level_values("ensemble").unique())
+    )
+    variation_erfs = (
+        f'SCENARIO--{scenario_out}_' +
+        f'ENSEMBLE-SIZE--{full_erf_size}_'
+    )
     full_obs_size = (df_temp_Obs.shape[1])
     variation_obs = (
         f'SCENARIO--{scenario}_' +
@@ -1199,6 +1213,31 @@ if __name__ == "__main__":
     # duplication of identical datasets.
     df_Results_priors.to_csv(priors_filename)
 
+    print('Calculating percentiles for ERF', end=' ')
+    erf_vars = sorted(
+        df_forc_priors.columns.get_level_values('variable').unique())
+    # Calculate percentiles for each variable and stack into a 3D array
+    # (n_sigmas, years, n_vars), to keep consistent with GWI and Priors logic.
+    erf_timeseries_array = np.stack([
+        np.percentile(df_forc_priors[v].to_numpy(), sigmas_all, axis=1)
+        for v in erf_vars
+    ], axis=2)
+    dict_Results_ERF = {
+        (var, sigma):
+        erf_timeseries_array[sigmas_all.index(sigma), :, erf_vars.index(var)]
+        for var in erf_vars for sigma in sigmas_all
+    }
+    df_Results_ERF = pd.DataFrame(
+        dict_Results_ERF, index=df_forc_priors.index.to_numpy())
+    df_Results_ERF.columns.names = ['variable', 'percentile']
+    df_Results_ERF.index.name = 'Year'
+
+    erf_filename = (
+        f'{results_folder_erfs}{output_path_erfs}' +
+        f'ERF_results_timeseries_{variation_erfs}.csv'
+    )
+    df_Results_ERF.to_csv(erf_filename)
+
     T3b = dt.datetime.now()
     print(f'... took {T3b - T3a}')
 
@@ -1220,7 +1259,7 @@ if __name__ == "__main__":
     if 'annual' in headline_toggles:
         T1 = dt.datetime.now()
         # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
-        print('Reading annual mean definition temps', end=' ')
+        print('↳ Reading annual mean definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
@@ -1236,7 +1275,7 @@ if __name__ == "__main__":
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # Calculate the linear trend of the final 15 years of the timeseries
         # and use this to calculate the present-day warming
-        print('Calculating SR15-definition temps', end=' ')
+        print('↳ Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
@@ -1245,7 +1284,7 @@ if __name__ == "__main__":
         for year in hl_years_annual:
             if ((year not in trunc_Yrs) and (year-15 not in trunc_Yrs)):
                 raise ValueError(
-                    f'SR15 definition requires the years {year} and {year-15} '
+                    f'↳ SR15 definition requires the years {year} and {year-15} '
                     'to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
@@ -1285,15 +1324,15 @@ if __name__ == "__main__":
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
-        # AR6 DEFINITION (DECADE MEAN) ########################################
     if 'AR6' in headline_toggles:
         T1 = dt.datetime.now()
+        # AR6 DEFINITION (DECADE MEAN) ########################################
         hl_years_decadal = [y for y in hl_years
                             if ((y in trunc_Yrs) and (y-9 in trunc_Yrs))]
         if ((headline_years == 'IGCC') and (2019 not in hl_years_decadal)):
             hl_years_decadal.append(2019)
 
-        print('Calculating AR6-definition temps', end=' ')
+        print('↳ Calculating AR6-definition temps', end=' ')
         # if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
         #     # The final condition is to avoid duplicate calculations when
         #     # the end_regress is 2019.
@@ -1304,7 +1343,7 @@ if __name__ == "__main__":
         for year in hl_years_decadal:
             if ((year not in trunc_Yrs) and (year-9 not in trunc_Yrs)):
                 raise ValueError(
-                    f'AR6 definition requires the years {year-9} and '
+                    f'↳ AR6 definition requires the years {year-9} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
             recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
@@ -1343,12 +1382,12 @@ if __name__ == "__main__":
                 # error, so that we can still produce the headlines csv without
                 # the CGWL definition.
                 print(
-                    f'CGWL definition requires the years {year-9} and '
+                    f'↳ CGWL definition requires the years {year-9} and '
                     f'{year+10} to be in the truncation years: '
-                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
+                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})', end=' ')
 
             else:
-                print('Calculating CGWL-definition temps', end=' ')
+                print('↳ Calculating CGWL-definition temps', end=' ')
 
                 recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
                 temp_Att_Results_CGWL = \
@@ -1369,7 +1408,6 @@ if __name__ == "__main__":
                 df_headlines_i.index.name = 'Year'
                 dfs.append(df_headlines_i)
 
-
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
@@ -1384,7 +1422,7 @@ if __name__ == "__main__":
         dfs_obs = []
 
         if 'annual' in headline_toggles:
-            print('Reading annual mean definition temps (Obs)', end=' ')
+            print('↳ Reading annual mean definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
                                if y in df_temp_Obs.index]
@@ -1411,7 +1449,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'SR1.5' in headline_toggles:
-            print('Calculating SR15-definition temps (Obs)', end=' ')
+            print('↳ Calculating SR15-definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
                                if y in df_temp_Obs.index]
@@ -1445,7 +1483,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'AR6' in headline_toggles:
-            print('Calculating AR6-definition temps (Obs)', end=' ')
+            print('↳ Calculating AR6-definition temps (Obs)', end=' ')
 
             hl_years_decadal = [y for y in hl_years
                                 if ((y in df_temp_Obs.index) and
@@ -1454,6 +1492,7 @@ if __name__ == "__main__":
                 (2019 not in hl_years_decadal) and
                 (2019 in df_temp_Obs.index) and
                 (2010 in df_temp_Obs.index)):
+
                 hl_years_decadal.append(2019)
 
             for year in hl_years_decadal:
@@ -1475,7 +1514,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'CGWL' in headline_toggles:
-            print('Calculating CGWL-definition temps (Obs)', end=' ')
+            print('↳ Calculating CGWL-definition temps (Obs)', end=' ')
 
             for year in hl_years:
                 if ((year-9 in df_temp_Obs.index) and (year+10 in df_temp_Obs.index)):
@@ -1506,7 +1545,7 @@ if __name__ == "__main__":
         T7 = dt.datetime.now()
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
-            print(f'Calculating AR6-definition warming rate: {year}', end='\r')
+            print(f'↳ Calculating AR6-definition warming rate: {year}', end='\r')
             recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             ten_slice = temp_Att_Results[recent_years, :, :]
 
