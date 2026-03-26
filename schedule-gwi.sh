@@ -13,13 +13,13 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # END_REGRESS=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-END_REGRESS=`seq 2020 2024`
+END_REGRESS=`seq 2025 2025`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-SUBSAMPLE_ITERATIONS=(20)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # e.g. 1850-1900
@@ -46,11 +46,12 @@ INCLUDE_SUB_VARS=y
 # e.g. SMILE_ESM-SSP126
 # e.g. observed-2023
 # e.g. observed-2024
+# e.g. observed-2025
 # e.g. observed-SSP119
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
 # e.g. observed_JK-2024-SSP245
-SCENARIO=observed-2024
+SCENARIO=observed-2025
 
 # Select whether to consider committed warming at constant ERF.
 # This amends/extends the scenario to hold ERF constant from a start year
@@ -63,9 +64,10 @@ SCENARIO=observed-2024
 COMMITTED=n
 
 # Select truncation range
-TRUNCATION=1850-2024
+TRUNCATION=1850-2025
 
 # Select whether to include the rate of change in the regression
+#TODO: Specify which years to include rate of change for.
 # e.g. y
 # e.g. n
 INCLUDE_RATE=n
@@ -73,7 +75,7 @@ INCLUDE_RATE=n
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n
-HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
+HEADLINE_TOGGLES='annual,AR6,SR1.5'
 
 # Select which years for the headlines to cover.
 # If HEADLINES_TOGGLE is set to 'n' then this will be ignored.
@@ -84,7 +86,7 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 # e.g. '2023,2024,2025' for multiple separate years.
 # e.g. 'end_regress,2050,2100,2300' to combine end_regress and manual years
 # e.g. $(seq -s, 1950 2024) will create a comma-separated list of years
-HEADLINE_YEARS='end_regress'
+HEADLINE_YEARS='IGCC'
 
 
 # Select which ensemble members use from the scenario ERF/GMT files
@@ -107,14 +109,14 @@ SPECIFY_ENSEMBLE_MEMBERS=all
 # e.g. 'ERF,GMT'  # (Apply above selection to both ERF and GMT; in this case,
 # the same ensemble members will be paired for both sources;
 # i.e. ensemble member 0 for ERF is paired with ensemble member 0 for GMT)
-SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT'
+SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
 
 
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-WALLTIME=2:00:00
-PARTITION=Short
+WALLTIME=12:00:00
+PARTITION=Long
 SIM_NAME=gwi
 SIM_CPUS=28
 SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
@@ -143,7 +145,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem-per-cpu=8192
+#SBATCH --mem=240000
 #SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it

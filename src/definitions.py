@@ -506,10 +506,21 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     """Load HadCRUT5 observations and remove PI baseline."""
 
     here = Path(__file__).parent
-    temp_ens_Path = (
-        f'../data/{scenario}/Temp/HadCRUT/' +
-        'HadCRUT.5.0.2.0.analysis.ensemble_series.global.annual.csv')
-    temp_ens_Path = here / temp_ens_Path
+    temp_dir = here / f'../data/{scenario}/Temp/HadCRUT/'
+    matches = sorted(
+        temp_dir.glob('HadCRUT.*.analysis.ensemble_series.global.annual.csv')
+    )
+    if not matches:
+        raise FileNotFoundError(
+            f'No HadCRUT file found in {temp_dir} matching pattern '
+            "'HadCRUT.*.analysis.ensemble_series.global.annual.csv'."
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f'Multiple HadCRUT files found in {temp_dir}; expected one match: '
+            f'{[m.name for m in matches]}'
+        )
+    temp_ens_Path = matches[0]
     # read temp_Path into pandas dataframe, rename column 'Time' to 'Year'
     # and set the index to 'Year', keeping only columns with 'Realization' in
     # the column name, since these are the ensembles

@@ -156,7 +156,7 @@ The following parameters in `schedule-gwi.sh` control the analysis:
 - `'IGCC'` for latest year, 2017 repeat, and 2010-2019 repeat (for IPCC validation)
 - `'2024'` = specific single year
 - `'2023,2024,2025'` = multiple specific years
-- 'end_regress,2050,2100,2300' to combine end_regress and manual years
+- `'end_regress,2050,2100,2300'` to combine end_regress and manual years
 - `$(seq -s, 1950 2024)` = all years in a range (expensive)
 
 
