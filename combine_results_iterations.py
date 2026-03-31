@@ -2256,6 +2256,10 @@ def overarching_historical_only_plotter(
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED-VARIABLES:', reg_vars)
 
+                if 'HISTORICAL-ONLY' not in results_dfs[scen][ens][reg_vars]:
+                    print('      No historical-only datasets available; skipping historical-only plotting.')
+                    continue
+
                 plot_path = f'{PLOT_FOLDER}aggregated/' + \
                     f'SCENARIO--{scen}/' + \
                     f'ENSEMBLE-MEMBER--{ens}/' + \
@@ -2340,16 +2344,16 @@ if __name__ == '__main__':
     # 2. Load results (gwi, priors, obs) into dataframes
     results_dfs, priors_dfs, erf_dfs, obs_dfs = load_gwi_priors_erf_obs()
 
-    # 3. Generate historical-only timeseries and save to CSVs.
+    # 3. Plot the basic results
+    overarching_base_result_plotter(
+        results_dfs, obs_dfs, erf_dfs, priors_dfs)
+
+    # 4. Generate historical-only timeseries and save to CSVs.
     if re_calculate:
         calculate_historical_only(results_dfs)
 
-    # 4. Load the historical-only data into dataframes
+    # 5. Load the historical-only data into dataframes
     results_dfs = load_historical_only_dfs(results_dfs)
-
-    # 5. Plot the basic results
-    overarching_base_result_plotter(
-        results_dfs, obs_dfs, erf_dfs, priors_dfs)
 
     # 6. Plot the historical-only results
     overarching_historical_only_plotter(
