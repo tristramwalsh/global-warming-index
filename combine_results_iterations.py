@@ -630,6 +630,32 @@ def load_historical_only_dfs(results_dfs):
     return results_dfs
 
 
+def is_dataset_present(data_dict, required_keys):
+    """
+    Check if the required datasets are present in the provided dictionary
+    and are not None.
+    
+    Parameters:
+    -----------
+    data_dict : dict
+        Dictionary containing datasets, typically results_dfs[scen][ens][reg_vars][reg_range]
+    required_keys : list or str
+        List of keys (or single key) that must be present and not None.
+        
+    Returns:
+    --------
+    bool
+        True if all required datasets are present and not None, False otherwise.
+    """
+    if isinstance(required_keys, str):
+        required_keys = [required_keys]
+        
+    for key in required_keys:
+        if key not in data_dict or data_dict[key] is None:
+            return False
+    return True
+
+
 def figure_timeseries(reg_range, scen, ens, reg_vars,
                       results_dfs, df_temp_Obs, params
                       ):
@@ -725,7 +751,7 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
                  f'Timeseries_Scenario--{scen}_' +
@@ -742,9 +768,6 @@ def figure_rates(reg_range, scen, ens, reg_vars,
                  results_dfs, df_temp_Obs, params
                  ):
     """Plot single rates plots."""
-    if 'rates' not in results_dfs[scen][ens][reg_vars][reg_range]:
-        return None
-    
     # Get all variables present in the data
     df_ts = results_dfs[scen][ens][reg_vars][reg_range]['rates']
     all_data_vars = df_ts.columns.get_level_values(0).unique().to_list()
@@ -839,7 +862,7 @@ def figure_rates(reg_range, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
                  f'Rates_Scenario--{scen}_' +
@@ -857,16 +880,13 @@ def figure_spm2(
         params):
     """Plot single SPM2 bar plot."""
 
-    # Check if headlines exist for this range
-    if 'headlines' not in results_dfs[scen][ens][reg_vars][reg_range]:
-        print(f'            No headlines found for {reg_range}, skipping.')
-        return
-
+    # Get headlines
     df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
 
     # Get observations headlines
-    if 'headlines' in obs_dfs[scen][ens][reg_range]:
-        df_obs_headlines = obs_dfs[scen][ens][reg_range]['headlines']
+    obs_dict = obs_dfs[scen][ens][reg_range]
+    if is_dataset_present(obs_dict, 'headlines'):
+        df_obs_headlines = obs_dict['headlines']
     else:
         df_obs_headlines = None
 
@@ -1016,7 +1036,7 @@ def figure_spm2(
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
                  f'SPM2_BarPlot_Scenario--{scen}_' +
@@ -1035,7 +1055,12 @@ def figure_waterfall(
 
     # Get headlines
     df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
-    df_obs_headlines = obs_dfs[scen][ens][reg_range]['headlines']
+    
+    obs_dict = obs_dfs[scen][ens][reg_range]
+    if is_dataset_present(obs_dict, 'headlines'):
+        df_obs_headlines = obs_dict['headlines']
+    else:
+        df_obs_headlines = None
 
     # Determine period (last year)
     years = [idx for idx in df_headlines.index if str(idx).isdigit()]
@@ -1319,7 +1344,7 @@ def figure_waterfall(
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
                  f'Waterfall_BarPlot_Scenario--{scen}_' +
@@ -1398,7 +1423,7 @@ def figure_priors_timeseries(
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
     plot_name = (
         f'{plot_path}/' +
         f'Prior_Timeseries_Scenario--{scen}_' +
@@ -1476,7 +1501,7 @@ def figure_erf_timeseries(
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
     if not os.path.exists(plot_path):
-        os.makedirs(plot_path)
+        os.makedirs(plot_path, exist_ok=True)
     plot_name = (
         f'{plot_path}/' +
         f'ERF_Timeseries_Scenario--{scen}_' +
@@ -2302,32 +2327,40 @@ def overarching_base_result_plotter(
                 single_toggle = toggle_single_timeseries(ens, 10)
 
                 if single_toggle:
-                    with mp.Pool(os.cpu_count()) as p:
-                        print('        Plotting figure_timeseries for GWI')
-                        # print('  in parallel for:', reg_ranges_all)
-                        plot_names = p.map(
-                            functools.partial(
-                                figure_timeseries,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                results_dfs=results_dfs,
-                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                params=params
-                                ),
-                            reg_ranges_all
-                        )
+                    valid_ranges_ts = [
+                        r for r in reg_ranges_all
+                        if is_dataset_present(
+                            results_dfs[scen][ens][reg_vars][r], 'timeseries')
+                        ]
+                    if valid_ranges_ts:
+                        with mp.Pool(os.cpu_count()) as p:
+                            print('        Plotting figure_timeseries for GWI')
+                            # print('  in parallel for:', valid_ranges_ts)
+                            plot_names = p.map(
+                                functools.partial(
+                                    figure_timeseries,
+                                    scen=scen, ens=ens, reg_vars=reg_vars,
+                                    results_dfs=results_dfs,
+                                    df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                                    params=params
+                                    ),
+                                valid_ranges_ts
+                            )
 
-                    with mp.Pool(os.cpu_count()) as p:
-                        print('        Plotting figure_rates for GWI')
-                        p.map(
-                            functools.partial(
-                                figure_rates,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                results_dfs=results_dfs,
-                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                params=params
-                                ),
-                            reg_ranges_all
-                        )
+                    valid_ranges_rates = [r for r in reg_ranges_all if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
+                    if valid_ranges_rates:
+                        with mp.Pool(os.cpu_count()) as p:
+                            print('        Plotting figure_rates for GWI')
+                            p.map(
+                                functools.partial(
+                                    figure_rates,
+                                    scen=scen, ens=ens, reg_vars=reg_vars,
+                                    results_dfs=results_dfs,
+                                    df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                                    params=params
+                                    ),
+                                valid_ranges_rates
+                            )
 
                     ###########################################################
                     # 2. Create GIF of Timeseries Plots
@@ -2336,9 +2369,9 @@ def overarching_base_result_plotter(
                     # ensembles (e.g. where we have an entirely different
                     # set of results for a different ensemble member).
                     gif_toggle = True
-                    if gif_toggle:
+                    if gif_toggle and valid_ranges_ts:
                         figure_gif_animation(
-                            plot_names, scen, ens, reg_vars, reg_ranges_all)
+                            plot_names, scen, ens, reg_vars, valid_ranges_ts)
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
@@ -2354,33 +2387,40 @@ def overarching_base_result_plotter(
 
                 ###############################################################
                 # 4. Plot SPM2 Bar Plot
-                print('        Plotting SPM2 for GWI in parallel')
-                with mp.Pool(os.cpu_count()) as p:
-                    p.map(
-                        functools.partial(
-                            figure_spm2,
-                            scen=scen, ens=ens, reg_vars=reg_vars,
-                            results_dfs=results_dfs,
-                            obs_dfs=obs_dfs,
-                            params=params
-                        ),
-                        reg_ranges_all
-                    )
+                valid_ranges_headlines = [
+                    r for r in reg_ranges_all
+                    if is_dataset_present(
+                        results_dfs[scen][ens][reg_vars][r], 'headlines')
+                    ]
+                if valid_ranges_headlines:
+                    print('        Plotting SPM2 for GWI in parallel')
+                    with mp.Pool(os.cpu_count()) as p:
+                        p.map(
+                            functools.partial(
+                                figure_spm2,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                results_dfs=results_dfs,
+                                obs_dfs=obs_dfs,
+                                params=params
+                            ),
+                            valid_ranges_headlines
+                        )
 
                 ###############################################################
                 # 5. Plot Waterfall Plot
-                print('        Plotting Waterfall for GWI in parallel')
-                with mp.Pool(os.cpu_count()) as p:
-                    p.map(
-                        functools.partial(
-                            figure_waterfall,
-                            scen=scen, ens=ens, reg_vars=reg_vars,
-                            results_dfs=results_dfs,
-                            obs_dfs=obs_dfs,
-                            params=params
-                        ),
-                        reg_ranges_all
-                    )
+                if valid_ranges_headlines:
+                    print('        Plotting Waterfall for GWI in parallel')
+                    with mp.Pool(os.cpu_count()) as p:
+                        p.map(
+                            functools.partial(
+                                figure_waterfall,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                results_dfs=results_dfs,
+                                obs_dfs=obs_dfs,
+                                params=params
+                            ),
+                            valid_ranges_headlines
+                        )
 
 
 def overarching_historical_only_plotter(
@@ -2400,7 +2440,7 @@ def overarching_historical_only_plotter(
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED-VARIABLES:', reg_vars)
 
-                if 'HISTORICAL-ONLY' not in results_dfs[scen][ens][reg_vars]:
+                if not is_dataset_present(results_dfs[scen][ens][reg_vars], 'HISTORICAL-ONLY'):
                     print('      No historical-only datasets available; skipping historical-only plotting.')
                     continue
 
@@ -2409,7 +2449,7 @@ def overarching_historical_only_plotter(
                     f'ENSEMBLE-MEMBER--{ens}/' + \
                     f'VARIABLES--{reg_vars}/'
                 if not os.path.exists(plot_path):
-                    os.makedirs(plot_path)
+                    os.makedirs(plot_path, exist_ok=True)
 
                 params = setup_plot_params(
                     scen, ens, reg_vars, results_dfs)
