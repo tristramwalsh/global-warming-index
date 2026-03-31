@@ -777,19 +777,24 @@ if __name__ == "__main__":
     # Create a folder to store the plots
     results_folder = 'results/iterations/'
     if not os.path.exists(f'{results_folder}{output_path}'):
-        os.makedirs(f'{results_folder}{output_path}')
+        os.makedirs(f'{results_folder}{output_path}',
+        exist_ok=True)
     plot_folder = 'plots/iterations/'
     if not os.path.exists(f'{plot_folder}{output_path}'):
-        os.makedirs(f'{plot_folder}{output_path}')
+        os.makedirs(f'{plot_folder}{output_path}',
+        exist_ok=True)
     results_folder_priors = 'results/priors/'
     if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
-        os.makedirs(f'{results_folder_priors}{output_path_priors}')
+        os.makedirs(f'{results_folder_priors}{output_path_priors}',
+        exist_ok=True)
     results_folder_erfs = 'results/erfs/'
     if not os.path.exists(f'{results_folder_erfs}{output_path_erfs}'):
-        os.makedirs(f'{results_folder_erfs}{output_path_erfs}')
+        os.makedirs(f'{results_folder_erfs}{output_path_erfs}',
+        exist_ok=True)
     results_folder_obs = 'results/observations/'
     if not os.path.exists(f'{results_folder_obs}{out_path_obs}'):
-        os.makedirs(f'{results_folder_obs}{out_path_obs}')
+        os.makedirs(f'{results_folder_obs}{out_path_obs}',
+        exist_ok=True)
 
     ###########################################################################
     # READ IN THE DATA ########################################################
