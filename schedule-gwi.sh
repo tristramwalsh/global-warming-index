@@ -19,12 +19,20 @@ END_REGRESS=`seq 2025 2025`
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(60 60 60 60 60)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
+# The selected period offset applies to FaIR outputs, GMT Observations,
+# and piControl internal variability.
+# Note that 'n' can be used to disable this preprocessing offset.
 # e.g. 1850-1900
 # e.g. 1981-2010
 PREINDUSTRIAL_ERA=1850-1900
+
+# Select whether to include a constant term offset in the multi-variable regression
+# e.g. y (include the constant)
+# e.g. n (do not include the constant term)
+INCLUDE_REG_CONST=n
 
 # Select which variables to regress on.
 # e.g. GHG,OHF,Nat
@@ -70,7 +78,7 @@ TRUNCATION=1850-2025
 #TODO: Specify which years to include rate of change for.
 # e.g. y
 # e.g. n
-INCLUDE_RATE=n
+INCLUDE_RATE=y
 
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
@@ -115,11 +123,19 @@ SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-WALLTIME=12:00:00
-PARTITION=Long
-SIM_NAME=gwi
+if hostname | grep -q "htc"; then  # ARC cluster
+  PARTITION=medium
+elif hostname | grep -q "ouce"; then  # OUCE cluster
+  PARTITION=Medium
+else
+  echo "Unknown cluster. Please set the partition variable manually."
+  exit 1
+fi
+PARTITION=${PARTITION}
+WALLTIME=48:00:00
 SIM_CPUS=28
-SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
+SIM_NAME=gwi
+SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-${END_REGRESS}
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
 
@@ -145,7 +161,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem=240000
+#SBATCH --mem-per-cpu=10000
 #SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it
@@ -154,20 +170,14 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 ## Declare an output log for all jobs to use:
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${SCENARIO}_${VARS}_${START_REGRESS}-${i}_${j}_${count}.out
 
-# For the ARC cluster
-# module load Mamba
-# module load Miniconda3
-# conda activate gwi-new
-# micromamba activate gwi-mamba
-
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
   # Regress against all reference temperatures at the same time
-  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS}
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
     # Regress against each reference temperature separately
-    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS}
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS}
   done
 fi
 

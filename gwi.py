@@ -488,12 +488,6 @@ def GWI_faster(
 
 if __name__ == "__main__":
 
-    # Request whether to include pre-industrial offset and constant term in
-    # regression. Following discussion with Myles, fix the regression options
-    # as the following (there is no user selection any more):
-    inc_pi_offset = True
-    inc_reg_const = True
-
     # Percentiles to calculate and use throughout analysis.
     # sigmas = [[32, 68], [5, 95], [0.3, 99.7]]
     # These are the percentile ranges used in the IPCC likelihood statements:
@@ -539,11 +533,34 @@ if __name__ == "__main__":
 
     # Define pre-industrial period for temperature offset.
     # The average of this period is used as the offset, as standard in IPCC.
+    # This offset is applied to:
+    # 1. Modelled output temperatures from FaIR
+    # 2. Observed/Reference GMT dataset (df_temp_Obs)
+    # 3. piControl internal variability slices (df_temp_PiC)
     if '--preindustrial-era' in argv_dict:
-        start_pi = int(argv_dict['--preindustrial-era'].split('-')[0])
-        end_pi = int(argv_dict['--preindustrial-era'].split('-')[1])
+        if argv_dict['--preindustrial-era'].lower() in ['n', 'none', 'false']:
+            inc_pi_offset = False
+            start_pi, end_pi = None, None
+        else:
+            inc_pi_offset = True
+            start_pi = int(argv_dict['--preindustrial-era'].split('-')[0])
+            end_pi = int(argv_dict['--preindustrial-era'].split('-')[1])
     else:
-        start_pi, end_pi = 1850, 1900  # As in IPCC AR6 Ch.3
+        # Defaults to the standard in IPCC AR6 Ch.3
+        inc_pi_offset = True
+        start_pi, end_pi = 1850, 1900  
+
+    # Determine whether to include a constant term in the regression.
+    if '--include-reg-const' in argv_dict:
+        inc_reg_const = argv_dict['--include-reg-const']
+        inc_reg_const = True if inc_reg_const.lower() in ['y', 'yes', 'true'] else False
+    else:
+        inc_reg_const = True
+
+    if not inc_pi_offset and not inc_reg_const:
+        print("\nWARNING: Both preindustrial offset and regression constant are "
+              "disabled. Without these centring factors, you may observe "
+              "unexpected behaviours in the regression attribution.\n")
 
     # Define the regression year range for the temperature attribution.
     # This is the range over which the regression coefficients are calculated.

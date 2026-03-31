@@ -94,9 +94,18 @@ The following parameters in `schedule-gwi.sh` control the analysis:
     - e.g. `(30 60 90)` runs 3 repeat iterations with 30, 60, and 90 samples respectively
 
 
-**`PREINDUSTRIAL_ERA`**: Pre-industrial baseline period (e.g., `1850-1900`)
+**`PREINDUSTRIAL_ERA`**: Pre-industrial baseline period
 - Used to define the baseline pre-industrial proxy for temperatures to be produced relative to.
+- Examples:
+    - `1850-1900` (default) = 1850-1900 average as pre-industrial baseline
+    - `1981-2010` = 1981-2010 average as pre-industrial baseline
+    - `n` = no pre-industrial offset applied (temperatures are left in their default state, which may be relative to a different baseline depending on the dataset)
 
+**`INCLUDE_REG_CONST`**: Toggle regression constant (`y` or `n`)
+- Specifies whether to include a constant term offset within the multi-variable regression. Typically left as `y`.
+- Examples:
+    - `y` = include the constant term in the regression (default)
+    - `n` = do not include the constant term in the regression
 
 **`VARS`**: Variables to regress on (comma-separated, no spaces)
 - `GHG,OHF,Nat` = 3-way regression (greenhouse gases, other human forcings, natural)

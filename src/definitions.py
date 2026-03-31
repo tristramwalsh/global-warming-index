@@ -623,6 +623,10 @@ def load_Temp_NorESM(scenario, start_pi, end_pi):
 
 def preindustrial_baseline(df_temp, start_pi, end_pi):
     """Remove PI baseline from temperature data."""
+    # Check if offsets are explicitly bypassed.
+    if start_pi is None or end_pi is None:
+        return df_temp
+        
     # Check that start_pi and end_pi are within the range of the data
 
     if ((start_pi in df_temp.index) and (end_pi in df_temp.index)):
@@ -689,7 +693,8 @@ def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
         for s in range(segments):
             # print(s*(n_yrs//2), s*(n_yrs//2)+n_yrs)
             temp_s = temp[s*(n_yrs//2):s*(n_yrs//2)+n_yrs]
-            temp_s = temp_s - temp_s[:(end_pi-start_pi)].mean()
+            if start_pi is not None and end_pi is not None:
+                temp_s = temp_s - temp_s[:(end_pi-start_pi)].mean()
             dict_temp[
                 f'{model_name}_slice-{s*(n_yrs//2)}:{s*(n_yrs//2)+n_yrs}'
                 ] = temp_s
