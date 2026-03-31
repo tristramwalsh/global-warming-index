@@ -72,8 +72,24 @@ def check_headlines_files(scenario, ensemble_selection,
     return False
 
 
+def check_rates_files(scenario, ensemble_selection,
+                      regressed_vars, regressed_years_vars):
+    """Check if any rates files exist for the given configuration."""
+    for reg_year in regressed_years_vars:
+        path = (f'{ITERATIONS_FOLDER}/'
+                f'SCENARIO--{scenario}/'
+                f'ENSEMBLE-MEMBER--{ensemble_selection}/'
+                f'VARIABLES--{regressed_vars}/'
+                f'REGRESSED-YEARS--{reg_year}/')
+        if os.path.exists(path):
+            for f in os.listdir(path):
+                if 'rates' in f:
+                    return True
+    return False
+
+
 def calculate_iteration_averages():
-    """Average the timeseries and headlines iterations."""
+    """Average the timeseries, headlines, and rates iterations."""
 
     scenarios_all = get_subdirs(ITERATIONS_FOLDER, 'SCENARIO--')
     print(scenarios_all)
@@ -113,22 +129,26 @@ def calculate_iteration_averages():
                     scenario, ensemble_selection,
                     regressed_vars, regressed_years_vars)
 
+                # Check if rates are available
+                rate_toggle = check_rates_files(
+                    scenario, ensemble_selection,
+                    regressed_vars, regressed_years_vars)
+
+                result_types_to_process = ['timeseries']
+                if headline_toggle:
+                    result_types_to_process.append('headlines')
+                if rate_toggle:
+                    result_types_to_process.append('rates')
+
                 with mp.Pool(os.cpu_count()) as p:
                     print('        Calculating (parallel regressed_years) ',
                           'for:',
                           scenario, ensemble_selection, regressed_vars)
-                    p.map(
-                        functools.partial(
-                            combine_repeats,
-                            result_type='timeseries', scenario=scenario,
-                            ensemble_selection=ensemble_selection,
-                            regressed_vars=regressed_vars),
-                        regressed_years_vars)
-                    if headline_toggle:
+                    for res_type in result_types_to_process:
                         p.map(
                             functools.partial(
                                 combine_repeats,
-                                result_type='headlines', scenario=scenario,
+                                result_type=res_type, scenario=scenario,
                                 ensemble_selection=ensemble_selection,
                                 regressed_vars=regressed_vars),
                             regressed_years_vars)
@@ -141,7 +161,7 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
 
     Args:
         regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines').
+        result_type: The type of result (e.g., 'timeseries', 'headlines', 'rates').
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.
@@ -299,7 +319,7 @@ def load_gwi_priors_erf_obs():
                                 f'REGRESSED-YEARS--{regressed_years}_' +
                                 'AVERAGE.csv'
                             )
-                        for res_type in ['timeseries', 'headlines']
+                        for res_type in ['timeseries', 'headlines', 'rates']
                     }
                     results_files[scenario
                                   ][ensemble_selection
@@ -713,6 +733,119 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
     # plot_names.append(plot_name)
+    fig.savefig(plot_name)
+    plt.close(fig)
+    return plot_name
+
+
+def figure_rates(reg_range, scen, ens, reg_vars,
+                 results_dfs, df_temp_Obs, params
+                 ):
+    """Plot single rates plots."""
+    if 'rates' not in results_dfs[scen][ens][reg_vars][reg_range]:
+        return None
+    
+    # Get all variables present in the data
+    df_ts = results_dfs[scen][ens][reg_vars][reg_range]['rates']
+    all_data_vars = df_ts.columns.get_level_values(0).unique().to_list()
+
+    # Transform the index of df_ts to numeric - it is currently of the form
+    # '1941-1950 (AR6 rate definition)' and we want that to be '1950' for
+    # plotting.
+    df_ts.index = df_ts.index.to_series().apply(
+        lambda x: int(x.split('-')[1].split()[0]) if '-' in x else int(x.split()[0])
+        )
+
+    # Define major variables (for plumes)
+    major_vars = reg_vars.split('-')
+    major_vars.extend(
+        [v for v in ['Tot', 'Ant', 'Nat', 'Res'] if v in all_data_vars]
+        )
+    plume_vars = major_vars
+
+    # Define linestyles for all variables
+    var_linestyles = gr.get_dynamic_linestyles(all_data_vars)
+
+    # Determine legend location
+    sub_vars = [v for v in all_data_vars if v not in plume_vars]
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0), rowspan=1, colspan=1)
+
+    reg_start = int(reg_range.split('-')[0])
+    reg_end = int(reg_range.split('-')[1])
+    trunc_start = df_ts.index.min()
+    trunc_end = df_ts.index.max()
+
+    if not df_ts.loc[reg_end:, :].empty:
+        gr.gwi_timeseries(
+            ax, None, None,
+            df_ts.loc[reg_end:, :],
+            all_data_vars, params['colours'], hatch='x', linestyle='dashed',
+            plume_vars=plume_vars, ylabel='Warming Rate')
+
+    gr.gwi_timeseries(
+        ax, None, None,
+        df_ts.loc[reg_start:reg_end, :],
+        all_data_vars, params['colours'], linestyle=var_linestyles,
+        plume_vars=plume_vars, ylabel='Warming Rate')
+
+    try:
+        if 'Res' in df_ts.columns.get_level_values(0):
+            df_for_ylim = df_ts.drop(columns='Res', level=0)
+        else:
+            df_for_ylim = df_ts
+        y_min = np.floor(np.nanmin(df_for_ylim.values) * 10) / 40
+        y_max = np.ceil(np.nanmax(df_for_ylim.values) * 10) / 20
+        ax.set_ylim(y_min, y_max)
+    except Exception:
+        pass
+
+    ax.set_xlim(trunc_start, trunc_end+1)
+
+    if sub_vars:
+        gr.overall_legend(fig, 'center right', 1,
+                          reorder=gr.get_legend_reorder_indices(fig))
+        plt.subplots_adjust(right=0.77)
+    else:
+        gr.overall_legend(fig, 'lower center', 7,
+                          reorder=gr.get_legend_reorder_indices(fig))
+
+    if int(trunc_end) != int(reg_end):
+        ax.axvline(int(reg_range.split('-')[1]),
+                   color='darkslategray', linestyle='--')
+
+    # Add title
+    fig.text(ax.get_position().x0, ax.get_position().y1+0.02,
+             'Global Warming Index Rates',
+             ha='left',
+             fontsize=plt.rcParams['axes.titlesize'],
+             fontweight='bold'
+             )
+
+    # Add configuration text
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars} | '
+                     f'Regressed range: {reg_range}')
+    if configuration:
+        fig.text(0.5, 0.01, configuration, ha='center',
+                 fontsize='x-small', fontfamily='monospace',
+                 )
+
+    plot_path = ('plots/aggregated/' +
+                 f'SCENARIO--{scen}/' +
+                 f'ENSEMBLE-MEMBER--{ens}/' +
+                 f'VARIABLES--{reg_vars}/' +
+                 f'REGRESSED-YEARS--{reg_range}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path)
+
+    plot_name = (f'{plot_path}/' +
+                 f'Rates_Scenario--{scen}_' +
+                 f'ENSEMBLE-MEMBER--{ens}_' +
+                 f'VARIABLES--{reg_vars}_' +
+                 f'REGRESSED-YEARS--{reg_range}.png')
     fig.savefig(plot_name)
     plt.close(fig)
     return plot_name
@@ -2174,9 +2307,20 @@ def overarching_base_result_plotter(
                         # print('  in parallel for:', reg_ranges_all)
                         plot_names = p.map(
                             functools.partial(
-                                # figure_timeseries,
-                                # scen=scen, ens=ens, reg_vars=reg_vars
                                 figure_timeseries,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                results_dfs=results_dfs,
+                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                                params=params
+                                ),
+                            reg_ranges_all
+                        )
+
+                    with mp.Pool(os.cpu_count()) as p:
+                        print('        Plotting figure_rates for GWI')
+                        p.map(
+                            functools.partial(
+                                figure_rates,
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 results_dfs=results_dfs,
                                 df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
