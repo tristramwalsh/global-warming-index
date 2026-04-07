@@ -890,161 +890,162 @@ def figure_spm2(
     else:
         df_obs_headlines = None
 
-    # Determine period (last year)
-    years = [idx for idx in df_headlines.index if str(idx).isdigit()]
-    if years:
-        period = years[-1]
-    else:
-        period = df_headlines.index[-1]
+    periods = list(df_headlines.index)
+    if not periods:
+        return
 
     # Determine variables for SPM2 panels 2 and 3.
     possible_vars_p2 = ['Tot', 'Ant', 'GHG', 'OHF', 'Nat', 'Res']
     vars_panel2 = [v for v in possible_vars_p2
                    if (v, '50') in df_headlines.columns]
+    for period in periods:
+        # Panel 3: Components
+        vars_panel3 = []
+        if defs.SUB_VAR_MAPPING:
+            for group in ['GHG', 'OHF', 'Nat']:
+                if group in defs.SUB_VAR_MAPPING:
+                    # Identify available variables in this group
+                    group_vars = [
+                        sub_var for sub_var in defs.SUB_VAR_MAPPING[group]
+                        if (sub_var, '50') in df_headlines.columns]
+                    # Sort by median value (largest to smallest)
+                    group_vars.sort(
+                        key=lambda v: df_headlines.loc[period, (v, '50')],
+                        reverse=True)
+                    vars_panel3.extend(group_vars)
 
-    # Panel 3: Components
-    vars_panel3 = []
-    if defs.SUB_VAR_MAPPING:
-        for group in ['GHG', 'OHF', 'Nat']:
-            if group in defs.SUB_VAR_MAPPING:
-                # Identify available variables in this group
-                group_vars = [
-                    sub_var for sub_var in defs.SUB_VAR_MAPPING[group]
-                    if (sub_var, '50') in df_headlines.columns]
-                # Sort by median value (largest to smallest)
-                group_vars.sort(
-                    key=lambda v: df_headlines.loc[period, (v, '50')],
-                    reverse=True)
-                vars_panel3.extend(group_vars)
+        # Calculate grid dimensions based on the number of variables in each
+        # panel in order to make the bars in each panel the same visual width.
+        # Panel 1 is fixed width of 3 for padding around observations.
+        x_width_1 = 3
+        x_width_2 = max(len(vars_panel2), 1)
+        spacer = 1
 
-    # Calculate grid dimensions based on the number of variables in each panel
-    # in order to make the bars in each panel the same visual width.
-    # Panel 1 is fixed width of 3 for padding around observations.
-    x_width_1 = 3
-    x_width_2 = max(len(vars_panel2), 1)
-    spacer = 1
+        if vars_panel3:
+            x_width_3 = max(len(vars_panel3), 1)
+            total_width = x_width_1 + spacer + x_width_2 + spacer + x_width_3
+        else:
+            x_width_3 = 0
+            total_width = x_width_1 + spacer + x_width_2
 
-    if vars_panel3:
-        x_width_3 = max(len(vars_panel3), 1)
-        total_width = x_width_1 + spacer + x_width_2 + spacer + x_width_3
-    else:
-        x_width_3 = 0
-        total_width = x_width_1 + spacer + x_width_2
+        # Create figure and axes
+        fig = plt.figure(figsize=(12, 10))
+        ax1 = plt.subplot2grid(
+            (1, total_width), (0, 0), colspan=x_width_1, fig=fig)
+        ax2 = plt.subplot2grid(
+            (1, total_width), (0, x_width_1 + spacer),
+            colspan=x_width_2, fig=fig)
+        axes = [ax1, ax2]
+        if vars_panel3:
+            ax3 = plt.subplot2grid(
+                (1, total_width), (0, x_width_1 + spacer + x_width_2 + spacer),
+                colspan=x_width_3, fig=fig)
+            axes.append(ax3)
 
-    # Create figure and axes
-    fig = plt.figure(figsize=(12, 10))
-    ax1 = plt.subplot2grid(
-        (1, total_width), (0, 0), colspan=x_width_1, fig=fig)
-    ax2 = plt.subplot2grid(
-        (1, total_width), (0, x_width_1 + spacer), colspan=x_width_2, fig=fig)
-    axes = [ax1, ax2]
-    if vars_panel3:
-        ax3 = plt.subplot2grid(
-            (1, total_width), (0, x_width_1 + spacer + x_width_2 + spacer),
-            colspan=x_width_3, fig=fig)
-        axes.append(ax3)
+        # Calculate dynamic ylim
+        vals_min = []
+        vals_max = []
+        for _df in [df_headlines, df_obs_headlines]:
+            if _df is not None and period in _df.index:
+                vals_max.append(_df.loc[period, (slice(None), '95')].max())
+                vals_min.append(_df.loc[period, (slice(None), '5')].min())
+        lower_ylim = np.floor(min(vals_min) * 2) / 2
+        upper_ylim = np.ceil(max(vals_max) * 2) / 2
+        ylim = (lower_ylim, upper_ylim)
 
-    # Calculate dynamic ylim
-    vals_min = []
-    vals_max = []
-    for _df in [df_headlines, df_obs_headlines]:
-        if _df is not None and period in _df.index:
-            vals_max.append(_df.loc[period, (slice(None), '95')].max())
-            vals_min.append(_df.loc[period, (slice(None), '5')].min())
-    lower_ylim = np.floor(min(vals_min) * 2) / 2
-    upper_ylim = np.ceil(max(vals_max) * 2) / 2
-    ylim = (lower_ylim, upper_ylim)
+        # Panel 1: Observed
+        if df_obs_headlines is not None and period in df_obs_headlines.index:
+            gr.plot_spm2_panel(axes[0], df_obs_headlines, period, ['Obs'],
+                               params['colours'], defs.VAR_NAMES,
+                               ylim, show_ylabel=True, show_yticklabels=True,
+                               xlim=(-1.5, 1.5))
 
-    # Panel 1: Observed
-    if df_obs_headlines is not None and period in df_obs_headlines.index:
-        gr.plot_spm2_panel(axes[0], df_obs_headlines, period, ['Obs'],
-                           params['colours'], defs.VAR_NAMES,
-                           ylim, show_ylabel=True, show_yticklabels=True,
-                           xlim=(-1.5, 1.5))
-
-    # Panel 2: Aggregated
-    gr.plot_spm2_panel(axes[1], df_headlines, period, vars_panel2,
-                       params['colours'], defs.VAR_NAMES,
-                       ylim, show_ylabel=False, show_yticklabels=False)
-
-    # Panel 3: Components
-    if vars_panel3 and len(axes) > 2:
-        gr.plot_spm2_panel(axes[2], df_headlines, period, vars_panel3,
+        # Panel 2: Aggregated
+        gr.plot_spm2_panel(axes[1], df_headlines, period, vars_panel2,
                            params['colours'], defs.VAR_NAMES,
                            ylim, show_ylabel=False, show_yticklabels=False)
 
-    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
+        # Panel 3: Components
+        if vars_panel3 and len(axes) > 2:
+            gr.plot_spm2_panel(axes[2], df_headlines, period, vars_panel3,
+                               params['colours'], defs.VAR_NAMES,
+                               ylim, show_ylabel=False,
+                               show_yticklabels=False)
 
-    # Add text
-    fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
-             f'Observed warming and contributions ({period})',
-             fontsize=plt.rcParams['axes.titlesize'],
-             fontweight='bold',
-             )
-    fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.02,
-             '(a) Observed warming',
-             ha='left',
-             fontsize=plt.rcParams['font.size'],
-             fontweight='regular',
-             #  fontstyle='italic'
-             )
-    # fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.08,
-    #          ('Contributions to observed warming'),
-    #          fontsize=plt.rcParams['axes.titlesize'],
-    #          fontweight='bold'
-    #          )
-    fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.02,
-             ('(b) Aggregated contributions'),
-             fontsize=plt.rcParams['font.size'],
-             fontweight='regular'
-             )
-    if len(axes) > 2:
-        fig.text(axes[2].get_position().x0, axes[2].get_position().y1+0.02,
-                 ('(c) Component contributions'),
+        fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.85))
+
+        # Add text
+        fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
+                 f'Observed warming and contributions ({period})',
+                 fontsize=plt.rcParams['axes.titlesize'],
+                 fontweight='bold',
+                 )
+        fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.02,
+                 '(a) Observed warming',
+                 ha='left',
+                 fontsize=plt.rcParams['font.size'],
+                 fontweight='regular',
+                 #  fontstyle='italic'
+                 )
+        # fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.08,
+        #          ('Contributions to observed warming'),
+        #          fontsize=plt.rcParams['axes.titlesize'],
+        #          fontweight='bold'
+        #          )
+        fig.text(axes[1].get_position().x0, axes[1].get_position().y1+0.02,
+                 ('(b) Aggregated contributions'),
                  fontsize=plt.rcParams['font.size'],
                  fontweight='regular'
                  )
+        if len(axes) > 2:
+            fig.text(axes[2].get_position().x0, axes[2].get_position().y1+0.02,
+                     ('(c) Component contributions'),
+                     fontsize=plt.rcParams['font.size'],
+                     fontweight='regular'
+                     )
 
-    # Create plot
-    configuration = (f'Scenario: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars} | '
-                     f'Regressed range: {reg_range}')
-    if configuration:
-        fig.text(0.5, 0.01, configuration, ha='center',
-                 fontsize='x-small', fontfamily='monospace',
-                 )
+        # Create plot
+        configuration = (f'Scenario: {scen} | '
+                         f'Ensemble: {ens} | '
+                         f'Regressed variables: {reg_vars} | '
+                         f'Regressed range: {reg_range}')
+        if configuration:
+            fig.text(0.5, 0.01, configuration, ha='center',
+                     fontsize='x-small', fontfamily='monospace',
+                     )
 
-    # Draw arrows for Ant <- GHG + OHF
-    y_offsets = {
-        'Ant': 0.185,
-        'GHG': 0.215,
-        'OHF': 0.165
-    }
-    if set('GHG-OHF-Nat'.split('-')).issubset(set(vars_panel2)):
-        gr.draw_grouping_arrow(axes[1], vars_panel2, 'Ant', ['GHG', 'OHF'],
-                               y_offsets=y_offsets, line_y_offset=0.26)
+        # Draw arrows for Ant <- GHG + OHF
+        y_offsets = {
+            'Ant': 0.185,
+            'GHG': 0.215,
+            'OHF': 0.165
+        }
+        if set('GHG-OHF-Nat'.split('-')).issubset(set(vars_panel2)):
+            gr.draw_grouping_arrow(axes[1], vars_panel2, 'Ant', ['GHG', 'OHF'],
+                                   y_offsets=y_offsets, line_y_offset=0.26)
 
-    # Set the grid to the back for the fig
-    for ax in axes:
-        ax.set_axisbelow(True)
+        # Set the grid to the back for the fig
+        for ax in axes:
+            ax.set_axisbelow(True)
 
-    # Save plot
-    plot_path = ('plots/aggregated/' +
-                 f'SCENARIO--{scen}/' +
-                 f'ENSEMBLE-MEMBER--{ens}/' +
-                 f'VARIABLES--{reg_vars}/' +
-                 f'REGRESSED-YEARS--{reg_range}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
+        # Save plot
+        plot_path = ('plots/aggregated/' +
+                     f'SCENARIO--{scen}/' +
+                     f'ENSEMBLE-MEMBER--{ens}/' +
+                     f'VARIABLES--{reg_vars}/' +
+                     f'REGRESSED-YEARS--{reg_range}/')
+        if not os.path.exists(plot_path):
+            os.makedirs(plot_path, exist_ok=True)
 
-    plot_name = (f'{plot_path}/' +
-                 f'SPM2_BarPlot_Scenario--{scen}_' +
-                 f'ENSEMBLE-MEMBER--{ens}_' +
-                 f'VARIABLES--{reg_vars}_' +
-                 f'REGRESSED-YEARS--{reg_range}.png')
-    fig.savefig(plot_name)
-    plt.close(fig)
+        period_token = str(period).replace(' ', '-')
+        plot_name = (f'{plot_path}/' +
+                     f'SPM2_BarPlot_Scenario--{scen}_' +
+                     f'ENSEMBLE-MEMBER--{ens}_' +
+                     f'VARIABLES--{reg_vars}_' +
+                     f'REGRESSED-YEARS--{reg_range}_' +
+                     f'PERIOD--{period_token}.png')
+        fig.savefig(plot_name)
+        plt.close(fig)
 
 
 def figure_waterfall(
@@ -1062,297 +1063,318 @@ def figure_waterfall(
     else:
         df_obs_headlines = None
 
-    # Determine period (last year)
-    years = [idx for idx in df_headlines.index if str(idx).isdigit()]
-    if years:
-        period = years[-1]
-    else:
-        period = df_headlines.index[-1]
+    periods = list(df_headlines.index)
+    if not periods:
+        return
 
-    # Helper to get stats
-    def get_stats(v, df=df_headlines):
-        if (v, '50') in df.columns:
-            med = df.loc[period, (v, '50')]
-            low = df.loc[period, (v, '5')]
-            high = df.loc[period, (v, '95')]
-            return med, low, high
-        else:
-            return 0, 0, 0
-
-    # 1. Identify variables and sort them
-    plot_items = []
-
-    # Helper to add sorted components
-    def add_components(source_vars):
-        # Filter and sort components
-        vars_in_group = [v for v in source_vars
-                         if (v, '50') in df_headlines.columns]
-        # Sort from largest to smallest warming contribution
-        vars_in_group.sort(key=lambda v: get_stats(v)[0], reverse=True)
-
-        for v in vars_in_group:
-            plot_items.append({'var': v, 'type': 'component'})
-
-    # Define the structure of the waterfall
-    # GHG Group
-    add_components(defs.SUB_VAR_MAPPING['GHG'])
-    plot_items.append({'var': 'GHG', 'type': 'subtotal'})
-
-    # OHF Group
-    add_components(defs.SUB_VAR_MAPPING['OHF'])
-    plot_items.append({'var': 'OHF', 'type': 'subtotal'})
-
-    # Ant Total
-    plot_items.append({'var': 'Ant', 'type': 'total'})
-
-    # Nat Group
-    add_components(defs.SUB_VAR_MAPPING['Nat'])
-    plot_items.append({'var': 'Nat', 'type': 'subtotal'})
-
-    # Tot Total
-    plot_items.append({'var': 'Tot', 'type': 'total'})
-
-    # Res (Components only)
-    add_components(['Res'])
-
-    # Obs Total
-    plot_items.append({'var': 'Obs', 'type': 'total'})
-
-    # 2. Prepare plot
-    # Increase height to accommodate more bars
-    fig, ax = plt.subplots(figsize=(13, 13))
-
-    # Initialize limits
-    min_val = 0
-    max_val = 0
-
-    # Invert Y axis logic: Start from top
-    y_pos = 0
-    current_left = 0
-
-    bar_height_component = 0.7
-    bar_height_aggregate = 0.35
-    bar_alpha_component = 0.6
-    bar_alpha_aggregate = 1.0
-    edge_colour = 'none'
-    err_colour = '#444444'
-
-    # Store positions for connecting lines
-    component_positions = []  # (y, start_x, end_x)
-
-    # Manually specify yticks and labels to enable arrows to be added to the
-    # labels
-    yticks = []
-    yticklabels = []
-
-    # Iterate and Plot
-    for item in plot_items:
-        var = item['var']
-        label = defs.VAR_NAMES.get(var, var)
-        item_type = item['type']
-
-        # Get Data
-        if var == 'Obs':
-            med, low, high = get_stats(var, df_obs_headlines)
-        else:
-            med, low, high = get_stats(var)
-        neg_err = med - low
-        pos_err = high - med
-
-        if item_type == 'component':
-            # Waterfall Component
-            left = current_left
-
-            # Update limits
-            min_val = min(min_val, left + low, left + high)
-            max_val = max(max_val, left + low, left + high)
-
-            # Plot Bar
-            ax.barh(
-                y_pos, med,
-                left=left,
-                height=bar_height_component,
-                xerr=[[neg_err], [pos_err]],
-                color=params['colours'][var],
-                edgecolor=edge_colour,
-                alpha=bar_alpha_component,
-                error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
-                )
-
-            # Store for lines
-            component_positions.append(
-                {'y': y_pos, 'start': left, 'end': left + med})
-
-            # Update accumulator
-            current_left += med
-
-            # Label arrow to show direction of flow and aggregation
-            yticklabels.append(f"{label}  ↓ ")
-
-        elif item_type in ['subtotal', 'total']:
-
-            # Update limits
-            min_val = min(min_val, low)
-            max_val = max(max_val, high)
-
-            # Make the axhlne the same colour as the bar to signify aggregate
-            ax.axhline(y=y_pos, color=params['colours'][var], linewidth=1.5)
-
-            # Plot Bar
-            ax.barh(
-                y_pos, med,
-                left=0,  # Bar starts from the axis
-                height=bar_height_aggregate,
-                xerr=[[neg_err], [pos_err]],
-                color=params['colours'][var],
-                edgecolor=edge_colour,
-                alpha=bar_alpha_aggregate,
-                error_kw=dict(lw=1, capsize=3, capthick=1, ecolor=err_colour)
-                )
-
-            yticklabels.append(label)
-
-            # Add Explanatory Text
-            s = ""
-            highlight_textprops = []
-
-            if var == 'Ant':
-                s = f"Sum of <{defs.VAR_NAMES['GHG']}> and <{defs.VAR_NAMES['OHF']}>"
-                highlight_textprops = [
-                    {"color": params['colours']['GHG'], "fontweight": "bold"},
-                    {"color": params['colours']['OHF'], "fontweight": "bold"}
-                ]
-            elif var == 'Tot':
-                s = f"Sum of <{defs.VAR_NAMES['Ant']}> and <{defs.VAR_NAMES['Nat']}>"
-                highlight_textprops = [
-                    {"color": params['colours']['Ant'], "fontweight": "bold"},
-                    {"color": params['colours']['Nat'], "fontweight": "bold"}
-                ]
-            elif var == 'Obs':
-                s = f"Sum of <{defs.VAR_NAMES['Tot']}> and <{defs.VAR_NAMES['Res']}>"
-                highlight_textprops = [
-                    {"color": params['colours']['Tot'], "fontweight": "bold"},
-                    {"color": params['colours']['Res'], "fontweight": "bold"}
-                ]
+    for period in periods:
+        # Helper to get stats
+        def get_stats(v, df=df_headlines):
+            if (df is not None and period in df.index
+                    and (v, '50') in df.columns):
+                med = df.loc[period, (v, '50')]
+                low = df.loc[period, (v, '5')]
+                high = df.loc[period, (v, '95')]
+                return med, low, high
             else:
-                s = "Sum of <components>"
-                highlight_textprops = [
-                    {"color": params['colours'].get(var, 'black')}
-                ]
+                return 0, 0, 0
 
-            if s:
-                ax_text(x=0.02, y=y_pos + bar_height_aggregate/2 + 0.1,
-                        s=s,
-                        highlight_textprops=highlight_textprops,
-                        ax=ax,
-                        fontsize=10,
-                        fontweight='regular',
-                        color='#555555',
-                        ha='left',
-                        va='bottom')
+        # 1. Identify variables and sort them
+        plot_items = []
 
-        yticks.append(y_pos)
+        # Helper to add sorted components
+        def add_components(source_vars):
+            # Filter and sort components
+            vars_in_group = [v for v in source_vars
+                             if (v, '50') in df_headlines.columns]
+            # Sort from largest to smallest warming contribution
+            vars_in_group.sort(key=lambda v: get_stats(v)[0], reverse=True)
 
-        # Add gap after totals
-        if item_type in ['subtotal', 'total']:
-            y_pos -= 1.7
-        else:
-            y_pos -= 1.0
+            for v in vars_in_group:
+                plot_items.append({'var': v, 'type': 'component'})
 
-    # Add padding and set limits
-    x_range = max_val - min_val
-    ax.set_xlim(min_val - x_range * 0.1, max_val + x_range * 0.1)
+        # Define the structure of the waterfall
+        # GHG Group
+        add_components(defs.SUB_VAR_MAPPING['GHG'])
+        plot_items.append({'var': 'GHG', 'type': 'subtotal'})
 
-    ################################################
-    # Draw Connecting Lines for Waterfall Components
-    ################################################
+        # OHF Group
+        add_components(defs.SUB_VAR_MAPPING['OHF'])
+        plot_items.append({'var': 'OHF', 'type': 'subtotal'})
 
-    # We need to connect the *end* of one component to the *start* of the next
-    # component. Visually, the waterfall flow should persist across the
-    # subtotals.
+        # Ant Total
+        plot_items.append({'var': 'Ant', 'type': 'total'})
 
-    # NOTE: The aggregates (subtotals GHG,OHF,Nat,Ant,Tot) will not necessarily
-    # line up perfectly with the ends of the component sums due to the the fact
-    # that these are percentiles across large ensembles and a multi-run mean
-    # of those percentiles. In reality, at the ensemble-member level, the
-    # variables will sum up to give the Obs (e.g. Tot + Res = Obs) exactly.
+        # Nat Group
+        add_components(defs.SUB_VAR_MAPPING['Nat'])
+        plot_items.append({'var': 'Nat', 'type': 'subtotal'})
 
-    # Define destinations for the lines starting from each component
-    # For component i, the line goes to component i+1.
-    # For the last component, the line goes to Obs.
-    destinations = [{'y': p['y'], 'h': bar_height_component}
-                    for p in component_positions[1:]]
-    destinations.append({'y': yticks[-1], 'h': bar_height_aggregate})
+        # Tot Total
+        plot_items.append({'var': 'Tot', 'type': 'total'})
 
-    for start_comp, dest in zip(component_positions, destinations):
-        x = start_comp['end']
-        y1 = start_comp['y'] - bar_height_component/2
-        y2 = dest['y'] + dest['h']/2
-        ax.plot([x, x], [y1, y2],
-                color='#666666', linewidth=1.0, linestyle=':')
+        # Res (Components only)
+        add_components(['Res'])
 
-    ######################################
-    # Figure details and style adjustments
-    ######################################
+        # Obs Total
+        plot_items.append({'var': 'Obs', 'type': 'total'})
 
-    # Formatting labels
-    ax.set_yticks(yticks)
-    ax.set_yticklabels(yticklabels)
+        # 2. Prepare plot
+        # Increase height to accommodate more bars
+        fig, ax = plt.subplots(figsize=(13, 13))
 
-    # Style the tick labels (Bold and Colored for Aggregates)
-    labels = ax.get_yticklabels()
-    for i, label_obj in enumerate(labels):
-        # Match label to plot_item
-        # Note: yticks and plot_items are in the same order (top to bottom)
-        if plot_items[i]['type'] in ['subtotal', 'total']:
-            label_obj.set_fontweight('bold')
-            label_obj.set_color(params['colours'][plot_items[i]['var']])
+        # Initialize limits
+        min_val = 0
+        max_val = 0
 
-    # Remove spines
-    for location in ['top', 'left', 'right']:
-        ax.spines[location].set_visible(False)  # Clean up the look
+        # Invert Y axis logic: Start from top
+        y_pos = 0
+        current_left = 0
 
-    # Add vertical grid
-    ax.grid(axis='x', linestyle='--', alpha=0.3)
-    # Vertical line at x=0
-    ax.axvline(0, color='black', linewidth=0.8)
-    # Set the grid to the back for the fig
-    ax.set_axisbelow(True)
+        bar_height_component = 0.7
+        bar_height_aggregate = 0.35
+        bar_alpha_component = 0.6
+        bar_alpha_aggregate = 1.0
+        edge_colour = 'none'
+        err_colour = '#444444'
 
-    ax.set_xlabel(
-        'Change in global mean surface temperature relative to 1850-1900 (°C)',
-        fontsize=12)
+        # Store positions for connecting lines
+        component_positions = []  # (y, start_x, end_x)
 
-    # Title
-    fig.text(0.05, 0.95, f'Attributable contributions to warming ({period})',
-             ha='left', fontsize=16, fontweight='bold')
+        # Manually specify yticks and labels to enable arrows to be added to
+        # the labels
+        yticks = []
+        yticklabels = []
 
-    # Configuration text
-    configuration = (f'Scenario: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars} | '
-                     f'Regressed range: {reg_range}')
-    fig.text(0.05, 0.93, configuration, ha='left', fontsize=8,
-             fontfamily='monospace', color='#555555')
+        # Iterate and Plot
+        for item in plot_items:
+            var = item['var']
+            label = defs.VAR_NAMES.get(var, var)
+            item_type = item['type']
 
-    fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
+            # Get Data
+            if var == 'Obs':
+                med, low, high = get_stats(var, df_obs_headlines)
+            else:
+                med, low, high = get_stats(var)
+            neg_err = med - low
+            pos_err = high - med
 
-    # Save plot
-    plot_path = ('plots/aggregated/' +
-                 f'SCENARIO--{scen}/' +
-                 f'ENSEMBLE-MEMBER--{ens}/' +
-                 f'VARIABLES--{reg_vars}/' +
-                 f'REGRESSED-YEARS--{reg_range}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
+            if item_type == 'component':
+                # Waterfall Component
+                left = current_left
 
-    plot_name = (f'{plot_path}/' +
-                 f'Waterfall_BarPlot_Scenario--{scen}_' +
-                 f'ENSEMBLE-MEMBER--{ens}_' +
-                 f'VARIABLES--{reg_vars}_' +
-                 f'REGRESSED-YEARS--{reg_range}.png')
-    fig.savefig(plot_name)
-    plt.close(fig)
+                # Update limits
+                min_val = min(min_val, left + low, left + high)
+                max_val = max(max_val, left + low, left + high)
+
+                # Plot Bar
+                ax.barh(
+                    y_pos, med,
+                    left=left,
+                    height=bar_height_component,
+                    xerr=[[neg_err], [pos_err]],
+                    color=params['colours'][var],
+                    edgecolor=edge_colour,
+                    alpha=bar_alpha_component,
+                    error_kw=dict(
+                        lw=1, capsize=3, capthick=1, ecolor=err_colour)
+                    )
+
+                # Store for lines
+                component_positions.append(
+                    {'y': y_pos, 'start': left, 'end': left + med})
+
+                # Update accumulator
+                current_left += med
+
+                # Label arrow to show direction of flow and aggregation
+                yticklabels.append(f"{label}  ↓ ")
+
+            elif item_type in ['subtotal', 'total']:
+
+                # Update limits
+                min_val = min(min_val, low)
+                max_val = max(max_val, high)
+
+                # Make the axhlne the same colour as the bar to signify
+                # aggregate
+                ax.axhline(y=y_pos, color=params['colours'][var], linewidth=1.5)
+
+                # Plot Bar
+                ax.barh(
+                    y_pos, med,
+                    left=0,  # Bar starts from the axis
+                    height=bar_height_aggregate,
+                    xerr=[[neg_err], [pos_err]],
+                    color=params['colours'][var],
+                    edgecolor=edge_colour,
+                    alpha=bar_alpha_aggregate,
+                    error_kw=dict(
+                        lw=1, capsize=3, capthick=1, ecolor=err_colour)
+                    )
+
+                yticklabels.append(label)
+
+                # Add Explanatory Text
+                s = ""
+                highlight_textprops = []
+
+                if var == 'Ant':
+                    s = (
+                        f"Sum of <{defs.VAR_NAMES['GHG']}> and "
+                        f"<{defs.VAR_NAMES['OHF']}>"
+                    )
+                    highlight_textprops = [
+                        {"color": params['colours']['GHG'],
+                         "fontweight": "bold"},
+                        {"color": params['colours']['OHF'],
+                         "fontweight": "bold"}
+                    ]
+                elif var == 'Tot':
+                    s = (
+                        f"Sum of <{defs.VAR_NAMES['Ant']}> and "
+                        f"<{defs.VAR_NAMES['Nat']}>"
+                    )
+                    highlight_textprops = [
+                        {"color": params['colours']['Ant'],
+                         "fontweight": "bold"},
+                        {"color": params['colours']['Nat'],
+                         "fontweight": "bold"}
+                    ]
+                elif var == 'Obs':
+                    s = (
+                        f"Sum of <{defs.VAR_NAMES['Tot']}> and "
+                        f"<{defs.VAR_NAMES['Res']}>"
+                    )
+                    highlight_textprops = [
+                        {"color": params['colours']['Tot'],
+                         "fontweight": "bold"},
+                        {"color": params['colours']['Res'],
+                         "fontweight": "bold"}
+                    ]
+                else:
+                    s = "Sum of <components>"
+                    highlight_textprops = [
+                        {"color": params['colours'].get(var, 'black')}
+                    ]
+
+                if s:
+                    ax_text(x=0.02, y=y_pos + bar_height_aggregate/2 + 0.1,
+                            s=s,
+                            highlight_textprops=highlight_textprops,
+                            ax=ax,
+                            fontsize=10,
+                            fontweight='regular',
+                            color='#555555',
+                            ha='left',
+                            va='bottom')
+
+            yticks.append(y_pos)
+
+            # Add gap after totals
+            if item_type in ['subtotal', 'total']:
+                y_pos -= 1.7
+            else:
+                y_pos -= 1.0
+
+        # Add padding and set limits
+        x_range = max_val - min_val
+        ax.set_xlim(min_val - x_range * 0.1, max_val + x_range * 0.1)
+
+        ################################################
+        # Draw Connecting Lines for Waterfall Components
+        ################################################
+
+        # We need to connect the *end* of one component to the *start* of the
+        # next component. Visually, the waterfall flow should persist across
+        # the subtotals.
+
+        # NOTE: The aggregates (subtotals GHG,OHF,Nat,Ant,Tot) will not
+        # necessarily line up perfectly with the ends of the component sums
+        # due to the the fact that these are percentiles across large
+        # ensembles and a multi-run mean of those percentiles. In reality, at
+        # the ensemble-member level, the variables will sum up to give the Obs
+        # (e.g. Tot + Res = Obs) exactly.
+
+        # Define destinations for the lines starting from each component
+        # For component i, the line goes to component i+1.
+        # For the last component, the line goes to Obs.
+        destinations = [{'y': p['y'], 'h': bar_height_component}
+                        for p in component_positions[1:]]
+        destinations.append({'y': yticks[-1], 'h': bar_height_aggregate})
+
+        for start_comp, dest in zip(component_positions, destinations):
+            x = start_comp['end']
+            y1 = start_comp['y'] - bar_height_component/2
+            y2 = dest['y'] + dest['h']/2
+            ax.plot([x, x], [y1, y2],
+                    color='#666666', linewidth=1.0, linestyle=':')
+
+        ######################################
+        # Figure details and style adjustments
+        ######################################
+
+        # Formatting labels
+        ax.set_yticks(yticks)
+        ax.set_yticklabels(yticklabels)
+
+        # Style the tick labels (Bold and Colored for Aggregates)
+        labels = ax.get_yticklabels()
+        for i, label_obj in enumerate(labels):
+            # Match label to plot_item
+            # Note: yticks and plot_items are in the same order (top to bottom)
+            if plot_items[i]['type'] in ['subtotal', 'total']:
+                label_obj.set_fontweight('bold')
+                label_obj.set_color(params['colours'][plot_items[i]['var']])
+
+        # Remove spines
+        for location in ['top', 'left', 'right']:
+            ax.spines[location].set_visible(False)  # Clean up the look
+
+        # Add vertical grid
+        ax.grid(axis='x', linestyle='--', alpha=0.3)
+        # Vertical line at x=0
+        ax.axvline(0, color='black', linewidth=0.8)
+        # Set the grid to the back for the fig
+        ax.set_axisbelow(True)
+
+        ax.set_xlabel(
+            'Change in global mean surface temperature relative to 1850-1900 (°C)',
+            fontsize=12)
+
+        # Title
+        fig.text(0.05, 0.95,
+                 f'Attributable contributions to warming ({period})',
+                 ha='left', fontsize=16, fontweight='bold')
+
+        # Configuration text
+        configuration = (f'Scenario: {scen} | '
+                         f'Ensemble: {ens} | '
+                         f'Regressed variables: {reg_vars} | '
+                         f'Regressed range: {reg_range}')
+        fig.text(0.05, 0.93, configuration, ha='left', fontsize=8,
+                 fontfamily='monospace', color='#555555')
+
+        fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
+
+        # Save plot
+        plot_path = ('plots/aggregated/' +
+                     f'SCENARIO--{scen}/' +
+                     f'ENSEMBLE-MEMBER--{ens}/' +
+                     f'VARIABLES--{reg_vars}/' +
+                     f'REGRESSED-YEARS--{reg_range}/')
+        if not os.path.exists(plot_path):
+            os.makedirs(plot_path, exist_ok=True)
+
+        period_token = str(period).replace(' ', '-')
+        plot_name = (f'{plot_path}/' +
+                     f'Waterfall_BarPlot_Scenario--{scen}_' +
+                     f'ENSEMBLE-MEMBER--{ens}_' +
+                     f'VARIABLES--{reg_vars}_' +
+                     f'REGRESSED-YEARS--{reg_range}_' +
+                     f'PERIOD--{period_token}.png')
+        fig.savefig(plot_name)
+        plt.close(fig)
 
 
 def figure_priors_timeseries(
@@ -2516,6 +2538,8 @@ if __name__ == '__main__':
         re_calculate = argv_dict['--re-calculate'] == 'y'  # True/False y/n
     else:
         re_calculate = True  # Default to re-calculate if not specified
+
+    print(f"Re-calculate results: {re_calculate}")
 
     # Ensure directoriesfor plots and results exist
     for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:
