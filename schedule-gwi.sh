@@ -13,13 +13,13 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # END_REGRESS=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-END_REGRESS=`seq 2025 2025`
+END_REGRESS=`seq 1950 2025`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-SUBSAMPLE_ITERATIONS=(60 60 60 60 60)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(60 60 60)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # The selected period offset applies to FaIR outputs, GMT Observations,
@@ -45,7 +45,7 @@ VARS=GHG,OHF,Nat
 # variables (e.g. GHG = CO2 + CH4 + N2O + F-gases).
 # e.g. y
 # e.g. n
-INCLUDE_SUB_VARS=y
+INCLUDE_SUB_VARS=n
 
 # Select which scenario to analyse
 # e.g. observed
@@ -70,7 +70,7 @@ SCENARIO=observed-2025
 # e.g. n (no committed warming)
 # e.g. 2024-2300 (constant ERF from 2024 to 2300)
 # e.g. end_regress-2300 (constant ERF from the end of regression to 2300)
-COMMITTED=n
+COMMITTED=2025-2050
 
 # Select truncation range
 TRUNCATION=1850-2025
@@ -79,12 +79,12 @@ TRUNCATION=1850-2025
 #TODO: Specify which years to include rate of change for.
 # e.g. y
 # e.g. n
-INCLUDE_RATE=y
+INCLUDE_RATE=n
 
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n
-HEADLINE_TOGGLES='annual,AR6,SR1.5'
+HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 
 # Select which years for the headlines to cover.
 # If HEADLINES_TOGGLE is set to 'n' then this will be ignored.
@@ -95,7 +95,7 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5'
 # e.g. '2023,2024,2025' for multiple separate years.
 # e.g. 'end_regress,2050,2100,2300' to combine end_regress and manual years
 # e.g. $(seq -s, 1950 2024) will create a comma-separated list of years
-HEADLINE_YEARS='IGCC'
+HEADLINE_YEARS='end_regress'
 
 
 # Select which ensemble members use from the scenario ERF/GMT files
@@ -124,19 +124,19 @@ SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
-if hostname | grep -q "htc"; then  # ARC cluster
-  PARTITION=medium
+if hostname | grep -Eq "htc|arc"; then  # ARC cluster
+  PARTITION=short
 elif hostname | grep -q "ouce"; then  # OUCE cluster
-  PARTITION=Medium
+  PARTITION=Short
 else
   echo "Unknown cluster. Please set the partition variable manually."
   exit 1
 fi
 PARTITION=${PARTITION}
-WALLTIME=48:00:00
+WALLTIME=12:00:00
 SIM_CPUS=28
 SIM_NAME=gwi
-SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-${END_REGRESS}
+SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
 
@@ -162,7 +162,7 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem-per-cpu=10000
+#SBATCH --mem-per-cpu=8000
 #SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it
