@@ -1,9 +1,12 @@
 import sys
 import os
+import re
+import shutil
+import subprocess
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
-# import functools
+import functools
 import xarray as xr
 import glob
 from pathlib import Path
@@ -14,6 +17,83 @@ import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
+
+
+# lru_cache makes Python work the answer out on the first call and hand back
+# that same stored number on every later call. Four of the mp.Pool sites sit
+# inside loops, so without it we would fork a scontrol subprocess hundreds of
+# times per run. It also guarantees the count cannot change mid-run.
+@functools.lru_cache(maxsize=1)
+def n_workers():
+    """Return the number of CPUs actually allocated to this job.
+
+    os.cpu_count() reports the whole node rather than the allocation, so a Pool
+    sized by it oversubscribes the job's memory cgroup and the workers get
+    OOM-killed; a Pool worker killed mid-task then makes Pool.map() hang
+    forever.
+
+    No single source covers every way these scripts get run, so three are tried
+    in descending order of trustworthiness:
+
+      1. Environment variables - set by sbatch/srun job steps (gwi.py).
+      2. scontrol              - interactive shells attach to step_extern,
+                                 which sets none of those variables, so ask
+                                 the scheduler directly (combine script).
+      3. CPU affinity          - not under SLURM at all (login node, laptop).
+    """
+    # 1. Believe any count already stated explicitly. GWI_NUM_WORKERS is the
+    #    manual override; the SLURM_* pair is set inside real job steps.
+    #    CPUS_PER_TASK is preferred because CPUS_ON_NODE reports the node's
+    #    whole allocation, which over-counts if a job runs >1 task per node.
+    #    .get(var, '') with .isdigit() rejects missing/empty/malformed at once.
+    for var in ('GWI_NUM_WORKERS', 'SLURM_CPUS_PER_TASK', 'SLURM_CPUS_ON_NODE'):
+        if os.environ.get(var, '').isdigit():
+            return max(1, int(os.environ[var]))
+
+    # 2. Inside a SLURM job, but the variables above are absent - this is an
+    #    interactive (step_extern) shell, so ask the scheduler itself. Note
+    #    that sched_getaffinity and the cpuset cgroup are NOT restricted to the
+    #    allocation on arc-htc, so they cannot stand in here. Any failure falls
+    #    through to step 3 rather than killing the run.
+    job_id = os.environ.get('SLURM_JOB_ID')
+    if job_id:
+        try:
+            output = subprocess.run(
+                ['scontrol', 'show', 'job', job_id],
+                capture_output=True, text=True, timeout=10).stdout
+            match = re.search(r'NumCPUs=(\d+)', output)
+            if match:
+                return max(1, int(match.group(1)))
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    # 3. No SLURM allocation at all. Prefer the CPUs this process is permitted
+    #    to run on, since unlike os.cpu_count() that respects taskset/cpuset
+    #    pinning where it exists. sched_getaffinity is Linux-only though, so on
+    #    macOS/Windows fall back to the plain core count.
+    if hasattr(os, 'sched_getaffinity'):
+        n_available = len(os.sched_getaffinity(0))
+    else:
+        n_available = os.cpu_count() or 1
+
+    # Finding scontrol on PATH but no job ID means we are on a cluster machine
+    # outside any allocation, i.e. a login/head node, where nothing caps us and
+    # the damage lands on other users. An ordinary machine sees no warning.
+    if shutil.which('scontrol'):
+        print(
+            f'WARNING: no SLURM allocation found, so falling back to '
+            f'{n_available} workers.\n'
+            f'         On a login/head node this spawns {n_available} '
+            f'processes and degrades it for everyone else.\n'
+            f'         Request an interactive node instead, e.g.:\n'
+            f'             srun -p interactive -c 16 --mem-per-cpu=2G '
+            f'--pty /bin/bash\n'
+            f'         Or cap the workers explicitly:\n'
+            f'             GWI_NUM_WORKERS=4 python <script>.py',
+            file=sys.stderr)
+
+    return n_available
+
 
 SUB_VAR_MAPPING = {
     'GHG': ['co2', 'ch4', 'n2o', 'halogen'],
@@ -821,7 +901,7 @@ def rate_HadCRUT5(start_pi, end_pi, start_yr, end_yr, sigmas_all):
         recent_years = ((year-9 <= temp_Yrs) * (temp_Yrs <= year))
         ten_slice = arr_temp_Obs[recent_years, :]
 
-        with mp.Pool(os.cpu_count()) as p:
+        with mp.Pool(n_workers()) as p:
             single_series = [ten_slice[:, ii]
                              for ii in range(ten_slice.shape[-1])]
             results = p.map(rate_func, single_series)
@@ -877,7 +957,7 @@ def rate_ERF(end_yr, sigmas_all):
         # Only include 'Ant'
         for vv in range(ten_slice.shape[1]):
             # Parallelise over ensemble members
-            with mp.Pool(os.cpu_count()) as p:
+            with mp.Pool(n_workers()) as p:
                 single_series = [ten_slice[:, vv, ii]
                                  for ii in range(ten_slice.shape[2])]
                 # final_value_of_trend is from src/definitions.py

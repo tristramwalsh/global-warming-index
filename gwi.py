@@ -1050,7 +1050,7 @@ if __name__ == "__main__":
     # Parallelise GWI calculation, with each thread corresponding to a
     # single (model) parameterisation for FaIR.
     T1a = dt.datetime.now()
-    with mp.Pool(os.cpu_count()) as p:
+    with mp.Pool(defs.n_workers()) as p:
         print('Partialising Function')
         partial_GWI = functools.partial(
             GWI_faster,
@@ -1141,7 +1141,7 @@ if __name__ == "__main__":
         df_forc_priors = defs.extend_ERF_to_committed_year(
             df_forc_priors, year_committed_to, year_committed_from)
 
-    with mp.Pool(os.cpu_count()) as p:
+    with mp.Pool(defs.n_workers()) as p:
         # print('Partialising Function')
         partial_priors = functools.partial(
             defs.model_prior_warming,
@@ -1321,7 +1321,7 @@ if __name__ == "__main__":
                 temp_Att_Results_SR15_recent.shape[1:])
             for vv in range(temp_Att_Results_SR15_recent.shape[1]):
                 # print(vv)
-                with mp.Pool(os.cpu_count()) as p:
+                with mp.Pool(defs.n_workers()) as p:
                     times = [temp_Att_Results_SR15_recent[:, vv, ii]
                              for ii
                              in range(temp_Att_Results_SR15_recent.shape[2])]
@@ -1578,7 +1578,7 @@ if __name__ == "__main__":
             # Only include 'Ant'
             for vv in range(ten_slice.shape[1]):
                 # Parallelise over ensemble members
-                with mp.Pool(os.cpu_count()) as p:
+                with mp.Pool(defs.n_workers()) as p:
                     single_series = [ten_slice[:, vv, ii]
                                      for ii in range(ten_slice.shape[2])]
                     # final_value_of_trend is from src/definitions.py

@@ -140,7 +140,7 @@ def calculate_iteration_averages():
                 if rate_toggle:
                     result_types_to_process.append('rates')
 
-                with mp.Pool(os.cpu_count()) as p:
+                with mp.Pool(defs.n_workers()) as p:
                     print('        Calculating (parallel regressed_years) ',
                           'for:',
                           scenario, ensemble_selection, regressed_vars)
@@ -2355,7 +2355,7 @@ def overarching_base_result_plotter(
                             results_dfs[scen][ens][reg_vars][r], 'timeseries')
                         ]
                     if valid_ranges_ts:
-                        with mp.Pool(os.cpu_count()) as p:
+                        with mp.Pool(defs.n_workers()) as p:
                             print('        Plotting figure_timeseries for GWI')
                             # print('  in parallel for:', valid_ranges_ts)
                             plot_names = p.map(
@@ -2371,7 +2371,7 @@ def overarching_base_result_plotter(
 
                     valid_ranges_rates = [r for r in reg_ranges_all if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
                     if valid_ranges_rates:
-                        with mp.Pool(os.cpu_count()) as p:
+                        with mp.Pool(defs.n_workers()) as p:
                             print('        Plotting figure_rates for GWI')
                             p.map(
                                 functools.partial(
@@ -2416,7 +2416,7 @@ def overarching_base_result_plotter(
                     ]
                 if valid_ranges_headlines:
                     print('        Plotting SPM2 for GWI in parallel')
-                    with mp.Pool(os.cpu_count()) as p:
+                    with mp.Pool(defs.n_workers()) as p:
                         p.map(
                             functools.partial(
                                 figure_spm2,
@@ -2432,7 +2432,7 @@ def overarching_base_result_plotter(
                 # 5. Plot Waterfall Plot
                 if valid_ranges_headlines:
                     print('        Plotting Waterfall for GWI in parallel')
-                    with mp.Pool(os.cpu_count()) as p:
+                    with mp.Pool(defs.n_workers()) as p:
                         p.map(
                             functools.partial(
                                 figure_waterfall,
