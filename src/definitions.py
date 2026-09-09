@@ -616,6 +616,24 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     # Rename the columns called "Realization_x" to just "x"
     df_temp_Obs.columns = [col.split(' ')[-1] for col in df_temp_Obs.columns]
 
+    # Truncate to the final year declared by the scenario name (the "vintage"
+    # of the dataset, eg 'observed-2025' means observations through 2025).
+    #
+    # HadCRUT ships a row for the year currently in progress, which is a mean
+    # over an incomplete set of months and is therefore not a meaningful annual
+    # value for us (eg HadCRUT 5.1.0.0 in data/observed-2025/ carries a 2026 row
+    # whose coverage uncertainty is ~30x that of the complete years).
+
+    end_obs = int(scenario.split('-')[1])
+    if end_obs not in df_temp_Obs.index:
+        # The file is short of what the scenario name claims: fail loudly
+        # rather than silently analysing a shorter record than intended.
+        raise ValueError(
+            f"Scenario '{scenario}' declares observations through {end_obs}, "
+            f"but {temp_ens_Path.name} only covers "
+            f"{df_temp_Obs.index.min()}-{df_temp_Obs.index.max()}.")
+    df_temp_Obs = df_temp_Obs.loc[:end_obs]
+
     return df_temp_Obs
 
 
