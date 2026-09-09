@@ -55,7 +55,8 @@ INCLUDE_SUB_VARS=y
 # e.g. observed-2023
 # e.g. observed-2024
 # e.g. observed-2025
-# e.g. observed-SSP119
+# e.g. observed-2025-SSP119  (2025 observations, SSP119-extended ERFs)
+# e.g. observed-2024-SSP245  (2024 observations, SSP245-extended ERFs)
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
 # e.g. observed_JK-2024-SSP245

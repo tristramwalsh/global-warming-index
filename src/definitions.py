@@ -131,11 +131,13 @@ VAR_NAMES = {
 def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
     """Load the ERFs for the specified scenario and variables."""
 
-    if 'observed-20' in scenario:
+    # 'observed-<YYYY>-SSP<NNN>': the SSP suffix selects the ERFs.
+    if 'observed-20' in scenario and 'SSP' in scenario:
+        df_ERF = load_ERF_SSP(scenario, regress_vars)
+    # 'observed-<YYYY>': no SSP suffix, so use the historical ERFs.
+    elif 'observed-20' in scenario:
         df_ERF = load_ERF_CMIP6(scenario, include_sub_vars=include_sub_vars)
     elif 'observed_JK' in scenario:
-        df_ERF = load_ERF_SSP(scenario, regress_vars)
-    elif 'observed-SSP' in scenario:
         df_ERF = load_ERF_SSP(scenario, regress_vars)
     elif 'SMILE_ESM' in scenario:
         df_ERF = load_ERF_SMILE(scenario, regress_vars)
@@ -553,12 +555,13 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
 def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     """Load temperature scenario data, and remove pre-industrial baseline."""
 
+    # 'observed-<YYYY>' or 'observed-<YYYY>-SSP<NNN>': the year selects the
+    # observations, so drop any SSP suffix (which only selects the ERFs).
     if 'observed-20' in scenario:
-        df_temp = load_Temp_HadCRUT(scenario, start_pi, end_pi)
+        df_temp = load_Temp_HadCRUT(
+            scenario.split('-SSP')[0], start_pi, end_pi)
     elif 'observed_JK' in scenario:
         df_temp = load_Temp_JK(scenario, start_pi, end_pi)
-    elif 'observed-SSP' in scenario:
-        df_temp = load_Temp_HadCRUT('observed-2024', start_pi, end_pi)
     elif 'SMILE_ESM' in scenario:
         df_temp = load_Temp_SMILE(scenario, start_pi, end_pi)
     elif 'NorESM' in scenario:

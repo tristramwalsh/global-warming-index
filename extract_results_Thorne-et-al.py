@@ -3,10 +3,11 @@ import sys
 import pandas as pd
 
 scenarios = [
-    # 'observed-SSP245',
+    # 'observed-2024-SSP245',
     # 'SMILE_ESM-SSP126', 'SMILE_ESM-SSP245', 'SMILE_ESM-SSP370',
     # 'NorESM_rcp45-Volc', 'NorESM_rcp45-VolcConst',
-    'observed_JK-2024-SSP245'
+    # 'observed_JK-2024-SSP245'
+    'observed-2025-SSP245',  # Thorne et al. 2025
     ]
 # scenarios = ['observed_JK-2024-SSP245',]
 variables = 'GHG-Nat-OHF'
