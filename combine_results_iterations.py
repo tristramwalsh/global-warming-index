@@ -692,6 +692,77 @@ def is_dataset_present(data_dict, required_keys):
     return True
 
 
+def headline_var_available(df, period, var, context=''):
+    """
+    Check whether a variable can be plotted for a given headline period.
+
+    The bar plotters previously tested only whether a variable's column
+    existed, which is not the same as it having a value: a column present but
+    NaN for this period was passed to matplotlib as a NaN bar with NaN error
+    bars, which produces an "All-NaN axis encountered" RuntimeWarning from the
+    autoscaler and a phantom labelled slot with no bar in the figure.
+
+    There is exactly one situation in which a missing value is legitimate:
+    'Res' (the residual, Obs - Tot) on a CGWL period. The CGWL definition is a
+    20-year window centred on the present (year-9 to year+10), so whenever it
+    extends beyond the end of the observations there is no observed
+    temperature from which to form a residual, and gwi.py deliberately writes
+    NaN there. Note that gwi.py already applies the same logic to the
+    *observed* CGWL headline, which it declines to compute at all when the
+    window runs past the data.
+
+    Any other non-finite headline means the results do not match the
+    configuration that produced them (eg a truncation range that runs past the
+    end of the observations for that dataset vintage), so it is raised rather
+    than quietly skipped.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Headlines dataframe, indexed by period with (variable, percentile)
+        columns.
+    period : str
+        The headline period (row label), eg '2016-2035 (CGWL definition)'.
+    var : str
+        The variable to check, eg 'GHG' or 'Res'.
+    context : str
+        Description of the run being plotted, included in the error message to
+        make an unexpected NaN traceable back to its scenario/range.
+
+    Returns:
+    --------
+    bool
+        True if the variable has a finite median for this period, False if it
+        is legitimately absent.
+    """
+    # No such dataset for this run at all (eg a scenario whose observation
+    # results were never produced), or the period is absent from it. The
+    # latter is how gwi.py signals an uncomputable observed headline: it
+    # declines to write a CGWL row when the window runs past the observations,
+    # rather than writing NaN.
+    if df is None or period not in df.index:
+        return False
+
+    # Not calculated for this run at all (eg sub-variables that were not
+    # requested); nothing anomalous about this, so nothing to plot.
+    if (var, '50') not in df.columns:
+        return False
+
+    if np.isfinite(df.loc[period, (var, '50')]):
+        return True
+
+    # The one expected absence: a residual for a window reaching into the
+    # future, where no observations exist yet.
+    if var == 'Res' and 'CGWL' in str(period):
+        return False
+
+    raise ValueError(
+        f"Headline '{var}' is NaN for period '{period}'{context}. Only 'Res' "
+        "on a CGWL period may legitimately be missing; this indicates the "
+        "results are inconsistent with the configuration that produced them "
+        "(eg a truncation range extending beyond the observations).")
+
+
 def figure_timeseries(reg_range, scen, ens, reg_vars,
                       results_dfs, df_temp_Obs, params
                       ):
@@ -1037,11 +1108,22 @@ def figure_spm2(
     if not periods:
         return
 
+    # Describe this run, so that an unexpectedly missing headline can be
+    # traced back to the results that produced it.
+    context = (f' (scenario {scen}, ensemble {ens}, variables {reg_vars}, '
+               f'regressed years {reg_range})')
+
     # Determine variables for SPM2 panels 2 and 3.
     possible_vars_p2 = ['Tot', 'Ant', 'GHG', 'OHF', 'Nat', 'Res']
-    vars_panel2 = [v for v in possible_vars_p2
-                   if (v, '50') in df_headlines.columns]
     for period in periods:
+        # Panel 2: Aggregated. Selected per period rather than once for the
+        # whole dataframe, because a variable can be available for some
+        # periods and legitimately absent for others (specifically 'Res' on a
+        # CGWL period; see headline_var_available).
+        vars_panel2 = [
+            v for v in possible_vars_p2
+            if headline_var_available(df_headlines, period, v, context)]
+
         # Panel 3: Components
         vars_panel3 = []
         if defs.SUB_VAR_MAPPING:
@@ -1050,7 +1132,8 @@ def figure_spm2(
                     # Identify available variables in this group
                     group_vars = [
                         sub_var for sub_var in defs.SUB_VAR_MAPPING[group]
-                        if (sub_var, '50') in df_headlines.columns]
+                        if headline_var_available(
+                            df_headlines, period, sub_var, context)]
                     # Sort by median value (largest to smallest)
                     group_vars.sort(
                         key=lambda v: df_headlines.loc[period, (v, '50')],
@@ -1210,6 +1293,11 @@ def figure_waterfall(
     if not periods:
         return
 
+    # Describe this run, so that an unexpectedly missing headline can be
+    # traced back to the results that produced it.
+    context = (f' (scenario {scen}, ensemble {ens}, variables {reg_vars}, '
+               f'regressed years {reg_range})')
+
     for period in periods:
         # Helper to get stats
         def get_stats(v, df=df_headlines):
@@ -1227,9 +1315,12 @@ def figure_waterfall(
 
         # Helper to add sorted components
         def add_components(source_vars):
-            # Filter and sort components
-            vars_in_group = [v for v in source_vars
-                             if (v, '50') in df_headlines.columns]
+            # Filter and sort components. Availability is tested per period,
+            # since 'Res' is legitimately absent on CGWL periods; any other
+            # missing headline raises (see headline_var_available).
+            vars_in_group = [
+                v for v in source_vars
+                if headline_var_available(df_headlines, period, v, context)]
             # Sort from largest to smallest warming contribution
             vars_in_group.sort(key=lambda v: get_stats(v)[0], reverse=True)
 
@@ -1258,8 +1349,15 @@ def figure_waterfall(
         # Res (Components only)
         add_components(['Res'])
 
-        # Obs Total
-        plot_items.append({'var': 'Obs', 'type': 'total'})
+        # Obs Total. Only plotted where an observed headline actually exists:
+        # it is absent when the observations do not cover this period (eg a
+        # CGWL window reaching past the end of the record, which gwi.py
+        # declines to compute), or when the run produced no observation
+        # results at all. Without this check get_stats falls back to
+        # (0, 0, 0), which draws a zero-height bar labelled "Observed
+        # warming" rather than omitting it.
+        if headline_var_available(df_obs_headlines, period, 'Obs', context):
+            plot_items.append({'var': 'Obs', 'type': 'total'})
 
         # 2. Prepare plot
         # Increase height to accommodate more bars
