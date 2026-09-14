@@ -154,6 +154,67 @@ def calculate_iteration_averages():
                             regressed_years_vars)
 
 
+def iteration_base_path(regressed_years, scenario, ensemble_selection,
+                        regressed_vars):
+    """Return the iterations directory for a specific configuration."""
+    return (
+        f'{ITERATIONS_FOLDER}/'
+        f'SCENARIO--{scenario}/'
+        f'ENSEMBLE-MEMBER--{ensemble_selection}/'
+        f'VARIABLES--{regressed_vars}/'
+        f'REGRESSED-YEARS--{regressed_years}/'
+    )
+
+
+def load_iteration_dfs(regressed_years, result_type, scenario,
+                       ensemble_selection, regressed_vars):
+    """
+    Load each repeat iteration's results for a specific configuration.
+
+    Args:
+        regressed_years: The range of years used for regression.
+        result_type: The type of result (e.g., 'timeseries', 'headlines', 'rates').
+        scenario: The scenario name.
+        ensemble_selection: The ensemble selection name.
+        regressed_vars: The regressed variables.
+
+    Returns:
+        A tuple containing a dictionary of the DataFrame for each iteration,
+        and a dictionary of the ensemble size of each iteration, both keyed by
+        iteration filename. Both are empty if no files are found.
+    """
+    dict_iterations = {}
+    size_iterations = {}
+
+    base_path = iteration_base_path(
+        regressed_years, scenario, ensemble_selection, regressed_vars)
+
+    if not os.path.exists(base_path):
+        print(f'Path not found: {base_path}')
+        return dict_iterations, size_iterations
+
+    iteration_files = [
+        f for f in os.listdir(base_path)
+        if result_type in f
+    ]
+
+    if len(iteration_files) == 0:
+        print('No iterations found for:',
+              result_type, scenario, ensemble_selection,
+              regressed_years, regressed_vars)
+        return dict_iterations, size_iterations
+
+    for iteration in iteration_files:
+        fname = os.path.join(base_path, iteration)
+        ens_size = int(fname.split('ENSEMBLE-SIZE--')[-1].split('_')[0])
+        df_iteration = pd.read_csv(
+            fname, index_col=0,  header=[0, 1], skiprows=0)
+        dict_iterations[iteration] = df_iteration
+        size_iterations[iteration] = ens_size
+
+    return dict_iterations, size_iterations
+
+
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
                     regressed_vars):
     """
@@ -171,41 +232,14 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
         iterations, and a dictionary of ensemble sizes, or (None, None, None)
         if no files found.
     """
-    dict_iterations = {}
-    size_iterations = {}
+    dict_iterations, size_iterations = load_iteration_dfs(
+        regressed_years, result_type, scenario, ensemble_selection,
+        regressed_vars)
 
-    base_path = (
-        f'{ITERATIONS_FOLDER}/'
-        f'SCENARIO--{scenario}/'
-        f'ENSEMBLE-MEMBER--{ensemble_selection}/'
-        f'VARIABLES--{regressed_vars}/'
-        f'REGRESSED-YEARS--{regressed_years}/'
-    )
-
-    if not os.path.exists(base_path):
-        print(f'Path not found: {base_path}')
+    if len(dict_iterations) == 0:
         return None, None, None
 
-    iteration_files = [
-        f for f in os.listdir(base_path)
-        if result_type in f
-    ]
-
-    if len(iteration_files) == 0:
-        print('No iterations found for:',
-              result_type, scenario, ensemble_selection,
-              regressed_years, regressed_vars)
-        return None, None, None
-
-    # Remove previously averaged dataset in case it already exists
-
-    for iteration in iteration_files:
-        fname = os.path.join(base_path, iteration)
-        ens_size = int(fname.split('ENSEMBLE-SIZE--')[-1].split('_')[0])
-        df_iteration = pd.read_csv(
-            fname, index_col=0,  header=[0, 1], skiprows=0)
-        dict_iterations[iteration] = df_iteration
-        size_iterations[iteration] = ens_size
+    iteration_files = list(dict_iterations.keys())
 
     # Produce the averaged dataset
     df_avg = (dict_iterations[iteration_files[0]].copy() *
@@ -217,7 +251,9 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
     df_avg /= sum(size_iterations.values())
 
     # Create the specific directory for these regressed years
-    out_path = base_path.replace(ITERATIONS_FOLDER, AGGREGATED_FOLDER)
+    out_path = iteration_base_path(
+        regressed_years, scenario, ensemble_selection, regressed_vars
+        ).replace(ITERATIONS_FOLDER, AGGREGATED_FOLDER)
     os.makedirs(out_path, exist_ok=True)
 
     df_avg.to_csv(
@@ -866,6 +902,113 @@ def figure_rates(reg_range, scen, ens, reg_vars,
 
     plot_name = (f'{plot_path}/' +
                  f'Rates_Scenario--{scen}_' +
+                 f'ENSEMBLE-MEMBER--{ens}_' +
+                 f'VARIABLES--{reg_vars}_' +
+                 f'REGRESSED-YEARS--{reg_range}.png')
+    fig.savefig(plot_name)
+    plt.close(fig)
+    return plot_name
+
+
+def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
+                                results_dfs, params
+                                ):
+    """Plot the spread between repeat iterations of the sampling.
+
+    Each GWI run subsamples the full ensemble, so repeat iterations of the
+    same configuration differ slightly. The left panel shows each iteration
+    against the ensemble-size-weighted average of all of them; the right panel
+    shows each iteration minus that average, which is the sampling variance.
+    """
+    dict_iterations, _ = load_iteration_dfs(
+        reg_range, 'timeseries', scen, ens, reg_vars)
+
+    # The comparison is only meaningful where a configuration has been run
+    # more than once.
+    if len(dict_iterations) < 2:
+        return None
+
+    df_avg = results_dfs[scen][ens][reg_vars][reg_range]['timeseries']
+
+    # Compare only the major variables, as including the sub-variables makes
+    # the spread hard to read.
+    major_vars = reg_vars.split('-')
+    major_vars.extend(defs.extra_vars(major_vars))
+    plot_vars = [v for v in major_vars
+                 if v in df_avg.columns.get_level_values(0)]
+
+    # Draw the median last, so that it sits on top of the outer percentiles
+    # and provides the solid handle that overall_legend keeps for each label.
+    percentiles = ['5', '95', '50']
+
+    fig = plt.figure(figsize=(15, 8))
+    ax1 = plt.subplot2grid(shape=(1, 2), loc=(0, 0), rowspan=1, colspan=1)
+    ax2 = plt.subplot2grid(shape=(1, 2), loc=(0, 1), rowspan=1, colspan=1)
+
+    for var in plot_vars:
+        for pct in percentiles:
+            # Emphasise the median over the 5th and 95th percentiles.
+            alpha = 1 if pct == '50' else 0.5
+
+            # Label every line with just its variable or 'Average', so that
+            # the legend holds one entry per variable rather than one per
+            # iteration; overall_legend removes the duplicates.
+            for iteration in sorted(dict_iterations.keys()):
+                df_iter = dict_iterations[iteration]
+                ax1.plot(df_iter.index, df_iter[(var, pct)],
+                         color=params['colours'][var], alpha=alpha,
+                         linewidth=0.8, label=var)
+                ax2.plot(df_iter.index,
+                         df_iter[(var, pct)] - df_avg[(var, pct)],
+                         color=params['colours'][var], alpha=alpha,
+                         linewidth=0.8, label=var)
+
+            ax1.plot(df_avg.index, df_avg[(var, pct)],
+                     color='black', alpha=alpha,
+                     linewidth=0.8, label='Average')
+
+    ax2.axhline(0, color='darkslategray', linestyle='--', linewidth=0.8)
+
+    ax1.set_ylabel('Iteration results, ⁰C')
+    ax1.set_title('Individual iterations against their average\n'
+                  '5th, 50th, 95th percentiles')
+    ax2.set_ylabel('Iteration minus average, ⁰C')
+    ax2.set_title('Difference between iterations and average\n'
+                  '5th, 50th, 95th percentiles')
+
+    for ax in (ax1, ax2):
+        ax.set_xlim(df_avg.index.min(), df_avg.index.max())
+
+    gr.overall_legend(fig, 'lower center', 7)
+
+    # Add title
+    fig.text(ax1.get_position().x0, ax1.get_position().y1+0.06,
+             'Comparison of Repeat Sampling Iterations',
+             ha='left',
+             fontsize=plt.rcParams['axes.titlesize'],
+             fontweight='bold'
+             )
+
+    # Add configuration text
+    configuration = (f'Scenario: {scen} | '
+                     f'Ensemble: {ens} | '
+                     f'Regressed variables: {reg_vars} | '
+                     f'Regressed range: {reg_range} | '
+                     f'Iterations: {len(dict_iterations)}')
+    fig.text(0.5, 0.01, configuration, ha='center',
+             fontsize='x-small', fontfamily='monospace',
+             )
+
+    plot_path = ('plots/iterations/' +
+                 f'SCENARIO--{scen}/' +
+                 f'ENSEMBLE-MEMBER--{ens}/' +
+                 f'VARIABLES--{reg_vars}/' +
+                 f'REGRESSED-YEARS--{reg_range}/')
+    if not os.path.exists(plot_path):
+        os.makedirs(plot_path, exist_ok=True)
+
+    plot_name = (f'{plot_path}/' +
+                 f'Compare-Iterations_Scenario--{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
@@ -2394,6 +2537,31 @@ def overarching_base_result_plotter(
                     if gif_toggle and valid_ranges_ts:
                         figure_gif_animation(
                             plot_names, scen, ens, reg_vars, valid_ranges_ts)
+
+                ###############################################################
+                # 2b. Plot Comparison of Repeat Sampling Iterations
+
+                # Add a toggle, because this is a diagnostic of the sampling
+                # variance rather than a result. The figure is skipped
+                # automatically where a configuration has only one iteration.
+                iteration_comparison_toggle = True
+                valid_ranges_iters = [
+                    r for r in reg_ranges_all
+                    if is_dataset_present(
+                        results_dfs[scen][ens][reg_vars][r], 'timeseries')
+                    ]
+                if iteration_comparison_toggle and valid_ranges_iters:
+                    with mp.Pool(defs.n_workers()) as p:
+                        print('        Plotting figure_iteration_comparison')
+                        p.map(
+                            functools.partial(
+                                figure_iteration_comparison,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                results_dfs=results_dfs,
+                                params=params
+                                ),
+                            valid_ranges_iters
+                        )
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
