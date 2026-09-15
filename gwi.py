@@ -675,6 +675,20 @@ if __name__ == "__main__":
     else:
         include_sub_vars = False
 
+    # Determine whether to calculate the prior (pre-constrained) warming.
+    # The priors depend only on the ERF ensemble and the FaIR parameters, NOT
+    # on the reference temperature ensemble member, so when sweeping over
+    # individual GMT members every run recomputes an identical prior dataset.
+    # The priors are used only for plotting (in combine_results_iterations.py),
+    # never for the attribution results themselves, so they can be switched off
+    # for per-member sweeps. Defaults to 'y' to preserve previous behaviour.
+    if '--calculate-priors-output' in argv_dict:
+        calculate_priors_output = argv_dict['--calculate-priors-output']
+        calculate_priors_output = (
+            False if calculate_priors_output == 'n' else True)
+    else:
+        calculate_priors_output = True
+
     # Specify years for headlines calculations
     # Format '2024', '2022,2023,2024', etc.
     if '--headline-years' in argv_dict:
@@ -892,7 +906,8 @@ if __name__ == "__main__":
     print(f'Truncation range: {start_trunc}-{end_trunc}')
     print(f'Regression range: {start_regress}-{end_regress}')
     print(f'Number of samples: {samples}')
-    print(f'Include rates: {rate_toggle}')
+    print(f'Calculate and save rates: {rate_toggle}')
+    print(f'Calculate and save priors: {calculate_priors_output}')
     print(f'Include pre-industrial offset: {inc_pi_offset}')
     print(f'Include constant term in regression: {inc_reg_const}')
     print(f'Using model: {model_choice}')
@@ -1119,7 +1134,9 @@ if __name__ == "__main__":
 
 
     # CALCULATE PRIOR WARMING #################################################
-    print('Calculating PRIORS (parallelised)', end=' ')
+    # NOTE: the ERF loading below is required even when the priors themselves
+    # are not calculated, because df_forc_priors also feeds the ERF percentiles
+    # output further down (which IS consumed by the post-processing).
 
     # Set new variable selection for priors calculation
     prior_vars = regress_vars.copy()
@@ -1143,18 +1160,25 @@ if __name__ == "__main__":
         df_forc_priors = defs.extend_ERF_to_committed_year(
             df_forc_priors, year_committed_to, year_committed_from)
 
-    with mp.Pool(defs.n_workers()) as p:
-        # print('Partialising Function')
-        partial_priors = functools.partial(
-            defs.model_prior_warming,
-            df_params=params_subset,
-            df_forc=df_forc_priors)
-        results = p.map(partial_priors, models)
+    if calculate_priors_output:
+        print('Calculating PRIORS (parallelised)', end=' ')
+        with mp.Pool(defs.n_workers()) as p:
+            # print('Partialising Function')
+            partial_priors = functools.partial(
+                defs.model_prior_warming,
+                df_params=params_subset,
+                df_forc=df_forc_priors)
+            results = p.map(partial_priors, models)
 
-    # Combine results from all models into one array
-    temp_Priors = np.concatenate(results, axis=2)
-    T2b = dt.datetime.now()
-    print(f'... took {T2b - T2a}')
+        # Combine results from all models into one array
+        temp_Priors = np.concatenate(results, axis=2)
+        T2b = dt.datetime.now()
+        print(f'... took {T2b - T2a}')
+    else:
+        print('Skipping PRIORS (--calculate-priors-output=n)')
+        # T2b is read further down as the start marker for the GWI percentile
+        # timing, so it must be defined on both branches.
+        T2b = T2a
 
     # PRODUCE FINAL RESULTS DATASETS ######################################
 
@@ -1213,29 +1237,31 @@ if __name__ == "__main__":
     T3a = dt.datetime.now()
     print(f'... took {T3a - T2b}')
 
-    print('Calculating percentiles for priors', end=' ')
-    priors_timeseries_array = np.percentile(temp_Priors, sigmas_all, axis=2)
-    dict_Results_priors = {
-        (var, sigma):
-        priors_timeseries_array[
-            sigmas_all.index(sigma), :, prior_vars_all.index(var)]
-        for var in prior_vars_all for sigma in sigmas_all
-    }
-    df_Results_priors = pd.DataFrame(
-        dict_Results_priors, index=df_forc_priors.index.to_numpy()
+    if calculate_priors_output:
+        print('Calculating percentiles for priors', end=' ')
+        priors_timeseries_array = np.percentile(
+            temp_Priors, sigmas_all, axis=2)
+        dict_Results_priors = {
+            (var, sigma):
+            priors_timeseries_array[
+                sigmas_all.index(sigma), :, prior_vars_all.index(var)]
+            for var in prior_vars_all for sigma in sigmas_all
+        }
+        df_Results_priors = pd.DataFrame(
+            dict_Results_priors, index=df_forc_priors.index.to_numpy()
+            )
+        df_Results_priors.columns.names = ['variable', 'percentile']
+        df_Results_priors.index.name = 'Year'
+        priors_filename = (
+            f'{results_folder_priors}{output_path_priors}' +
+            f'PRIOR_results_timeseries_{variation_priors}.csv'
         )
-    df_Results_priors.columns.names = ['variable', 'percentile']
-    df_Results_priors.index.name = 'Year'
-    priors_filename = (
-        f'{results_folder_priors}{output_path_priors}' +
-        f'PRIOR_results_timeseries_{variation_priors}.csv'
-    )
-    # Note that every iteration of GWI will result in an identical prior
-    # dataset, so if running multiple iterations, this will overwrite the
-    # previously saved prior dataset (there is no date identifier in the
-    # filename), but note this is intended behaviour to avoid unnecessary
-    # duplication of identical datasets.
-    df_Results_priors.to_csv(priors_filename)
+        # Note that every iteration of GWI will result in an identical prior
+        # dataset, so if running multiple iterations, this will overwrite the
+        # previously saved prior dataset (there is no date identifier in the
+        # filename), but note this is intended behaviour to avoid unnecessary
+        # duplication of identical datasets.
+        df_Results_priors.to_csv(priors_filename)
 
     print('Calculating percentiles for ERF', end=' ')
     erf_vars = sorted(

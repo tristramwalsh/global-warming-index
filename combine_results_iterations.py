@@ -1618,6 +1618,19 @@ def figure_waterfall(
         plt.close(fig)
 
 
+def priors_available(priors_dfs, scen, ens):
+    """Whether prior warming results exist for this scenario/ensemble.
+
+    gwi.py only writes the prior dataset when run with
+    --calculate-priors-output=y. The priors are plotting-only, so their absence
+    is not an error: the figures that use them are skipped instead.
+
+    Checks the value rather than just the key, because load_nested_dfs maps a
+    path that no longer exists to None.
+    """
+    return priors_dfs.get(scen, {}).get(ens, {}).get('timeseries') is not None
+
+
 def figure_priors_timeseries(
         scen, ens, reg_vars,
         priors_dfs, obs_dfs,
@@ -2261,8 +2274,7 @@ def figure_constrained_warming(
     else:
         start_regress = 'VAR'
 
-    plot_vars_priors = priors_dfs[scen][ens][
-        'timeseries'].columns.get_level_values(0).unique().to_list()
+    has_priors = priors_available(priors_dfs, scen, ens)
 
     print('      Creating constrained results')
     # Calculate how the expected final year of the timeseries changes
@@ -2295,6 +2307,17 @@ def figure_constrained_warming(
     # avoid confusion:
     df_constrained = df_constrained.loc[params['start_year']:, :]
 
+    # Variables to plot. These are taken from the priors dataset when it is
+    # available (its column set is the reference used elsewhere in this
+    # figure), otherwise from df_constrained itself, which carries the same
+    # variables.
+    if has_priors:
+        plot_vars_priors = priors_dfs[scen][ens][
+            'timeseries'].columns.get_level_values(0).unique().to_list()
+    else:
+        plot_vars_priors = df_constrained.columns.get_level_values(
+            0).unique().to_list()
+
     #######################################################################
     # Plot this dataframe df_constrined in the same way as df_hist
 
@@ -2322,10 +2345,11 @@ def figure_constrained_warming(
     ax1.set_title(
         f'Constrained: {constrained_year} (with Obs only up to year <year>)')
 
-    # Create box and whisker plot for prior warming in each variable
+    # Create box and whisker plot for prior warming in each variable.
+    # Skipped entirely when the prior dataset was not calculated.
     bar_width = 0.4
 
-    for vv in plot_vars_priors:
+    for vv in (plot_vars_priors if has_priors else []):
         # Plot the multi-method assessed results for the 2010-2019 period
         med_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
                                                             (vv, '50')]
@@ -2689,9 +2713,12 @@ def overarching_base_result_plotter(
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
-                print('        Plotting figure_timeseries for PRIORS')
-                figure_priors_timeseries(
-                    scen, ens, reg_vars, priors_dfs, obs_dfs,  params)
+                if priors_available(priors_dfs, scen, ens):
+                    print('        Plotting figure_timeseries for PRIORS')
+                    figure_priors_timeseries(
+                        scen, ens, reg_vars, priors_dfs, obs_dfs,  params)
+                else:
+                    print('        Skipping PRIORS timeseries (no prior data)')
 
                 ###############################################################
                 # 3b. Plot ERF Timeseries

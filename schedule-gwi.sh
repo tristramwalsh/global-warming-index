@@ -81,6 +81,17 @@ TRUNCATION=1850-2025
 # e.g. n
 INCLUDE_RATE=n
 
+# Select whether to calculate the prior (pre-constrained) warming output.
+# The priors depend only on the ERF ensemble and FaIR parameters, NOT on the
+# reference temperature member. These priors are not used directly in the GWI
+# calculation, but are useful for understanding the prior distribution of
+# warming pre-constraint. Setting this to False is useful for the single-member
+# selection runs, where the priors are identical for all members and need only
+# be calculated once.
+# e.g. y
+# e.g. n
+CALCULATE_PRIORS_OUTPUT=n
+
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n
@@ -174,11 +185,11 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
   # Regress against all reference temperatures at the same time
-  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS}
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
     # Regress against each reference temperature separately
-    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS}
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT}
   done
 fi
 
