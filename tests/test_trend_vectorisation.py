@@ -91,8 +91,66 @@ def test_final_value_of_trend():
           abs(got - exact) < 1e-12)
 
 
+def reference_rate(array):
+    """Apply the original per-series function down axis 0."""
+    flat = array.reshape(array.shape[0], -1)
+    out = np.array([defs.rate_func(flat[:, i]) for i in range(flat.shape[1])])
+    return out.reshape(array.shape[1:])
+
+
+def test_rate_func():
+    print("rate_func_vectorised vs rate_func")
+    rng = np.random.default_rng(1)
+
+    # 3-D, as used for the attributed and ERF rates: (years, vars, ensemble).
+    # 10 years is the AR6 rate window (year-9 .. year inclusive).
+    a = rng.random((10, 6, 400)).astype(np.float32)
+    got, ref = defs.rate_func_vectorised(a), reference_rate(a)
+    check(f"3-D shape {a.shape} -> {got.shape}", got.shape == ref.shape)
+    check(f"3-D agrees within {TOL:g} "
+          f"(max {np.abs(got - ref).max():.2e})",
+          np.abs(got - ref).max() < TOL)
+
+    # 2-D, as used by rate_HadCRUT5: (years, ensemble).
+    b = rng.random((10, 200)).astype(np.float32)
+    got, ref = defs.rate_func_vectorised(b), reference_rate(b)
+    check(f"2-D shape {b.shape} -> {got.shape}", got.shape == ref.shape)
+    check(f"2-D agrees within {TOL:g} "
+          f"(max {np.abs(got - ref).max():.2e})",
+          np.abs(got - ref).max() < TOL)
+
+    # The slope is a single weighted sum, so float64 agreement should be at
+    # machine epsilon rather than merely within tolerance.
+    c = rng.random((10, 50)).astype(np.float64)
+    got, ref = defs.rate_func_vectorised(c), reference_rate(c)
+    check(f"float64 agrees within 1e-14 "
+          f"(max {np.abs(got - ref).max():.2e})",
+          np.abs(got - ref).max() < 1e-14)
+
+    # Window length is not hard-coded anywhere.
+    for n in (5, 10, 20):
+        d = rng.random((n, 3, 20)).astype(np.float64)
+        got, ref = defs.rate_func_vectorised(d), reference_rate(d)
+        check(f"window n={n:<2d} agrees", np.abs(got - ref).max() < 1e-14)
+
+    # An exact straight line must return its own slope: the clearest statement
+    # of what the AR6 rate estimator is supposed to do.
+    slope, intercept, n = 0.017, -0.2, 10
+    line = (intercept + slope * np.arange(n)).astype(np.float64)
+    got = defs.rate_func_vectorised(line[:, None])[0]
+    check(f"exact line recovers slope ({got:.12f} vs {slope:.12f})",
+          abs(got - slope) < 1e-12)
+
+    # A flat series has zero trend.
+    flat = np.full((10, 4), 1.234, dtype=np.float64)
+    check("flat series gives zero rate",
+          np.abs(defs.rate_func_vectorised(flat)).max() < 1e-15)
+
+
 def main():
     test_final_value_of_trend()
+    print()
+    test_rate_func()
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S):")

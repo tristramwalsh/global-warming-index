@@ -1592,25 +1592,21 @@ if __name__ == "__main__":
     # RATE: AR6 DEFINITION
     if rate_toggle:
         T7 = dt.datetime.now()
+        print('↳ Calculating AR6-definition warming rates', end=' ')
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
-            print(f'↳ Calculating AR6-definition warming rate: {year}', end='\r')
             recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             ten_slice = temp_Att_Results[recent_years, :, :]
 
             # Calculate AR6-definition warming rate for each var-ens
             # combination. See AR6 WGI Chapter 3 Table 3.1.
-            temp_Rate_Results = np.empty(
-                ten_slice.shape[1:])
-            # Only include 'Ant'
-            for vv in range(ten_slice.shape[1]):
-                # Parallelise over ensemble members
-                with mp.Pool(defs.n_workers()) as p:
-                    single_series = [ten_slice[:, vv, ii]
-                                     for ii in range(ten_slice.shape[2])]
-                    # final_value_of_trend is from src/definitions.py
-                    results = p.map(defs.rate_func, single_series)
-                temp_Rate_Results[vv, :] = np.array(results)
+            # This loop runs once per year from 1950, and previously created an
+            # mp.Pool per variable within each of those years -- several
+            # hundred pools per member, each pickling millions of 10-year
+            # series. That is why enabling rates used to cost days. The
+            # vectorised form fits every trend in one weighted sum, and agrees
+            # with rate_func to ~1e-16.
+            temp_Rate_Results = defs.rate_func_vectorised(ten_slice)
 
             # Obtain statistics
             gwi_rate_array = np.percentile(
@@ -1630,7 +1626,6 @@ if __name__ == "__main__":
         df_rates.to_csv(f'{results_folder}{output_path}' +
                         f'GWI_results_rates_{variation}.csv')
         T8 = dt.datetime.now()
-        print('')
         print(f'... took {T8 - T7}')
 
     time_omega = dt.datetime.now()
