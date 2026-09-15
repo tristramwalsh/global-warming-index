@@ -147,9 +147,33 @@ PARTITION=${PARTITION}
 WALLTIME=12:00:00
 SIM_CPUS=28
 SIM_NAME=gwi
-SLURM_FILE_NAME=${SIM_NAME}_${START_REGRESS}-
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
+
+# Job/file naming ############################################################
+# Every generated name (job name, log file, .slurm file) is built from a single
+# RUN_TAG describing the configuration, using the same KEY--value convention
+# that gwi.py writes into the results paths. This means a job in squeue can be
+# matched to the results it produces by eye.
+#
+# Previously none of the three names encoded the ensemble member range, so
+# running this script twice for different halves of the ensemble produced
+# byte-identical names: the two jobs then shared one log file and clobbered
+# each other's output (and the .slurm file could be overwritten or deleted
+# between `cat` and `sbatch`, submitting the wrong member range).
+
+# Member range as a filename-safe tag. Brace expansion does NOT occur at
+# assignment, so SPECIFY_ENSEMBLE_MEMBERS holds the literal string "{1..50}"
+# and this operates on that text:
+#   {1..50} -> 1-50 ;  {51..100} -> 51-100 ;  all -> all
+MEMBER_TAG=$(echo "${SPECIFY_ENSEMBLE_MEMBERS}" | tr -d '{}' | sed 's/\.\./-/')
+
+# Regression variables, sorted and dash-joined to match the results naming.
+# gwi.py sorts its --regress-variables, so VARS=GHG,OHF,Nat becomes the
+# directory VARIABLES--GHG-Nat-OHF; sorting here keeps the two in step. It also
+# removes the commas, which otherwise need quoting in every command that
+# touches a log file.
+VARS_TAG=$(echo "${VARS}" | tr ',' '\n' | sort | paste -sd-)
 
 # Keep track of which iteration we are on (avoid overwriting log files)
 count=1
@@ -163,7 +187,33 @@ do
 # 
 
 echo $count
-cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
+
+# Compose the identifier for this job. Core fields are always present; the
+# remaining flags are appended only when set away from their usual value, so
+# that ordinary runs keep shorter names.
+RUN_TAG="SCENARIO--${SCENARIO}"
+RUN_TAG="${RUN_TAG}_VARIABLES--${VARS_TAG}"
+RUN_TAG="${RUN_TAG}_REGRESSED-YEARS--${START_REGRESS}-${i}"
+RUN_TAG="${RUN_TAG}_TRUNCATED-YEARS--${TRUNCATION}"
+RUN_TAG="${RUN_TAG}_SAMPLES--${j}"
+RUN_TAG="${RUN_TAG}_MEMBERS--${MEMBER_TAG}"
+RUN_TAG="${RUN_TAG}_ITER--${count}"
+if [ "${COMMITTED}" != "n" ]; then
+  RUN_TAG="${RUN_TAG}_COMMITTED--${COMMITTED}"
+fi
+if [ "${INCLUDE_SUB_VARS}" = "y" ]; then
+  RUN_TAG="${RUN_TAG}_SUB-VARS--y"
+fi
+if [ "${INCLUDE_RATE}" = "y" ]; then
+  RUN_TAG="${RUN_TAG}_RATE--y"
+fi
+if [ "${CALCULATE_PRIORS_OUTPUT}" = "n" ]; then
+  RUN_TAG="${RUN_TAG}_PRIORS--n"
+fi
+
+SLURM_FILE=${SIM_NAME}_${RUN_TAG}.slurm
+
+cat > ${SLURM_FILE} << EOF
 #!/bin/bash
 #
 ## Set the maximum amount of runtime
@@ -177,10 +227,11 @@ cat > ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm << EOF
 #SBATCH --partition=${PARTITION}
 
 ## Name the job and queue it
-#SBATCH --job-name=${SIM_NAME}_${SCENARIO}_${START_REGRESS}-${i}_${j}_${count}
+#SBATCH --job-name=${SIM_NAME}_${RUN_TAG}
 
-## Declare an output log for all jobs to use:
-#SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${SCENARIO}_${VARS}_${START_REGRESS}-${i}_${j}_${count}.out
+## Declare an output log. %j is expanded by Slurm to the job ID, which
+## keeps repeat runs of the same configuration in separate files.
+#SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${RUN_TAG}_JOB--%j.out
 
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
@@ -197,11 +248,11 @@ fi
 EOF
 
 # Submit a single job to slurm.
-sbatch ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
+sbatch ${SLURM_FILE}
 
 # Remove the job file as slurm reads the script at submission time and it is
 # no longer needed.
-rm -rf ${SLURM_FILE_NAME}${i}_${j}_${VARS}_${count}.slurm
+rm -rf ${SLURM_FILE}
 
 done
 
