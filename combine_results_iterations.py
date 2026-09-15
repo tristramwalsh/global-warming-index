@@ -2022,6 +2022,10 @@ def figure_headlines_comparison(
             window=20, center=True, axis=0
         ).mean()
 
+    # Residual statistics for the historical-only estimates against the
+    # 20-year Obs running mean (i.e. the data plotted in the ax2 subplot).
+    resid_stats = []
+
     # for headline in headlines:
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
         plot_vars_main = params['plot_vars'].copy()
@@ -2045,14 +2049,27 @@ def figure_headlines_comparison(
                      color=gr.HEADLINE_COLOURS[headline]
                      )
             if vv != 'Nat':
+                df_hist_headline = results_dfs[scen][ens][reg_vars][
+                    'HISTORICAL-ONLY'][headline]
+                resid = (df_hist_headline.loc[:, (vv, '50')]
+                         - df_temp_Obs_20yr)
                 ax2.plot(
-                    (results_dfs[scen][ens][reg_vars][
-                        'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')]
-                     - df_temp_Obs_20yr),
+                    resid,
                     label=f'{headline}-{vv}',
                     linestyle=ls,
                     color=gr.HEADLINE_COLOURS[headline]
                 )
+                # Score the residual against the headline's own uncertainty,
+                # with sigma inferred from the 5-95 percentile range.
+                resid = resid.dropna()
+                sigma = (df_hist_headline.loc[resid.index, (vv, '95')]
+                         - df_hist_headline.loc[resid.index, (vv, '5')]
+                         ) / (2 * 1.645)
+                loglik = -0.5 * np.sum(np.log(2 * np.pi * sigma ** 2)
+                                       + (resid / sigma) ** 2)
+                resid_stats.append(
+                    (headline, vv, len(resid), resid.mean(), resid.std(),
+                     np.sqrt((resid ** 2).mean()), loglik))
 
             # Calculate the full-information timeseries for the headlines
 
@@ -2114,6 +2131,15 @@ def figure_headlines_comparison(
     for ax in [ax1, ax2]:
         ax.set_xlim(params['start_year'], params['end_year'])
     gr.overall_legend(fig, 'lower center', 5)
+
+    # Report the ax2 residual statistics against the 20-year Obs running mean
+    print(f'        Historical-only minus 20-year Obs running mean | '
+          f'{scen} | {ens} | {reg_vars}')
+    print('          {:<8} {:<4} {:>4} {:>8} {:>8} {:>8} {:>10}'.format(
+        'Headline', 'Var', 'N', 'bias', 'std', 'rmse', 'loglik'))
+    for row in sorted(resid_stats):
+        print('          {:<8} {:<4} {:>4d} {:>8.4f} {:>8.4f} {:>8.4f} '
+              '{:>10.2f}'.format(*row))
 
     ax2.set_ylabel(r'$\Delta$ vs 20-year obs, ⁰C')
     ax4.set_ylabel(r'$\Delta$ vs 20-year obs, ⁰C')
