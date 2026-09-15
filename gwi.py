@@ -1221,7 +1221,8 @@ if __name__ == "__main__":
 
     # TIMESERIES RESULTS ######################################################
     print('Calculating percentiles for GWI', end=' ')
-    gwi_timeseries_array = np.percentile(temp_Att_Results, sigmas_all, axis=2)
+    gwi_timeseries_array = defs.percentile_threaded(
+        temp_Att_Results, sigmas_all, axis=2)
     dict_Results = {
         (var, sigma):
         gwi_timeseries_array[sigmas_all.index(sigma), :, vars_list.index(var)]

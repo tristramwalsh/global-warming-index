@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 import functools
@@ -1202,3 +1203,59 @@ def model_prior_warming(
         temp_Mod_array[:, var_list_ERF.index(var), :] = temp_All
 
     return temp_Mod_array
+
+
+def percentile_threaded(array, q, axis, n_threads=None):
+    """np.percentile, parallelised by splitting the leading axis over threads.
+
+    numpy is not automatically parallel: it only threads operations that
+    dispatch to a threaded BLAS/LAPACK (matmul, decompositions). Reductions and
+    sorts -- and so np.percentile, which is built on np.partition -- are plain
+    single-threaded C loops.
+
+    Those loops do release the GIL, however, so ordinary threads parallelise
+    them. Threads are used rather than processes because the attribution array
+    runs to tens of GB: sharing it costs nothing, whereas mp.Pool would pickle
+    a copy per worker.
+
+    Results are bitwise identical to np.percentile(array, q, axis), because
+    each leading-axis slice is reduced independently of the others and the
+    per-slice computation is untouched.
+
+    Parameters
+    ----------
+    array : ndarray, reduced along `axis`, split along axis 0.
+    q, axis : as np.percentile. `axis` must not be 0, which is the split axis.
+    n_threads : defaults to n_workers().
+    """
+    if axis == 0:
+        raise ValueError(
+            'percentile_threaded splits along axis 0, so it cannot also '
+            'reduce along it; use np.percentile directly.')
+
+    if n_threads is None:
+        n_threads = n_workers()
+    n_chunks = min(n_threads, array.shape[0])
+
+    # Not worth the thread overhead, and keeps a trivially correct fallback.
+    if n_chunks <= 1:
+        return np.percentile(array, q, axis=axis)
+
+    # np.percentile prepends the q axis, so the array's axis 0 becomes axis 1
+    # of the result (axis != 0 is guaranteed above, so it is never consumed).
+    out = None
+    chunks = np.array_split(np.arange(array.shape[0]), n_chunks)
+
+    def _worker(idx):
+        return idx, np.percentile(array[idx], q, axis=axis)
+
+    with ThreadPoolExecutor(n_chunks) as pool:
+        for idx, result in pool.map(_worker, chunks):
+            if out is None:
+                out = np.empty(
+                    (result.shape[0], array.shape[0]) + result.shape[2:],
+                    dtype=result.dtype)
+            out[:, idx, ...] = result
+
+    return out
+
