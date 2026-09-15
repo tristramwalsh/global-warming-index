@@ -488,6 +488,8 @@ def GWI_faster(
 
 if __name__ == "__main__":
 
+    time_alpha = dt.datetime.now()
+
     # Percentiles to calculate and use throughout analysis.
     # sigmas = [[32, 68], [5, 95], [0.3, 99.7]]
     # These are the percentile ranges used in the IPCC likelihood statements:
@@ -1605,3 +1607,7 @@ if __name__ == "__main__":
         T8 = dt.datetime.now()
         print('')
         print(f'... took {T8 - T7}')
+
+    time_omega = dt.datetime.now()
+    total_time = time_omega - time_alpha
+    print(f'\nTotal time taken: {total_time}')
