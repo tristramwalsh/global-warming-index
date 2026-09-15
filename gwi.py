@@ -1344,19 +1344,15 @@ if __name__ == "__main__":
 
             # Calculate SR15-definition warming for each var-ens combination
             # See SR15 Ch1 1.2.1
-            # temp_Att_Results_SR15 = np.apply_along_axis(
-            #     final_value_of_trend, 0, temp_Att_Results_SR15_recent)
-            temp_Att_Results_SR15 = np.empty(
-                temp_Att_Results_SR15_recent.shape[1:])
-            for vv in range(temp_Att_Results_SR15_recent.shape[1]):
-                # print(vv)
-                with mp.Pool(defs.n_workers()) as p:
-                    times = [temp_Att_Results_SR15_recent[:, vv, ii]
-                             for ii
-                             in range(temp_Att_Results_SR15_recent.shape[2])]
-                    # final_value_of_trend is from src/definitions.py
-                    results = p.map(defs.final_value_of_trend, times)
-                temp_Att_Results_SR15[vv, :] = np.array(results)
+            # This previously looped over variables, creating an mp.Pool per
+            # variable and mapping defs.final_value_of_trend over a list of
+            # millions of individual 16-year series. The pickling of those
+            # series dominated the runtime; the vectorised form below fits
+            # every trend in one weighted sum. It agrees with the per-series
+            # function to ~1e-7 (float32 rounding) rather than exactly -- see
+            # final_value_of_trend_vectorised for why.
+            temp_Att_Results_SR15 = defs.final_value_of_trend_vectorised(
+                temp_Att_Results_SR15_recent)
 
             # Obtain statistics
             gwi_headline_array = np.percentile(
@@ -1515,9 +1511,11 @@ if __name__ == "__main__":
                     temp_Obs_SR15_recent = df_temp_Obs.loc[year-15:year].to_numpy()
                     # print(temp_Obs_SR15_recent)
 
-                    results = []
-                    for ii in range(temp_Obs_SR15_recent.shape[1]):
-                        results.append(defs.final_value_of_trend(temp_Obs_SR15_recent[:, ii]))
+                    # Vectorised for consistency with the attributed SR15
+                    # temps above: both paths must use the same estimator, or
+                    # they would disagree at the ~1e-7 rounding level.
+                    results = defs.final_value_of_trend_vectorised(
+                        temp_Obs_SR15_recent)
 
                     obs_headline_array = np.percentile(results, sigmas_all)
 

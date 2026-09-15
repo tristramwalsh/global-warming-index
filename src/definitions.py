@@ -906,6 +906,46 @@ def final_value_of_trend(temp):
     return fit(time)[-1]
 
 
+def _trend_weights(n):
+    """Ordinary-least-squares slope weights for a fixed x-axis of 0..n-1.
+
+    Fitting a straight line by least squares gives the slope
+
+        b = sum_i (x_i - xbar)(y_i - ybar) / sum_i (x_i - xbar)^2
+
+    Here x is always the integers 0..n-1, so everything involving x can be
+    worked out once: with w_i = (x_i - xbar) / sum_j (x_j - xbar)^2 the slope
+    is just the dot product w . y. That turns a per-series curve fit into a
+    single weighted sum, which numpy can apply across a whole array at once.
+
+    Returns (w, dx), where dx = x_last - xbar is the offset needed to evaluate
+    the fitted line at its final point (see final_value_of_trend_vectorised).
+    """
+    x = np.arange(n, dtype=np.float64)
+    xc = x - x.mean()
+    return xc / (xc @ xc), x[-1] - x.mean()
+
+
+def final_value_of_trend_vectorised(array):
+    """Vectorised final_value_of_trend, applied along axis 0.
+
+    Takes an array of shape (n, ...) and returns shape (...), fitting an
+    independent trend down axis 0 for every remaining position. This replaces
+    looping final_value_of_trend over each series individually.
+
+    A least-squares line passes through (xbar, ybar), so its value at the final
+    point is ybar + b * (x_last - xbar).
+
+    NOTE: this agrees with final_value_of_trend to ~1e-7 rather than exactly.
+    np.polyfit solves the least-squares problem via SVD (numpy.linalg.lstsq)
+    instead of the closed form above; the two are mathematically identical but
+    order the floating-point operations differently. The residual difference is
+    float32 rounding on values of order 1.
+    """
+    w, dx = _trend_weights(array.shape[0])
+    return array.mean(axis=0) + np.tensordot(w, array, axes=(0, 0)) * dx
+
+
 def rate_func(array):
     # Instead of passing years array, just set the start year for the slice
     # to zero
