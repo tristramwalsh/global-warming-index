@@ -1595,7 +1595,7 @@ if __name__ == "__main__":
     # RATE: AR6 DEFINITION
     if rate_toggle:
         T7 = dt.datetime.now()
-        print('↳ Calculating AR6-definition warming rates', end=' ')
+        print('Calculating AR6-definition attributed warming rates', end=' ')
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
             recent_years = defs.contiguous_slice(
