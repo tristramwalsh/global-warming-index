@@ -1,12 +1,15 @@
-"""Pin the vectorised trend functions to the per-series originals.
+"""Pin the optimised numerical routines to their reference implementations.
 
 The vectorised forms in src/definitions.py replace np.polyfit with the
 closed-form least-squares solution, which is mathematically identical but
 orders the floating-point operations differently. They are therefore expected
 to agree with the originals to rounding, not exactly.
 
-This guards that equivalence: if either implementation is edited such that they
-diverge beyond rounding, this fails.
+percentile_threaded is different: chunking the leading axis does not change
+any individual percentile, so it must agree EXACTLY, and is asserted as such.
+
+This guards those equivalences: if any implementation is edited such that it
+diverges, this fails.
 
 Run from the repository root:
 
@@ -147,10 +150,55 @@ def test_rate_func():
           np.abs(defs.rate_func_vectorised(flat)).max() < 1e-15)
 
 
+def test_percentile_threaded():
+    print("percentile_threaded vs np.percentile")
+    sig = [0.3, 5, 17, 33, 50, 67, 83, 95, 99.7]
+    rng = np.random.default_rng(2)
+
+    # Unlike the trend functions, this one must be EXACTLY equal, not merely
+    # close: chunking the leading axis does not alter any individual
+    # percentile computation. If this ever weakens to approximate agreement,
+    # something is wrong with the chunk assembly.
+    cases = [
+        ((201, 6, 5000), 2, "attribution array (years, vars, ensemble)"),
+        ((201, 6, 5000), -1, "negative axis"),
+        ((6, 200000), 1, "headline/rate shape (vars, ensemble)"),
+        ((201, 6, 2000), 2, "priors shape"),
+        ((1, 6, 5000), 2, "single leading element -> serial fallback"),
+        ((3, 6, 500), 2, "fewer leading elements than threads"),
+        ((50, 4, 300), 1, "reduce a middle axis"),
+        ((40, 900), 1, "2-D input"),
+    ]
+    for shape, axis, label in cases:
+        a = rng.random(shape).astype(np.float32)
+        ref = np.percentile(a, sig, axis=axis)
+        got = defs.percentile_threaded(a, sig, axis=axis, n_threads=14)
+        check(f"{label:44s} exactly equal",
+              got.shape == ref.shape and np.array_equal(got, ref))
+
+    # Thread count must not affect the result at all.
+    a = rng.random((201, 6, 4000)).astype(np.float32)
+    ref = np.percentile(a, sig, axis=2)
+    for nt in (1, 2, 7, 14, 28, 64):
+        got = defs.percentile_threaded(a, sig, axis=2, n_threads=nt)
+        check(f"n_threads={nt:<3d} exactly equal", np.array_equal(got, ref))
+
+    # axis=0 is the split axis, so reducing along it would silently produce
+    # wrong numbers. It must raise instead.
+    raised = False
+    try:
+        defs.percentile_threaded(a, sig, axis=0)
+    except ValueError:
+        raised = True
+    check("axis=0 raises ValueError rather than corrupting", raised)
+
+
 def main():
     test_final_value_of_trend()
     print()
     test_rate_func()
+    print()
+    test_percentile_threaded()
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S):")

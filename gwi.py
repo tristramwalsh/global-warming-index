@@ -1240,7 +1240,7 @@ if __name__ == "__main__":
 
     if calculate_priors_output:
         print('Calculating percentiles for priors', end=' ')
-        priors_timeseries_array = np.percentile(
+        priors_timeseries_array = defs.percentile_threaded(
             temp_Priors, sigmas_all, axis=2)
         dict_Results_priors = {
             (var, sigma):
@@ -1355,7 +1355,7 @@ if __name__ == "__main__":
                 temp_Att_Results_SR15_recent)
 
             # Obtain statistics
-            gwi_headline_array = np.percentile(
+            gwi_headline_array = defs.percentile_threaded(
                 temp_Att_Results_SR15, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1398,7 +1398,7 @@ if __name__ == "__main__":
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
 
             # Obtain statistics
-            gwi_headline_array = np.percentile(
+            gwi_headline_array = defs.percentile_threaded(
                 temp_Att_Results_AR6, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1440,7 +1440,7 @@ if __name__ == "__main__":
                 temp_Att_Results_CGWL = \
                     temp_Att_Results[recent_years, :, :].mean(axis=0)
                 # Obtain statistics
-                gwi_headline_array = np.percentile(
+                gwi_headline_array = defs.percentile_threaded(
                     temp_Att_Results_CGWL, sigmas_all, axis=1)
                 dict_Results = {
                     (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1609,7 +1609,7 @@ if __name__ == "__main__":
             temp_Rate_Results = defs.rate_func_vectorised(ten_slice)
 
             # Obtain statistics
-            gwi_rate_array = np.percentile(
+            gwi_rate_array = defs.percentile_threaded(
                 temp_Rate_Results, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma):
