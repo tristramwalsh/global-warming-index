@@ -19,7 +19,8 @@ END_REGRESS=`seq 1950 2025`
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
-SUBSAMPLE_ITERATIONS=(60 60 60)  # Size of subsampling
+# SUBSAMPLE_ITERATIONS=(80 80 80)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(10000)  # Size of subsampling to max out the calculation
 
 # Select the reference period for the temperature datasets
 # The selected period offset applies to FaIR outputs, GMT Observations,
@@ -60,7 +61,8 @@ INCLUDE_SUB_VARS=n
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
 # e.g. observed_JK-2024-SSP245
-SCENARIO=observed-2025
+# e.g. observed_JK-2025-SSP245
+SCENARIO=observed_JK-2025-SSP245
 
 # Select whether to consider committed warming at constant ERF.
 # This amends/extends the scenario to hold ERF constant from a start year
@@ -70,10 +72,10 @@ SCENARIO=observed-2025
 # e.g. n (no committed warming)
 # e.g. 2024-2300 (constant ERF from 2024 to 2300)
 # e.g. end_regress-2300 (constant ERF from the end of regression to 2300)
-COMMITTED=2025-2050
+COMMITTED=n
 
 # Select truncation range
-TRUNCATION=1850-2025
+TRUNCATION=1850-2050
 
 # Select whether to include the rate of change in the regression
 #TODO: Specify which years to include rate of change for.
@@ -117,7 +119,7 @@ HEADLINE_YEARS='end_regress'
 # NOTE: member labels are the dataset's own column names, and are 1-indexed:
 # HadCRUT ships 200 realisations ({1..200}), the John Kennedy ensemble 100
 # ({1..100}).
-SPECIFY_ENSEMBLE_MEMBERS=all
+SPECIFY_ENSEMBLE_MEMBERS={51..100}
 
 
 # Select which uncertainty sources this single-member selection should apply
@@ -132,7 +134,7 @@ SPECIFY_ENSEMBLE_MEMBERS=all
 # e.g. 'ERF,GMT'  # (Apply above selection to both ERF and GMT; in this case,
 # the same ensemble members will be paired for both sources;
 # i.e. ensemble member 0 for ERF is paired with ensemble member 0 for GMT)
-SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
+SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT'
 
 
 ###############################################################################
@@ -148,7 +150,7 @@ SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
 # e.g. arc      (force ARC)
 # e.g. htc      (force HTC)
 # e.g. arc,htc  (let sbatch pick whichever offers the earliest start time)
-CLUSTER=htc
+CLUSTER=arc,htc
 
 if hostname | grep -Eq "htc|arc"; then  # ARC cluster
   PARTITION=short
@@ -161,9 +163,9 @@ else
   exit 1
 fi
 PARTITION=${PARTITION}
-WALLTIME=0:30:00
-SIM_CPUS=28
-CPU_MEM=8G
+WALLTIME=5:00:00
+SIM_CPUS=14
+CPU_MEM=6G
 SIM_NAME=gwi
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
