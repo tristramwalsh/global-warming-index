@@ -193,12 +193,61 @@ def test_percentile_threaded():
     check("axis=0 raises ValueError rather than corrupting", raised)
 
 
+def test_contiguous_slice():
+    print("contiguous_slice vs boolean-mask indexing")
+    rng = np.random.default_rng(3)
+    yrs = np.arange(1850, 2051)
+    a = rng.random((201, 6, 2000)).astype(np.float32)
+    sig = [5, 50, 95]
+
+    # The three real window shapes: AR6 (10yr), SR1.5 (16yr), CGWL (20yr,
+    # extending past the headline year).
+    for lo, hi, label in [(2016, 2025, "AR6 10yr"),
+                          (2010, 2025, "SR1.5 16yr"),
+                          (2016, 2035, "CGWL 20yr"),
+                          (1850, 1859, "first window"),
+                          (2041, 2050, "last window")]:
+        mask = ((lo <= yrs) * (yrs <= hi))
+        sl = defs.contiguous_slice(mask)
+        cp, vw = a[mask, :, :], a[sl, :, :]
+        check(f"{label:14s} selects same block", np.array_equal(cp, vw))
+        check(f"{label:14s} is a view, not a copy", np.shares_memory(vw, a))
+        # The property that makes this safe: identical strides, so every
+        # downstream reduction sees the same layout and is bitwise unchanged.
+        check(f"{label:14s} strides match the copy", cp.strides == vw.strides)
+        check(f"{label:14s} mean(axis=0) bitwise equal",
+              np.array_equal(cp.mean(axis=0), vw.mean(axis=0)))
+        check(f"{label:14s} rate bitwise equal",
+              np.array_equal(defs.rate_func_vectorised(cp),
+                             defs.rate_func_vectorised(vw)))
+        check(f"{label:14s} percentile bitwise equal",
+              np.array_equal(np.percentile(cp, sig, axis=2),
+                             np.percentile(vw, sig, axis=2)))
+
+    # An empty selection must not blow up.
+    check("empty mask -> empty slice",
+          defs.contiguous_slice(np.zeros(201, dtype=bool)) == slice(0, 0))
+
+    # A non-contiguous mask must raise rather than silently select a
+    # different set of years.
+    gappy = np.zeros(201, dtype=bool)
+    gappy[[10, 11, 50]] = True
+    raised = False
+    try:
+        defs.contiguous_slice(gappy)
+    except ValueError:
+        raised = True
+    check("non-contiguous mask raises ValueError", raised)
+
+
 def main():
     test_final_value_of_trend()
     print()
     test_rate_func()
     print()
     test_percentile_threaded()
+    print()
+    test_contiguous_slice()
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S):")

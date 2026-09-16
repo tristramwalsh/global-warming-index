@@ -1339,7 +1339,8 @@ if __name__ == "__main__":
                     'to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-            years_SR15 = ((year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
+            years_SR15 = defs.contiguous_slice(
+                (year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
             # Calculate SR15-definition warming for each var-ens combination
@@ -1393,7 +1394,8 @@ if __name__ == "__main__":
                     f'↳ AR6 definition requires the years {year-9} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
+            recent_years = defs.contiguous_slice(
+                (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_AR6 = \
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
 
@@ -1436,7 +1438,8 @@ if __name__ == "__main__":
             else:
                 print('↳ Calculating CGWL-definition temps', end=' ')
 
-                recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
+                recent_years = defs.contiguous_slice(
+                    (year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
                 temp_Att_Results_CGWL = \
                     temp_Att_Results[recent_years, :, :].mean(axis=0)
                 # Obtain statistics
@@ -1595,7 +1598,8 @@ if __name__ == "__main__":
         print('↳ Calculating AR6-definition warming rates', end=' ')
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
-            recent_years = ((year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
+            recent_years = defs.contiguous_slice(
+                (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             ten_slice = temp_Att_Results[recent_years, :, :]
 
             # Calculate AR6-definition warming rate for each var-ens

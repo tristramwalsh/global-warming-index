@@ -1172,6 +1172,44 @@ def model_prior_warming(
     return temp_Mod_array
 
 
+def contiguous_slice(mask):
+    """Convert a boolean mask with no gaps in it into an equivalent slice.
+
+    "No gaps" is a property of a SINGLE mask: the elements it selects must be
+    adjacent to one another, so that start:stop picks out exactly the same
+    set. It says nothing about how one mask relates to the next. The AR6 rate
+    windows, for instance, overlap heavily from year to year (1950-1959, then
+    1951-1960, ...) but each individual window is still an unbroken run and so
+    converts cleanly. A mask selecting, say, indices 100, 101 and 105 could
+    not, and raises.
+
+    The headline and rate calculations select year windows with masks of the
+    form (lo <= yrs) & (yrs <= hi), which by construction have no gaps.
+    Indexing an array with such a mask is fancy indexing, so it COPIES the
+    selected block; indexing with the equivalent slice returns a view.
+
+    That matters at scale: on the full attribution array (~69 GB at
+    samples=80, GMT-all) each mask copy costs ~1.1 s and several GB, and the
+    AR6 rate loop performs one per year from 1950.
+
+    Slicing axis 0 of a C-contiguous array yields a C-contiguous view with the
+    same strides as the copy would have had, so every downstream reduction
+    sees an identical memory layout and results are bitwise unchanged.
+
+    Raises ValueError if the mask has gaps, rather than silently returning a
+    slice that selects different elements.
+    """
+    idx = np.flatnonzero(mask)
+    if idx.size == 0:
+        return slice(0, 0)
+    start, stop = int(idx[0]), int(idx[-1]) + 1
+    if idx.size != stop - start:
+        raise ValueError(
+            'contiguous_slice requires a mask selecting a contiguous run; '
+            f'got {idx.size} elements spanning {start}:{stop}.')
+    return slice(start, stop)
+
+
 def percentile_threaded(array, q, axis, n_threads=None):
     """np.percentile, parallelised by splitting the leading axis over threads.
 
@@ -1211,18 +1249,24 @@ def percentile_threaded(array, q, axis, n_threads=None):
     # np.percentile prepends the q axis, so the array's axis 0 becomes axis 1
     # of the result (axis != 0 is guaranteed above, so it is never consumed).
     out = None
-    chunks = np.array_split(np.arange(array.shape[0]), n_chunks)
+    # Chunk with slices, NOT index arrays. array[slice] is a view, whereas
+    # fancy indexing with np.array_split(np.arange(n), k) would COPY each
+    # chunk -- and with every thread holding its copy at once that doubles the
+    # peak memory of the whole call. On the full attribution array (~69 GB at
+    # samples=80, GMT-all) that extra copy was enough to OOM a 224 GB job.
+    bounds = np.linspace(0, array.shape[0], n_chunks + 1).astype(int)
+    chunks = [slice(bounds[i], bounds[i + 1]) for i in range(n_chunks)]
 
-    def _worker(idx):
-        return idx, np.percentile(array[idx], q, axis=axis)
+    def _worker(sl):
+        return sl, np.percentile(array[sl], q, axis=axis)
 
     with ThreadPoolExecutor(n_chunks) as pool:
-        for idx, result in pool.map(_worker, chunks):
+        for sl, result in pool.map(_worker, chunks):
             if out is None:
                 out = np.empty(
                     (result.shape[0], array.shape[0]) + result.shape[2:],
                     dtype=result.dtype)
-            out[:, idx, ...] = result
+            out[:, sl, ...] = result
 
     return out
 
