@@ -224,7 +224,8 @@ def extract_ensembles(df_ERF, ensemble_members):
     else:
         print(f'Invalid ensemble members {ensemble_members} for ensemble: '
               f'{df_ERF.columns.get_level_values("ensemble").unique()}')
-        raise ValueError('Invalid ensemble member {ensemble_member} for data.')
+        raise ValueError(
+            f'Invalid ensemble member {ensemble_members} for data.')
 
     return df_ERF.loc[:, (slice(None), ens_mems)]
 
@@ -581,7 +582,8 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     else:
         print(f'Invalid ensemble members {ensemble_members} for ensemble:'
               + f'{df_temp.columns.to_list()}')
-        raise ValueError(f'Invalid ensemble member {ensemble_member} for data.')
+        raise ValueError(
+            f'Invalid ensemble member {ensemble_members} for data.')
 
     # Remove pre-industrial baseline from temperature data
     df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
@@ -972,87 +974,6 @@ def rate_func_vectorised(array):
     """
     w, _ = _trend_weights(array.shape[0])
     return np.tensordot(w, array, axes=(0, 0))
-
-
-def rate_HadCRUT5(start_pi, end_pi, start_yr, end_yr, sigmas_all):
-    # Load the HadCRUT5 dataset
-    df_temp_Obs = load_Temp_HadCRUT(start_pi, end_pi, start_yr, end_yr)
-    temp_Yrs = df_temp_Obs.index.values
-    arr_temp_Obs = df_temp_Obs.values
-    # Apply the function defs.rate_calc to each column of this dataframe
-
-    dfs_rates = []
-    for year in np.arange(1950, end_yr+1):
-        recent_years = ((year-9 <= temp_Yrs) * (temp_Yrs <= year))
-        ten_slice = arr_temp_Obs[recent_years, :]
-
-        # Vectorised over the ensemble; see rate_func_vectorised.
-        forc_Rate_results = rate_func_vectorised(ten_slice)
-
-        # Obtain statistics
-        obs_rate_array = np.percentile(
-            forc_Rate_results, sigmas_all, axis=0)
-        dict_Results = {
-            ('Obs', str(sigma)): obs_rate_array[sigmas_all.index(sigma)]
-            for sigma in sigmas_all}
-        df_rates_i = pd.DataFrame(
-            dict_Results, index=[f'{year-9}-{year} (AR6 rate definition)'])
-        df_rates_i.columns.names = ['variable', 'percentile']
-        df_rates_i.index.name = 'Year'
-        dfs_rates.append(df_rates_i)
-    df_rates = pd.concat(dfs_rates, axis=0)
-    return df_rates
-
-
-def rate_ERF(end_yr, sigmas_all):
-    rate_vars = ['Nat', 'GHG', 'OHF', 'Ant', 'Tot']
-    df_forc = load_ERF_CMIP6()
-    forc_Group_names = sorted(
-        df_forc.columns.get_level_values('variable').unique())
-    forc_Ens_names = sorted(
-        df_forc.columns.get_level_values('ensemble').unique())
-    forc_Yrs = df_forc.index.values
-
-    # Apply the function defs.rate_calc to each column of this dataframe
-    dfs_rates = []
-    arr_forc = np.empty(
-        (len(forc_Yrs), len(forc_Group_names)+2, len(forc_Ens_names)))
-    # Move the data for each forcing group into a separate array dimension
-    for vv in forc_Group_names:
-        arr_forc[:, rate_vars.index(vv), :] = df_forc[vv].values
-    arr_forc[:, rate_vars.index('Ant'), :] = (
-        arr_forc[:, rate_vars.index('GHG'), :] +
-        arr_forc[:, rate_vars.index('OHF'), :])
-    arr_forc[:, rate_vars.index('Tot'), :] = (
-        arr_forc[:, rate_vars.index('Ant'), :] +
-        arr_forc[:, rate_vars.index('Nat'), :]
-    )
-
-    for year in np.arange(1950, end_yr+1):
-        recent_years = ((year-9 <= forc_Yrs) * (forc_Yrs <= year))
-        ten_slice = arr_forc[recent_years, :, :]
-
-        # Calculate AR6-definition ERF rate for each var-ens combination.
-        # Vectorised over both variables and ensemble members at once; see
-        # rate_func_vectorised.
-        forc_Rate_results = rate_func_vectorised(ten_slice)
-
-        # Obtain statistics
-        forc_rate_array = np.percentile(
-            forc_Rate_results, sigmas_all, axis=1)
-        dict_Results = {
-            (var, str(sigma)):
-            forc_rate_array[sigmas_all.index(sigma), rate_vars.index(var)]
-            for var in rate_vars for sigma in sigmas_all
-        }
-        df_rates_i = pd.DataFrame(
-            dict_Results, index=[f'{year-9}-{year} (AR6 rate definition)'])
-        df_rates_i.columns.names = ['variable', 'percentile']
-        df_rates_i.index.name = 'Year'
-        dfs_rates.append(df_rates_i)
-
-    df_forc_rates = pd.concat(dfs_rates, axis=0)
-    return df_forc_rates
 
 
 def en_dash_ify(df):

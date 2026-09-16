@@ -114,7 +114,7 @@ def test_rate_func():
           f"(max {np.abs(got - ref).max():.2e})",
           np.abs(got - ref).max() < TOL)
 
-    # 2-D, as used by rate_HadCRUT5: (years, ensemble).
+    # 2-D: (years, ensemble).
     b = rng.random((10, 200)).astype(np.float32)
     got, ref = defs.rate_func_vectorised(b), reference_rate(b)
     check(f"2-D shape {b.shape} -> {got.shape}", got.shape == ref.shape)
