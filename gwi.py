@@ -5,7 +5,7 @@ import sys
 
 import datetime as dt
 import functools
-import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -1066,8 +1066,28 @@ if __name__ == "__main__":
 
     # Parallelise GWI calculation, with each thread corresponding to a
     # single (model) parameterisation for FaIR.
+    #
+    # Executor.map is a drop-in for Pool.imap here: it yields results in the
+    # order of `models` as they arrive, so the ensemble axis is laid out
+    # identically and results are unchanged.
+    #
+    # THE POINT: if the Monte Carlo ensemble is too big to fit in the job's
+    # memory, runs using Executor.map fail within minutes with a clear
+    # out-of-memory error, instead of silently hanging until the scheduler's
+    # time limit kills it hours later, which is what Pool.imap does.
+    #
+    # Why the pool type decides that: the emulation below is the peak-memory
+    # stage of the whole run, so when a job is too big it is these workers
+    # that the kernel's OOM killer takes, not the parent process. mp.Pool
+    # cannot recover from a worker dying. It quietly starts a replacement but
+    # never fails the task the dead worker was holding, so that result never
+    # arrives and map()/imap() waits for it forever -- burning the entire
+    # walltime allocation at zero CPU, while still looking like a healthy
+    # running job in squeue. ProcessPoolExecutor watches its workers and
+    # raises BrokenProcessPool instead.
+    #
     T1a = dt.datetime.now()
-    with mp.Pool(defs.n_workers()) as p:
+    with ProcessPoolExecutor(defs.n_workers()) as p:
         print('Partialising Function')
         partial_GWI = functools.partial(
             GWI_faster,
@@ -1100,12 +1120,12 @@ if __name__ == "__main__":
         # gradually as blocks arrive and are freed. Measured on a 15.1 GB
         # result: 30.2 GB against 16.8 GB.
         #
-        # imap preserves the order of `models`, so the ensemble axis is laid
-        # out exactly as np.concatenate would have left it and results are
-        # bitwise unchanged.
+        # Executor.map preserves the order of `models` (as Pool.imap did), so
+        # the ensemble axis is laid out exactly as np.concatenate would have
+        # left it and results are bitwise unchanged.
         temp_Att_Results = None
         n_per_model = None
-        for i, (block, block_vars) in enumerate(p.imap(partial_GWI, models)):
+        for i, (block, block_vars) in enumerate(p.map(partial_GWI, models)):
             if temp_Att_Results is None:
                 # Create a list of the names of the attributed warming
                 # variables.
@@ -1190,13 +1210,19 @@ if __name__ == "__main__":
 
     if calculate_priors_output:
         print('Calculating PRIORS (parallelised)', end=' ')
-        with mp.Pool(defs.n_workers()) as p:
+        # ProcessPoolExecutor rather than mp.Pool for the same reason as the
+        # emulation pool above: an ensemble too big for the job's memory fails
+        # here with a clear out-of-memory error, rather than hanging until the
+        # scheduler's time limit. Executor.map returns a lazy iterator rather
+        # than a list, so it is consumed into one here to keep
+        # np.concatenate's input unchanged.
+        with ProcessPoolExecutor(defs.n_workers()) as p:
             # print('Partialising Function')
             partial_priors = functools.partial(
                 defs.model_prior_warming,
                 df_params=params_subset,
                 df_forc=df_forc_priors)
-            results = p.map(partial_priors, models)
+            results = list(p.map(partial_priors, models))
 
         # Combine results from all models into one array
         temp_Priors = np.concatenate(results, axis=2)

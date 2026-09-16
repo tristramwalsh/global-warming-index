@@ -21,17 +21,23 @@ import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 
 # lru_cache makes Python work the answer out on the first call and hand back
-# that same stored number on every later call. Four of the mp.Pool sites sit
+# that same stored number on every later call. Several of the pool sites sit
 # inside loops, so without it we would fork a scontrol subprocess hundreds of
 # times per run. It also guarantees the count cannot change mid-run.
 @functools.lru_cache(maxsize=1)
 def n_workers():
     """Return the number of CPUs actually allocated to this job.
 
-    os.cpu_count() reports the whole node rather than the allocation, so a Pool
+    os.cpu_count() reports the whole node rather than the allocation, so a pool
     sized by it oversubscribes the job's memory cgroup and the workers get
-    OOM-killed; a Pool worker killed mid-task then makes Pool.map() hang
-    forever.
+    OOM-killed.
+
+    Worker death used to be unrecoverable: mp.Pool respawns the dead worker but
+    never fails the task it was holding, so map()/imap() blocked forever and the
+    job burned its whole walltime at zero CPU. The pool sites now use
+    ProcessPoolExecutor, which raises BrokenProcessPool instead -- but sizing
+    the pool correctly is still what stops the workers being killed in the
+    first place.
 
     No single source covers every way these scripts get run, so three are tried
     in descending order of trustworthiness:
