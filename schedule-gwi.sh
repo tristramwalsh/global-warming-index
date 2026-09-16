@@ -114,6 +114,9 @@ HEADLINE_YEARS='end_regress'
 # e.g. 1.  # (Use single member only)
 # e.g. {0..49}  # (Use single member only, and apply separately to each member
 # in the range)
+# NOTE: member labels are the dataset's own column names, and are 1-indexed:
+# HadCRUT ships 200 realisations ({1..200}), the John Kennedy ensemble 100
+# ({1..100}).
 SPECIFY_ENSEMBLE_MEMBERS=all
 
 
@@ -135,17 +138,32 @@ SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT,ERF'
 ###############################################################################
 ### Generate a Slurm file for each Job ID #####################################
 
+# Select which Slurm cluster to submit to.
+# Oxford ARC runs two clusters under one Slurm accounting database: 'arc'
+# (large nodes, 48+ cores) and 'htc' (smaller nodes, GPUs). List them with
+# `sacctmgr show cluster` or `sinfo -M all`.
+# Jobs are assigned to a cluster once, at submission time, and never migrate
+# afterwards; without --clusters, sbatch submits to whichever cluster you
+# happen to be logged into.
+# e.g. arc      (force ARC)
+# e.g. htc      (force HTC)
+# e.g. arc,htc  (let sbatch pick whichever offers the earliest start time)
+CLUSTER=htc
+
 if hostname | grep -Eq "htc|arc"; then  # ARC cluster
   PARTITION=short
+  CLUSTER_DIRECTIVE="#SBATCH --clusters=${CLUSTER}"
 elif hostname | grep -q "ouce"; then  # OUCE cluster
   PARTITION=Short
+  CLUSTER_DIRECTIVE=""  # OUCE is a single cluster; --clusters is not valid
 else
   echo "Unknown cluster. Please set the partition variable manually."
   exit 1
 fi
 PARTITION=${PARTITION}
-WALLTIME=12:00:00
+WALLTIME=0:30:00
 SIM_CPUS=28
+CPU_MEM=8G
 SIM_NAME=gwi
 LOG_DIR=slurm_logs
 mkdir -p ${LOG_DIR}
@@ -155,12 +173,6 @@ mkdir -p ${LOG_DIR}
 # RUN_TAG describing the configuration, using the same KEY--value convention
 # that gwi.py writes into the results paths. This means a job in squeue can be
 # matched to the results it produces by eye.
-#
-# Previously none of the three names encoded the ensemble member range, so
-# running this script twice for different halves of the ensemble produced
-# byte-identical names: the two jobs then shared one log file and clobbered
-# each other's output (and the .slurm file could be overwritten or deleted
-# between `cat` and `sbatch`, submitting the wrong member range).
 
 # Member range as a filename-safe tag. Brace expansion does NOT occur at
 # assignment, so SPECIFY_ENSEMBLE_MEMBERS holds the literal string "{1..50}"
@@ -223,8 +235,9 @@ cat > ${SLURM_FILE} << EOF
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=${SIM_CPUS}
-#SBATCH --mem-per-cpu=8000
+#SBATCH --mem-per-cpu=${CPU_MEM}
 #SBATCH --partition=${PARTITION}
+${CLUSTER_DIRECTIVE}
 
 ## Name the job and queue it
 #SBATCH --job-name=${SIM_NAME}_${RUN_TAG}
