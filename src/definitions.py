@@ -88,17 +88,12 @@ def n_workers():
     # outside any allocation, i.e. a login/head node, where nothing caps us and
     # the damage lands on other users. An ordinary machine sees no warning.
     if shutil.which('scontrol'):
-        print(
-            f'WARNING: no SLURM allocation found, so falling back to '
-            f'{n_available} workers.\n'
-            f'         On a login/head node this spawns {n_available} '
-            f'processes and degrades it for everyone else.\n'
-            f'         Request an interactive node instead, e.g.:\n'
-            f'             srun -p interactive -c 16 --mem-per-cpu=2G '
-            f'--pty /bin/bash\n'
-            f'         Or cap the workers explicitly:\n'
-            f'             GWI_NUM_WORKERS=4 python <script>.py',
-            file=sys.stderr)
+        note(f'No SLURM allocation found, so falling back to {n_available} '
+             f'workers. On a login/head node that spawns {n_available} '
+             f'processes and degrades it for everyone else. Request an '
+             f'interactive node instead (srun -p interactive -c 16 '
+             f'--mem-per-cpu=2G --pty /bin/bash), or cap the workers '
+             f'explicitly (GWI_NUM_WORKERS=4 python <script>.py).')
 
     return n_available
 
@@ -229,10 +224,10 @@ def extract_ensembles(df_ERF, ensemble_members):
         # between the single ensemble number in the forcing and temperature.
         ens_mems = ensemble_members
     else:
-        print(f'Invalid ensemble members {ensemble_members} for ensemble: '
-              f'{df_ERF.columns.get_level_values("ensemble").unique()}')
         raise ValueError(
-            f'Invalid ensemble member {ensemble_members} for data.')
+            f'Invalid ensemble member {ensemble_members} for this data. '
+            f'Available: '
+            f'{df_ERF.columns.get_level_values("ensemble").unique().tolist()}')
 
     return df_ERF.loc[:, (slice(None), ens_mems)]
 
@@ -283,10 +278,9 @@ def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
                 missing_sub_vars = set(sub_vars) - set(present_sub_vars)
 
                 if missing_sub_vars:
-                    print(f"Warning: Missing sub-variables for {agg_var}: " +
-                          f"{missing_sub_vars}. "
-                          f"Aggregating only present variables:" +
-                          f"{present_sub_vars}")
+                    note(f'Missing sub-variables for {agg_var}: '
+                         f'{missing_sub_vars}. Aggregating only the '
+                         f'variables present: {present_sub_vars}.')
                 else:
                     # Sum across the columns (variables) for each row.
                     df_ERF[agg_var] = df_ERF[present_sub_vars].sum(axis=1)
@@ -587,10 +581,9 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     elif ensemble_members in df_temp.columns.to_list():
         df_temp = df_temp[[ensemble_members]]
     else:
-        print(f'Invalid ensemble members {ensemble_members} for ensemble:'
-              + f'{df_temp.columns.to_list()}')
         raise ValueError(
-            f'Invalid ensemble member {ensemble_members} for data.')
+            f'Invalid ensemble member {ensemble_members} for this data. '
+            f'Available: {df_temp.columns.to_list()}')
 
     # Remove pre-industrial baseline from temperature data
     df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
@@ -756,8 +749,10 @@ def preindustrial_baseline(df_temp, start_pi, end_pi):
             ].mean(axis=0)
         df_temp -= ofst_Obs
     else:
-        print(f'{start_pi} and {end_pi} not in {df_temp.index}')
-        raise ValueError('PI offsetting period not in temperature data.')
+        raise ValueError(
+            f'Pre-industrial offsetting period {start_pi}-{end_pi} is not '
+            f'within the temperature data, which covers '
+            f'{df_temp.index.min()}-{df_temp.index.max()}.')
 
     return df_temp
 
@@ -1049,7 +1044,7 @@ def shared_results_array(shape, dtype=np.float32):
     to clean up and nothing that can be left behind on the node.
     """
     n_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
-    _refuse_if_it_cannot_fit(n_bytes, shape)
+    _check_and_report_memory(n_bytes, shape)
     # mmap(-1, ...) asks the OS for anonymous shared memory: no file and no
     # name. The request itself is cheap -- the pages are only charged to the
     # job as they are written -- but it can still fail outright if the array
@@ -1066,57 +1061,205 @@ def shared_results_array(shape, dtype=np.float32):
     return np.ndarray(shape, dtype=dtype, buffer=buffer)
 
 
-def job_memory_limit():
-    """Return the memory this job may use, in bytes, or None if not in a job.
+def _job_cgroup_value(filename):
+    """Read one of Slurm's memory counters for this job, in bytes.
 
-    Slurm confines each job to a 'cgroup' with a hard memory ceiling, set by
-    --cpus-per-task x --mem-per-cpu. Exceeding it is what gets a run killed,
-    so it is the number worth checking against before starting work.
+    Slurm confines each job to a 'cgroup', a kernel accounting box, and
+    reports its memory through small files. Returns None when not running
+    under Slurm, or if the file is unreadable.
     """
     job_id = os.environ.get('SLURM_JOB_ID')
     if not job_id:
         return None
-    path = ('/sys/fs/cgroup/system.slice/slurmstepd.scope/'
-            f'job_{job_id}/memory.max')
     try:
-        with open(path) as fh:
+        with open('/sys/fs/cgroup/system.slice/slurmstepd.scope/'
+                  f'job_{job_id}/{filename}') as fh:
             return int(fh.read())
     except (OSError, ValueError):
         return None
 
 
-def _refuse_if_it_cannot_fit(n_bytes, shape):
-    """Stop now if the results cannot possibly fit in this job's memory.
+def job_memory_limit():
+    """Return the memory this job may use, in bytes, or None outside Slurm.
+
+    Set by --cpus-per-task x --mem-per-cpu. Exceeding it is what gets a run
+    killed, so it is the number worth checking against before starting work.
+    """
+    return _job_cgroup_value('memory.max')
+
+
+def job_memory_peak():
+    """Return the most memory this job has used at once, in bytes.
+
+    This is the kernel's own high-water mark for the job. It is a better
+    figure than the MaxRSS that `sacct` reports, which adds up the memory of
+    every worker process separately (so double-counts whatever they share
+    with the parent) and only samples every 10 seconds (so misses brief
+    peaks). This counts shared memory once and misses nothing.
+    """
+    return _job_cgroup_value('memory.peak')
+
+
+def describe_bytes(n):
+    """Format a number of bytes as GiB, or '?' if it is not known."""
+    return '?' if n is None else f'{n / 1024**3:.1f} GiB'
+
+
+_run_notes = []
+
+
+def note(message):
+    """Record something about this run that the reader should know.
+
+    For things that change what the run does but do not stop it: a year range
+    clipped to the available data, a setting that disables a safeguard, a
+    resource that could not be determined. They arise in several places and
+    at several stages -- argument parsing, data loading, range checking --
+    and printing them where they arise would scatter them through the log
+    above the first section header. Collecting them means log_notes() can put
+    them together, under a heading, in a predictable place.
+
+    Not for errors. Anything that stops the run should raise, with the detail
+    in the exception message where a traceback will carry it.
+    """
+    _run_notes.append(message)
+
+
+def log_notes():
+    """Print everything note() collected, as its own section."""
+    log_section('Notes and adjustments')
+    if not _run_notes:
+        print('None', flush=True)
+        return
+    for message in _run_notes:
+        print(message, flush=True)
+
+
+def log_section(title, width=76):
+    """Start a new section of the run log.
+
+    The log is long and is usually read after the fact, often to work out why
+    a run died, so it is broken into labelled sections that can be found by
+    eye or with grep.
+    """
+    print(f'\n── {title.upper()} '.ljust(width, '─'), flush=True)
+
+
+def log_slurm_configuration():
+    """Report the resources Slurm gave this job.
+
+    Every one of these has at some point been the explanation for why two
+    runs of the same configuration behaved differently: which node (their
+    CPUs and memory bandwidth differ), how much memory (what gets a run
+    killed), how many CPUs (the pool size), and the time limit (what turns a
+    slow run into a TIMEOUT). The job ID ties the log back to `sacct` and to
+    the batch directory it ends up in.
+    """
+    log_section('Slurm configuration')
+    job_id = os.environ.get('SLURM_JOB_ID')
+    if job_id is None:
+        print(f'Not running under Slurm (host {os.uname().nodename})')
+        return
+    cpu_model = '?'
+    try:
+        with open('/proc/cpuinfo') as fh:
+            for line in fh:
+                if line.startswith('model name'):
+                    cpu_model = line.split(':', 1)[1].strip()
+                    break
+    except OSError:
+        pass
+    print(f'Job ID: {job_id}'
+          f'{" (" + os.environ["SLURM_JOB_NAME"] + ")" if os.environ.get("SLURM_JOB_NAME") else ""}\n'
+          f'Node: {os.uname().nodename}, partition '
+          f'{os.environ.get("SLURM_JOB_PARTITION", "?")}\n'
+          f'CPU: {cpu_model}\n'
+          f'CPUs allocated to job: {n_workers()} '
+          f'(node has {os.cpu_count()})\n'
+          f'Memory allocated to job: {describe_bytes(job_memory_limit())}\n'
+          f'Walltime limit: '
+          f'{os.environ.get("SLURM_JOB_END_TIME") and _walltime_remaining() or "?"}',
+          flush=True)
+
+
+def _walltime_remaining():
+    """Return the job's time limit as H:MM:SS, from Slurm's end-time stamp."""
+    try:
+        import datetime as _dt
+        end = int(os.environ['SLURM_JOB_END_TIME'])
+        start = int(os.environ.get('SLURM_JOB_START_TIME', end))
+        return str(_dt.timedelta(seconds=end - start))
+    except (KeyError, ValueError):
+        return '?'
+
+
+def _check_and_report_memory(n_bytes, shape):
+    """Report what this run will cost, and stop if it cannot possibly work.
 
     Without this the run would start, spend minutes emulating, and only then
     be killed by the operating system with no explanation of what went wrong.
-    Checking first turns that into an immediate, readable message.
+    Checking first turns that into an immediate, readable message, and
+    putting the figures in the log means a run that later dies can still be
+    understood from its log alone.
 
     The peak comes to roughly TWICE the size of the results array, because
     np.percentile copies whatever it is given (see percentile_threaded). So
-    needing more than the limit for the array alone is hopeless and stops the
-    run; needing more than the limit for twice it will almost certainly die
-    later at the percentile step, which is worth warning about but not worth
-    refusing outright, since the earlier stages may still be of interest.
+    needing more than the allocation for the array alone is hopeless and
+    stops the run; needing more than the allocation for twice it will almost
+    certainly die later at the percentile step, which is worth saying plainly
+    but not worth refusing outright, since the earlier stages may still be of
+    interest.
     """
     limit = job_memory_limit()
-    if limit is None:
-        return
-    describe = (f'{n_bytes / 1024**3:.1f} GiB ({shape[0]} years x {shape[1]} '
-                f'variables x {shape[2]:,} ensemble members)')
-    advice = ('Lower the number of samples, or raise CPU_MEM in '
-              'schedule-gwi.sh.')
-    if n_bytes > limit:
+    advice = ('lower the number of samples, or raise CPU_MEM in '
+              'schedule-gwi.sh')
+
+    if limit is not None and n_bytes > limit:
         raise MemoryError(
             f'This run cannot fit in the memory it has been given. The '
-            f'results alone need {describe}, and this job may use only '
-            f'{limit / 1024**3:.1f} GiB. {advice}')
-    if 2 * n_bytes > limit:
-        print(f'WARNING: the results need {describe} and this job may use '
-              f'{limit / 1024**3:.1f} GiB. The peak is about twice the '
-              f'results array, because np.percentile copies its input, so '
-              f'this run will probably be killed at the percentile step. '
-              f'{advice}', flush=True)
+            f'results array alone needs {describe_bytes(n_bytes)} '
+            f'({shape[0]} years x {shape[1]} variables x {shape[2]:,} '
+            f'members), and this job may use only {describe_bytes(limit)}. '
+            f'To fix, {advice}.')
+
+    if limit is None:
+        verdict = 'cannot tell, not running under Slurm'
+    elif 2 * n_bytes > limit:
+        verdict = (f'LIKELY -- the expected peak is more than the allocation, '
+                   f'so this run will probably be killed at the percentile '
+                   f'step. To avoid, {advice}')
+    else:
+        verdict = 'not expected'
+
+    log_section('Memory usage anticipated')
+    print(f'Results array: {describe_bytes(n_bytes)} '
+          f'({shape[0]} years x {shape[1]} variables x {shape[2]:,} members)\n'
+          f'Expected memory peak: near {describe_bytes(2 * n_bytes)} '
+          f'(np.percentile copies the input from results array, doubling the '
+          f'peak)\n'
+          f'Slurm allocated memory for job: {describe_bytes(limit)}\n'
+          f'Memory errors: {verdict}', flush=True)
+
+
+def report_memory_used(results_nbytes):
+    """Report what the run actually cost, to close the loop on the estimate.
+
+    The partner of the 'Memory usage anticipated' block printed when the
+    results array was made. Printing both means a log can be read on its own
+    to see whether the estimate was right, without going back to Slurm's
+    accounting -- which is purged eventually, and which in any case
+    double-counts memory shared between worker processes.
+    """
+    peak, limit = job_memory_peak(), job_memory_limit()
+    if peak is None:
+        print('Not available (not running under Slurm)')
+        return
+    share = f' ({peak / limit:.0%} used)' if limit else ''
+    print(f'Peak memory (usage): {describe_bytes(peak)} of '
+          f'{describe_bytes(limit)} allocated{share}\n'
+          f'Peak memory (vs results array): '
+          f'{peak / results_nbytes:.2f}x the {describe_bytes(results_nbytes)} '
+          f'results array, against the 2.00x anticipated', flush=True)
 
 
 def attribution_output_vars(df_forc, regress_vars):
@@ -1251,8 +1394,8 @@ def generate_headline_years(headline_years, end_regress, end_trunc):
     elif all([y.isnumeric() for y in headline_years.split(',')]):
         hl_years = [int(y) for y in headline_years.split(',')]
     else:
-        print(headline_years)
-        raise ValueError('Invalid headline year format.')
+        raise ValueError(
+            f'Invalid headline year format: {headline_years!r}.')
 
     return hl_years
 

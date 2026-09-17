@@ -609,9 +609,9 @@ if __name__ == "__main__":
         inc_reg_const = True
 
     if not inc_pi_offset and not inc_reg_const:
-        print("\nWARNING: Both preindustrial offset and regression constant are "
-              "disabled. Without these centring factors, you may observe "
-              "unexpected behaviours in the regression attribution.\n")
+        defs.note('Both the preindustrial offset and the regression constant '
+                  'are disabled. Without these centring factors the '
+                  'regression attribution may behave unexpectedly.')
 
     # Define the regression year range for the temperature attribution.
     # This is the range over which the regression coefficients are calculated.
@@ -886,18 +886,18 @@ if __name__ == "__main__":
     # regression).
     if start_trunc < forc_Yrs_min:
         start_trunc = forc_Yrs_min
-        print('Truncation start year is before ERF data range, '
-              f'setting start year to ERF data minimum: {start_trunc}')
+        defs.note('Truncation start year was before the ERF data range, so '
+                  f'it was moved to the ERF minimum: {start_trunc}.')
     if end_trunc > forc_Yrs_max:
         end_trunc = forc_Yrs_max
-        print('Truncation end year is after ERF data range, '
-              f'setting end year to ERF data maximum: {end_trunc}')
+        defs.note('Truncation end year was after the ERF data range, so it '
+                  f'was moved to the ERF maximum: {end_trunc}.')
     if year_committed_to and (year_committed_to != forc_Yrs_max):
-        print('Warning: ERF data end year does not match committed warming '
-              'year.')
+        defs.note('The ERF data end year does not match the committed '
+                  'warming year.')
     if year_committed_to and (end_trunc < year_committed_to):
-        print(f'Warning: Truncation end year {end_trunc} is before committed '
-              f'warming end year {year_committed_to}.')
+        defs.note(f'Truncation end year {end_trunc} is before the committed '
+                  f'warming end year {year_committed_to}.')
 
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
@@ -911,23 +911,24 @@ if __name__ == "__main__":
     # Check that the regression years are within the temperature data range.
     if start_regress < temp_Yrs.min():
         start_regress = temp_Yrs.min()
-        print(
-            'Regression start year is before reference temperature data range, '
-            f'setting start year to temperature data minimum: {start_regress}')
+        defs.note('Regression start year was before the reference '
+                  'temperature data range, so it was moved to the '
+                  f'temperature minimum: {start_regress}.')
     if end_regress > temp_Yrs.max():
         end_regress = temp_Yrs.max()
-        print('Regression end year is after reference temperature data range, '
-              f'setting end year to temperature data maximum: {end_regress}')
+        defs.note('Regression end year was after the reference temperature '
+                  'data range, so it was moved to the temperature maximum: '
+                  f'{end_regress}.')
 
     # Check that the regression years are within the forcing data range
     if start_regress < forc_Yrs_min:
         start_regress = forc_Yrs_min
-        print('Regression start year is before forcing data range, '
-              f'setting start year to forcing data minimum: {start_regress}')
+        defs.note('Regression start year was before the forcing data range, '
+                  f'so it was moved to the forcing minimum: {start_regress}.')
     if end_regress > forc_Yrs_max:
         end_regress = forc_Yrs_max
-        print('Regression end year is after forcing data range, '
-              f'setting end year to forcing data maximum: {end_regress}')
+        defs.note('Regression end year was after the forcing data range, so '
+                  f'it was moved to the forcing maximum: {end_regress}.')
 
     # Check that the regression end year is not after the start of the
     # committed warming period.
@@ -940,8 +941,9 @@ if __name__ == "__main__":
             'constant ERF assumption begins, the scenario for forcing and'
             'reference warming are no longer aligned.')
 
-    print('\nCalculating GWI with the following parameters:')
-    print(f'Cluster node: {os.uname().nodename}')
+    defs.log_slurm_configuration()
+
+    defs.log_section('Run configuration')
     print(f'Regressed variables: {regress_vars}')
     print(f'Scenario: {scenario_out}')
     if year_committed_to:
@@ -1054,6 +1056,9 @@ if __name__ == "__main__":
     # and averaging the resulting timeseries - see combine_results.py.
 
     # 1. Select random samples of the forcing data
+    defs.log_notes()
+
+    defs.log_section('Ensemble sampling')
     print('Forcing ensemble all: ' +
           f'{len(df_forc.columns.get_level_values("ensemble").unique())}')
     # Select a random subset of the ensemble names from the forcing data.
@@ -1102,7 +1107,7 @@ if __name__ == "__main__":
         df_temp_Obs.shape[1] *
         df_temp_PiC.shape[1]
     )
-    print(f'Max available ensemble: {_n_all}')
+    print(f'Max available ensemble: {_n_all:,}')
 
     # Print the randomly subsampled ensemble size
     _n_sub = (
@@ -1111,7 +1116,8 @@ if __name__ == "__main__":
         df_temp_Obs_subset.shape[1] *
         df_temp_PiC_subset.shape[1]
     )
-    print(f'Sub-sampled ensemble size: {_n_sub}')
+    print(f'Sub-sampled ensemble size: {_n_sub:,} '
+          f'({_n_sub / _n_all:.2%} of all possible combinations)')
 
     # Parallelise GWI calculation, with each thread corresponding to a
     # single (model) parameterisation for FaIR.
@@ -1175,6 +1181,7 @@ if __name__ == "__main__":
     emulation_models = models
     emulation_results = temp_Att_Results
 
+    defs.log_section('Timeseries')
     print('Calculating GWI (parallelised)', end=' ')
     T1a = dt.datetime.now()
     # 'fork' is what lets the workers inherit the shared array. It is already
@@ -1390,7 +1397,7 @@ if __name__ == "__main__":
     # The preferred range dependes on usage context, and can be changed later.
 
     if headline_toggles:
-        print(f'Calculating headlines for {headline_years}')
+        defs.log_section(f'Headlines ({headline_years})')
 
         hl_years = defs.generate_headline_years(
             headline_years, end_regress, end_trunc)
@@ -1400,7 +1407,7 @@ if __name__ == "__main__":
     if 'annual' in headline_toggles:
         T1 = dt.datetime.now()
         # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
-        print('↳ Reading annual mean definition temps', end=' ')
+        print('Reading annual mean definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
@@ -1416,7 +1423,7 @@ if __name__ == "__main__":
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # Calculate the linear trend of the final 15 years of the timeseries
         # and use this to calculate the present-day warming
-        print('↳ Calculating SR15-definition temps', end=' ')
+        print('Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
@@ -1425,7 +1432,7 @@ if __name__ == "__main__":
         for year in hl_years_annual:
             if ((year not in trunc_Yrs) and (year-15 not in trunc_Yrs)):
                 raise ValueError(
-                    f'↳ SR15 definition requires the years {year} and {year-15} '
+                    f'SR15 definition requires the years {year} and {year-15} '
                     'to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
@@ -1470,7 +1477,7 @@ if __name__ == "__main__":
         if ((headline_years == 'IGCC') and (2019 not in hl_years_decadal)):
             hl_years_decadal.append(2019)
 
-        print('↳ Calculating AR6-definition temps', end=' ')
+        print('Calculating AR6-definition temps', end=' ')
         # if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
         #     # The final condition is to avoid duplicate calculations when
         #     # the end_regress is 2019.
@@ -1481,7 +1488,7 @@ if __name__ == "__main__":
         for year in hl_years_decadal:
             if ((year not in trunc_Yrs) and (year-9 not in trunc_Yrs)):
                 raise ValueError(
-                    f'↳ AR6 definition requires the years {year-9} and '
+                    f'AR6 definition requires the years {year-9} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
             recent_years = defs.contiguous_slice(
@@ -1521,12 +1528,12 @@ if __name__ == "__main__":
                 # error, so that we can still produce the headlines csv without
                 # the CGWL definition.
                 print(
-                    f'↳ CGWL definition requires the years {year-9} and '
+                    f'CGWL definition requires the years {year-9} and '
                     f'{year+10} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})', end=' ')
 
             else:
-                print('↳ Calculating CGWL-definition temps', end=' ')
+                print('Calculating CGWL-definition temps', end=' ')
 
                 recent_years = defs.contiguous_slice(
                     (year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
@@ -1557,12 +1564,12 @@ if __name__ == "__main__":
 
     # OBSERVATIONS HEADLINE RESULTS ###########################################
     if headline_toggles:
-        print(f'Calculating headlines for observations {headline_years}')
+        defs.log_section(f'Headlines for observations ({headline_years})')
 
         dfs_obs = []
 
         if 'annual' in headline_toggles:
-            print('↳ Reading annual mean definition temps (Obs)', end=' ')
+            print('Reading annual mean definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
                                if y in df_temp_Obs.index]
@@ -1589,7 +1596,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'SR1.5' in headline_toggles:
-            print('↳ Calculating SR15-definition temps (Obs)', end=' ')
+            print('Calculating SR15-definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
                                if y in df_temp_Obs.index]
@@ -1625,7 +1632,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'AR6' in headline_toggles:
-            print('↳ Calculating AR6-definition temps (Obs)', end=' ')
+            print('Calculating AR6-definition temps (Obs)', end=' ')
 
             hl_years_decadal = [y for y in hl_years
                                 if ((y in df_temp_Obs.index) and
@@ -1656,7 +1663,7 @@ if __name__ == "__main__":
             print('... done')
 
         if 'CGWL' in headline_toggles:
-            print('↳ Calculating CGWL-definition temps (Obs)', end=' ')
+            print('Calculating CGWL-definition temps (Obs)', end=' ')
 
             for year in hl_years:
                 if ((year-9 in df_temp_Obs.index) and (year+10 in df_temp_Obs.index)):
@@ -1685,6 +1692,7 @@ if __name__ == "__main__":
     # RATE: AR6 DEFINITION
     if rate_toggle:
         T7 = dt.datetime.now()
+        defs.log_section('Warming rates')
         print('Calculating AR6-definition attributed warming rates', end=' ')
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
@@ -1722,6 +1730,12 @@ if __name__ == "__main__":
         T8 = dt.datetime.now()
         print(f'... took {T8 - T7}')
 
+    # What the run actually cost, to sit alongside the 'Memory usage
+    # anticipated' block printed when the results array was made.
+    defs.log_section('Memory usage recorded')
+    defs.report_memory_used(temp_Att_Results.nbytes)
+
     time_omega = dt.datetime.now()
     total_time = time_omega - time_alpha
-    print(f'\nTotal time taken: {total_time}')
+    defs.log_section('Total')
+    print(f'Total time taken: {total_time}')
