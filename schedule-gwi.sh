@@ -13,14 +13,14 @@ START_REGRESS=1850
 # This is for calculating the historical-only GWI:
 # END_REGRESS=`seq 2000 2023`  # This is inclusive of the start and end years
 # This is for calculating the GWI with all years:
-END_REGRESS=`seq 1950 2025`
+END_REGRESS=`seq 2020 2025`
 
 # Create array of subsampling sizes to calculate.
 # This is for scaling up the calculation:
 # SUBSAMPLE_ITERATIONS=(60 65 70 75 80 85 90 95 100)  # Size of subsampling
 # This is for repeating final calculations at one size:
 # SUBSAMPLE_ITERATIONS=(10000)  # Size of subsampling to max out the calculation
-SUBSAMPLE_ITERATIONS=(80 80 80)  # Size of subsampling
+SUBSAMPLE_ITERATIONS=(60 60 60)  # Size of subsampling
 
 # Select the reference period for the temperature datasets
 # The selected period offset applies to FaIR outputs, GMT Observations,
@@ -56,13 +56,13 @@ INCLUDE_SUB_VARS=n
 # e.g. observed-2023
 # e.g. observed-2024
 # e.g. observed-2025
-# e.g. observed-2025-SSP119  (2025 observations, SSP119-extended ERFs)
-# e.g. observed-2024-SSP245  (2024 observations, SSP245-extended ERFs)
+# e.g. observed-2024-SSP119  (2024 observations, SSP119-extended ERFs)
+# e.g. observed-2025-SSP245  (2025 observations, SSP245-extended ERFs)
 # e.g. NorESM_rcp45-Volc
 # e.g. NorESM_rcp45-VolcConst
 # e.g. observed_JK-2024-SSP245
 # e.g. observed_JK-2025-SSP245
-SCENARIO=observed-2025-SSP245
+SCENARIO=observed-2025
 
 # Select whether to consider committed warming at constant ERF.
 # This amends/extends the scenario to hold ERF constant from a start year
@@ -70,7 +70,7 @@ SCENARIO=observed-2025-SSP245
 # Format: start_year-end_year
 # You can use 'end_regress' as a keyword for the start year.
 # e.g. n (no committed warming)
-# e.g. 2024-2300 (constant ERF from 2024 to 2300)
+# e.g. 2025-2300 (constant ERF from 2025 to 2300)
 # e.g. end_regress-2300 (constant ERF from the end of regression to 2300)
 COMMITTED=n
 
@@ -107,7 +107,7 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 # e.g. '2024' for a single year
 # e.g. '2023,2024,2025' for multiple separate years.
 # e.g. 'end_regress,2050,2100,2300' to combine end_regress and manual years
-# e.g. $(seq -s, 1950 2024) will create a comma-separated list of years
+# e.g. $(seq -s, 1950 2025) will create a comma-separated list of years
 HEADLINE_YEARS='end_regress'
 
 
@@ -163,11 +163,30 @@ else
   exit 1
 fi
 PARTITION=${PARTITION}
-WALLTIME=0:30:00
+WALLTIME=0:10:00
 SIM_CPUS=28
-CPU_MEM=8G
+CPU_MEM=9000M
+# Optional label that keeps this piece of work's output away from everything
+# else's: logs go to slurm_logs_<TAG>/, results to results_<TAG>/ and plots to
+# plots_<TAG>/. Use it to keep separate projects apart -- Thorne et al, IGCC,
+# a collaborator's runs, your own development -- so that they neither
+# overwrite each other nor all get swept up every time the combination script
+# runs. Pass the same tag to combine_results_iterations.py:
+#
+#     python combine_results_iterations.py --output-tag=${OUTPUT_TAG}
+#
+# Leave empty for the plain slurm_logs/, results/ and plots/ folders, exactly
+# as before. The option is always passed to gwi.py and its value says whether
+# it applies, the same convention as COMMITTED=n or INCLUDE_SUB_VARS=n.
+# e.g. OUTPUT_TAG=Thorne2025
+# e.g. OUTPUT_TAG=IGCC2025
+# e.g. OUTPUT_TAG=          (no tag; previous behaviour)
+OUTPUT_TAG=output-tag-test
+
 SIM_NAME=gwi
-LOG_DIR=slurm_logs
+# ${OUTPUT_TAG:+_${OUTPUT_TAG}} appends '_<tag>' only when OUTPUT_TAG is set,
+# so an empty tag leaves the plain slurm_logs/ directory.
+LOG_DIR=slurm_logs${OUTPUT_TAG:+_${OUTPUT_TAG}}
 mkdir -p ${LOG_DIR}
 
 # Job/file naming ############################################################
@@ -251,11 +270,11 @@ ${CLUSTER_DIRECTIVE}
 # For the single ensemble member selection runs
 if [[ "${SPECIFY_ENSEMBLE_MEMBERS}" == "all" ]]; then
   # Regress against all reference temperatures at the same time
-  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT}
+  python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=${SPECIFY_ENSEMBLE_MEMBERS} --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT} --output-tag=${OUTPUT_TAG}
 else
   for k in ${SPECIFY_ENSEMBLE_MEMBERS}; do
     # Regress against each reference temperature separately
-    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT}
+    python gwi.py --samples=${j} --regress-range=${START_REGRESS}-${i} --truncate=${TRUNCATION} --include-rate=${INCLUDE_RATE} --headline-toggles=${HEADLINE_TOGGLES} --headline-years=${HEADLINE_YEARS}  --regress-variables=${VARS} --scenario=${SCENARIO} --committed=${COMMITTED} --preindustrial-era=${PREINDUSTRIAL_ERA} --include-reg-const=${INCLUDE_REG_CONST} --specify-ensemble-member-sources-for=${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR} --specify-ensemble-member=\$k --include-sub-vars=${INCLUDE_SUB_VARS} --calculate-priors-output=${CALCULATE_PRIORS_OUTPUT} --output-tag=${OUTPUT_TAG}
   done
 fi
 

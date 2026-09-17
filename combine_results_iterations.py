@@ -12,9 +12,38 @@ import functools
 from pprint import pprint
 
 
-PLOT_FOLDER = 'plots/'
-AGGREGATED_FOLDER = 'results/aggregated'
-ITERATIONS_FOLDER = 'results/iterations'
+# Where this run reads and writes. PLOT_FOLDER, AGGREGATED_FOLDER,
+# ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER and OBSERVATIONS_FOLDER are
+# created by set_output_folders() below -- the only place the layout is
+# written down -- and read by the functions in this file as they run.
+
+
+def set_output_folders(output_tag=None):
+    """Point every output folder at this piece of work's own directory.
+
+    With no tag these are the plain results/ and plots/ folders this script
+    has always used. With one, they become results_<tag>/ and plots_<tag>/,
+    so that separate pieces of work -- a paper, an assessment, a
+    collaborator's runs, your own development -- neither overwrite each other
+    nor all get processed every time this script runs.
+
+    Pass the same tag that was given to gwi.py, so that this reads what that
+    wrote.
+    """
+    global PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER
+    global PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER
+
+    results_root = defs.tagged_folder('results', output_tag)
+    PLOT_FOLDER = defs.tagged_folder('plots', output_tag) + '/'
+    AGGREGATED_FOLDER = f'{results_root}/aggregated'
+    ITERATIONS_FOLDER = f'{results_root}/iterations'
+    PRIORS_FOLDER = f'{results_root}/priors'
+    ERFS_FOLDER = f'{results_root}/erfs'
+    OBSERVATIONS_FOLDER = f'{results_root}/observations'
+
+    print(f'Reading results from {ITERATIONS_FOLDER}/, '
+          f'writing plots to {PLOT_FOLDER}'
+          f'{"" if output_tag else "  (no tag set)"}')
 
 
 def get_subdirs(path, prefix):
@@ -305,10 +334,10 @@ def load_gwi_priors_erf_obs():
             obs_files[scenario].update({ensemble_selection: {}})
 
             # Load priors files
-            _path_prior_dir = ('results/priors/' +
+            _path_prior_dir = (f'{PRIORS_FOLDER}/' +
                                f'SCENARIO--{scenario}/' +
                                f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            _path_erf_dir = ('results/erfs/' +
+            _path_erf_dir = (f'{ERFS_FOLDER}/' +
                              f'SCENARIO--{scenario}/' +
                              f'ENSEMBLE-MEMBER--{ensemble_selection}/')
             if os.path.exists(_path_prior_dir):
@@ -369,7 +398,7 @@ def load_gwi_priors_erf_obs():
                               ][ensemble_selection
                                 ].update({regressed_years: {}})
 
-                    _path_obs_dir = ('results/observations/' +
+                    _path_obs_dir = (f'{OBSERVATIONS_FOLDER}/' +
                                      f'SCENARIO--{scenario}/' +
                                      f'ENSEMBLE-MEMBER--{ensemble_selection}/'
                                      f'REGRESSED-YEARS--{regressed_years}/')
@@ -852,7 +881,7 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
                  fontsize='x-small', fontfamily='monospace',
                  )
 
-    plot_path = ('plots/aggregated/' +
+    plot_path = (f'{PLOT_FOLDER}aggregated/' +
                  f'SCENARIO--{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -963,7 +992,7 @@ def figure_rates(reg_range, scen, ens, reg_vars,
                  fontsize='x-small', fontfamily='monospace',
                  )
 
-    plot_path = ('plots/aggregated/' +
+    plot_path = (f'{PLOT_FOLDER}aggregated/' +
                  f'SCENARIO--{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -1070,7 +1099,7 @@ def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
              fontsize='x-small', fontfamily='monospace',
              )
 
-    plot_path = ('plots/iterations/' +
+    plot_path = (f'{PLOT_FOLDER}iterations/' +
                  f'SCENARIO--{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -1255,7 +1284,7 @@ def figure_spm2(
             ax.set_axisbelow(True)
 
         # Save plot
-        plot_path = ('plots/aggregated/' +
+        plot_path = (f'{PLOT_FOLDER}aggregated/' +
                      f'SCENARIO--{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
@@ -1599,7 +1628,7 @@ def figure_waterfall(
         fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
 
         # Save plot
-        plot_path = ('plots/aggregated/' +
+        plot_path = (f'{PLOT_FOLDER}aggregated/' +
                      f'SCENARIO--{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
@@ -1694,7 +1723,7 @@ def figure_priors_timeseries(
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
-        'plots/priors/' +
+        f'{PLOT_FOLDER}priors/' +
         f'SCENARIO--{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
@@ -1772,7 +1801,7 @@ def figure_erf_timeseries(
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
-        'plots/erfs/' +
+        f'{PLOT_FOLDER}erfs/' +
         f'SCENARIO--{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
@@ -1788,14 +1817,20 @@ def figure_erf_timeseries(
 
 
 def parse_argvs():
-    """Parse command line arguments."""
-    # Get the command line arguments for which iterations to average across.
-    # argv format:
-    # --ensemble-size=ensemble_size --regressed-years=regressed_years
-    # e.g. --ensemble-size=6048000 --regressed-years=1850-2023:
-    # where ensemble_size is the number of samples in the ensemble, and
-    # regressed_years is the range of years over which the regression acted.
+    """Read the command line and return the settings it asks for.
 
+    Options are given as --name=value, in any order. All of them are optional:
+
+      --output-tag=<tag>   read results_<tag>/ and write plots_<tag>/ instead
+                           of the plain results/ and plots/ folders. Use the
+                           same tag that was given to gwi.py. Empty or absent
+                           means the plain folders, as before.
+      --re-calculate=y|n   whether to recompute the iteration averages, or
+                           reuse what is already in the aggregated folder.
+                           Defaults to y.
+
+    Returns (output_tag, re_calculate).
+    """
     if len(sys.argv) > 1:
         # Separate out the names and values for each argv, and place them in
         # a dictionary for later use.
@@ -1808,7 +1843,10 @@ def parse_argvs():
         # the dictionary exists, and just check for the presence.
         argv_dict = {}
 
-    return argv_dict
+    output_tag = argv_dict.get('--output-tag')
+    # Default to re-calculating if not asked otherwise.
+    re_calculate = argv_dict.get('--re-calculate', 'y') == 'y'
+    return output_tag, re_calculate
 
 
 def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
@@ -1833,7 +1871,7 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
 
     # save as a gif
     images_list[0].save(
-        f'plots/aggregated/SCENARIO--{scen}/' +
+        f'{PLOT_FOLDER}aggregated/SCENARIO--{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/' +
         f'Timeseries-animation_Scenario--{scen}_' +
@@ -2849,16 +2887,9 @@ if __name__ == '__main__':
     # over, or 'historical-only', which is the range of years that the
     # historical-only dataset was calculated over.
 
-    argv_dict = parse_argvs()
-    print(argv_dict)
-
-    # Configuration
-    if '--re-calculate' in argv_dict:
-        re_calculate = argv_dict['--re-calculate'] == 'y'  # True/False y/n
-    else:
-        re_calculate = True  # Default to re-calculate if not specified
-
-    print(f"Re-calculate results: {re_calculate}")
+    output_tag, re_calculate = parse_argvs()
+    set_output_folders(output_tag)
+    print(f'Re-calculate results: {re_calculate}')
 
     # Ensure directoriesfor plots and results exist
     for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:

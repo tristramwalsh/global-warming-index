@@ -690,6 +690,12 @@ if __name__ == "__main__":
         # If no command line argument passed, fallback to interactivity.
         samples = int(input('Max number of samples for each source (int): '))
 
+    # Optional label that keeps one piece of work's output separate from
+    # another's. With no tag, output goes to the plain results/ and plots/
+    # folders exactly as before. Pass the same tag to
+    # combine_results_iterations.py so that it reads what this run writes.
+    output_tag = argv_dict.get('--output-tag')
+
     # Determine whether to calculate rates (computaitonally expensive).
     if '--include-rate' in argv_dict:
         rate_toggle = argv_dict['--include-rate']
@@ -840,23 +846,27 @@ if __name__ == "__main__":
     )
 
     # Create a folder to store the plots
-    results_folder = 'results/iterations/'
+    results_root = defs.tagged_folder('results', output_tag)
+    plots_root = defs.tagged_folder('plots', output_tag)
+    results_folder = f'{results_root}/iterations/'
     if not os.path.exists(f'{results_folder}{output_path}'):
         os.makedirs(f'{results_folder}{output_path}',
         exist_ok=True)
-    plot_folder = 'plots/iterations/'
-    if not os.path.exists(f'{plot_folder}{output_path}'):
-        os.makedirs(f'{plot_folder}{output_path}',
-        exist_ok=True)
-    results_folder_priors = 'results/priors/'
+    # Only made when something is actually going to be plotted. The only
+    # figures this script writes are the pruned-piControl ones below, so
+    # otherwise this would leave an empty tree behind on every run.
+    plot_folder = f'{plots_root}/iterations/'
+    if plot_piControl and not os.path.exists(f'{plot_folder}{output_path}'):
+        os.makedirs(f'{plot_folder}{output_path}', exist_ok=True)
+    results_folder_priors = f'{results_root}/priors/'
     if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
         os.makedirs(f'{results_folder_priors}{output_path_priors}',
         exist_ok=True)
-    results_folder_erfs = 'results/erfs/'
+    results_folder_erfs = f'{results_root}/erfs/'
     if not os.path.exists(f'{results_folder_erfs}{output_path_erfs}'):
         os.makedirs(f'{results_folder_erfs}{output_path_erfs}',
         exist_ok=True)
-    results_folder_obs = 'results/observations/'
+    results_folder_obs = f'{results_root}/observations/'
     if not os.path.exists(f'{results_folder_obs}{out_path_obs}'):
         os.makedirs(f'{results_folder_obs}{out_path_obs}',
         exist_ok=True)
@@ -963,6 +973,8 @@ if __name__ == "__main__":
     print(f'Include constant term in regression: {inc_reg_const}')
     print(f'Using model: {model_choice}')
     print(f'Plotting pruned piControl: {plot_piControl}')
+    print(f'Output folders: {results_root}/ and {plots_root}/'
+          f'{"" if output_tag else "  (no tag set)"}')
 
     # CMIP6 PI-CONTROL
     timeframes = [1, 3, 30]
