@@ -5,6 +5,7 @@ import sys
 
 import datetime as dt
 import functools
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -28,8 +29,15 @@ def GWI_faster(
         model_choice, inc_reg_const, inc_pi_offset,
         df_forc, df_params, df_temp_PiC, df_temp_Obs,
         start_trunc, end_trunc, start_pi, end_pi,
-        start_regress, end_regress, regress_vars):
-    """Calculate the global warming index (GWI)."""
+        start_regress, end_regress, regress_vars, out=None):
+    """Calculate the global warming index (GWI).
+
+    If `out` is given, results are written into it instead of into a newly
+    allocated array. That is how the parallel run avoids copying: `out` is
+    one parameterisation's slice of a single array shared by all the worker
+    processes, so nothing has to be handed back. See
+    defs.shared_results_array.
+    """
     """Parallelise over FaIR parameterisations, exploit vectorisation of
     FaIR model by running all forcings at once through it, and separate
     regression against observations and piControl to add rather than multiply
@@ -75,14 +83,25 @@ def GWI_faster(
     # NOTE: extra_vars should not include variables already in var_list_ERF,
     # as extra_vars are the higher-level aggregates above the regression vars
     # and the residual. The check here is just extra safety.
-    output_vars = var_list_ERF + [v for v in extra_vars if v not in var_list_ERF]
+    output_vars = defs.attribution_output_vars(df_forc, regress_vars)
 
-    temp_Att_Results = np.empty(
-      (end_trunc - start_trunc + 1,  # number of years (after truncation)
-       len(output_vars),  # variables dimension
-       n),  # samples
-      dtype=np.float32  # make the array smaller in memory
-      )
+    shape = (end_trunc - start_trunc + 1,  # number of years (after truncation)
+             len(output_vars),  # variables dimension
+             n)  # samples
+    if out is None:
+        temp_Att_Results = np.empty(
+            shape,
+            dtype=np.float32  # make the array smaller in memory
+            )
+    elif out.shape != shape:
+        # The caller sized the shared array from the same inputs, so a
+        # mismatch means those inputs disagree with what this emulation
+        # actually produces. Stop rather than write into the wrong columns.
+        raise ValueError(
+            f'Emulation of {model_choice} produces an array of shape {shape}, '
+            f'but was given somewhere of shape {out.shape} to write it.')
+    else:
+        temp_Att_Results = out
     # coef_Reg_Results = np.zeros((len(variables) + int(inc_reg_const), n))
 
     # slice df_temp_obs dataframe to include years *inclusively* between
@@ -324,6 +343,36 @@ def GWI_faster(
                 i += 1
                 # #############################################################
     return temp_Att_Results, output_vars
+
+
+# The three things below are filled in further down, in the main block, just
+# before the worker processes are created. The workers inherit them as they
+# are forked, which is how each one reaches the shared results array without
+# anything being sent to it.
+emulation_models = None      # the FaIR parameterisations, in order
+emulation_settings = None    # the arguments every emulation shares
+emulation_results = None     # the array they all write into
+
+
+def emulate_one_model(model_number):
+    """Run one FaIR parameterisation, in a worker process.
+
+    The emulations are laid out side by side along the ensemble axis of the
+    shared results array, in the order of `emulation_models`: the first
+    parameterisation fills the first block of columns, the second fills the
+    next, and so on. This function works out which columns belong to
+    `model_number` and hands that slice of the array to GWI_faster to fill.
+
+    `model_number` is the only thing the parent sends; everything large was
+    inherited when this process was forked. Nothing is returned, because the
+    results are already in the array the parent is holding.
+    """
+    n_per_model = emulation_results.shape[2] // len(emulation_models)
+    my_columns = slice(model_number * n_per_model,
+                       (model_number + 1) * n_per_model)
+    GWI_faster(emulation_models[model_number],
+               out=emulation_results[:, :, my_columns],
+               **emulation_settings)
 
 
 # def GWI(
@@ -1086,68 +1135,55 @@ if __name__ == "__main__":
     # running job in squeue. ProcessPoolExecutor watches its workers and
     # raises BrokenProcessPool instead.
     #
+    # Every emulation writes its ensemble members into one array that all the
+    # workers share, rather than handing a block back for the parent to
+    # collect. Sharing is what keeps the memory down -- returning a block
+    # means copying it out of the worker and rebuilding it in the parent --
+    # and it is also why nothing needs joining together afterwards. See
+    # defs.shared_results_array for the full explanation.
+    #
+    # The array's shape is worked out here, before the workers exist, from
+    # the same inputs the emulations are given.
+    vars_list = defs.attribution_output_vars(forc_subset, regress_vars)
+    n_per_model = defs.ensemble_members_per_model(
+        forc_subset, df_temp_Obs_subset, df_temp_PiC_subset)
+    temp_Att_Results = defs.shared_results_array(
+        shape=(end_trunc - start_trunc + 1,     # years, after truncation
+               len(vars_list),                  # attributed warming variables
+               n_per_model * len(models)),      # ensemble members
+        dtype=np.float32)
+
+    # Settings shared by every emulation, and the array they all write into.
+    # These are module-level so that the workers inherit them when they are
+    # forked below; passing them as arguments would send a copy to each
+    # worker, which for the results array is precisely what we are avoiding.
+    emulation_settings = dict(
+        inc_reg_const=inc_reg_const,
+        inc_pi_offset=inc_pi_offset,
+        df_forc=forc_subset,
+        df_params=params_subset,
+        df_temp_PiC=df_temp_PiC_subset,
+        df_temp_Obs=df_temp_Obs_subset,
+        start_trunc=start_trunc,
+        end_trunc=end_trunc,
+        start_pi=start_pi,
+        end_pi=end_pi,
+        start_regress=start_regress,
+        end_regress=end_regress,
+        regress_vars=regress_vars,
+    )
+    emulation_models = models
+    emulation_results = temp_Att_Results
+
+    print('Calculating GWI (parallelised)', end=' ')
     T1a = dt.datetime.now()
-    with ProcessPoolExecutor(defs.n_workers()) as p:
-        print('Partialising Function')
-        partial_GWI = functools.partial(
-            GWI_faster,
-            inc_reg_const=inc_reg_const,
-            inc_pi_offset=inc_pi_offset,
-            df_forc=forc_subset,
-            df_params=params_subset,
-            df_temp_PiC=df_temp_PiC_subset,
-            df_temp_Obs=df_temp_Obs_subset,
-            start_trunc=start_trunc,
-            end_trunc=end_trunc,
-            start_pi=start_pi,
-            end_pi=end_pi,
-            start_regress=start_regress,
-            end_regress=end_regress,
-            regress_vars=regress_vars
-        )
-        print('Calculating GWI (parallelised)', end=' ')
-
-        # Each model emulation returns a block of ensemble members, and the
-        # blocks are joined along the ensemble axis. Rather than collecting
-        # every block and calling np.concatenate at the end, the full array is
-        # allocated once and each block written straight into its own slot as
-        # it arrives.
-        #
-        # This halves peak memory. np.concatenate needs the list of blocks AND
-        # the joined copy alive simultaneously, so the parent peaks at 2x the
-        # result; writing into a pre-made array peaks at ~1.1x, because
-        # np.empty does not touch its pages, so the output materialises
-        # gradually as blocks arrive and are freed. Measured on a 15.1 GB
-        # result: 30.2 GB against 16.8 GB.
-        #
-        # Executor.map preserves the order of `models` (as Pool.imap did), so
-        # the ensemble axis is laid out exactly as np.concatenate would have
-        # left it and results are bitwise unchanged.
-        temp_Att_Results = None
-        n_per_model = None
-        for i, (block, block_vars) in enumerate(p.map(partial_GWI, models)):
-            if temp_Att_Results is None:
-                # Create a list of the names of the attributed warming
-                # variables.
-                # TODO: rename this to vars_Att or something, since Python
-                # syntax makes vars_list red, so probably a bad idea.
-                vars_list = block_vars
-                n_per_model = block.shape[2]
-                temp_Att_Results = np.empty(
-                    block.shape[:2] + (n_per_model * len(models),),
-                    dtype=block.dtype)
-            elif block.shape[2] != n_per_model:
-                # The slot arithmetic below assumes every model contributes
-                # the same number of members; fail rather than leave part of
-                # the array unwritten (np.empty leaves arbitrary values, not
-                # zeros, so a partial fill would not be obvious).
-                raise ValueError(
-                    f'Model emulation {i} returned {block.shape[2]} ensemble '
-                    f'members, expected {n_per_model}.')
-            temp_Att_Results[:, :, i*n_per_model:(i+1)*n_per_model] = block
-
-    if temp_Att_Results is None:
-        raise ValueError('No model emulations were returned.')
+    # 'fork' is what lets the workers inherit the shared array. It is already
+    # the default on Linux; naming it here means this keeps working if that
+    # default ever changes.
+    with ProcessPoolExecutor(defs.n_workers(),
+                             mp_context=mp.get_context('fork')) as p:
+        # list() is what makes any failure in a worker surface here.
+        list(p.map(emulate_one_model, range(len(models))))
 
     T1b = dt.datetime.now()
     print(f'... took {T1b - T1a}')

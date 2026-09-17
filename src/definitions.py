@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import mmap
 import shutil
 import subprocess
 import multiprocessing as mp
@@ -1005,6 +1006,145 @@ def un_en_dash_ify(df):
         index={r: r.replace('\N{EN DASH}', '-') for r in rows_to_rename},
         inplace=True)
     return df
+
+
+def shared_results_array(shape, dtype=np.float32):
+    """Return an empty array that forked worker processes can write into.
+
+    Why this exists
+    ---------------
+    A worker process normally has its own private memory, so anything it
+    hands back to the parent has to be copied: packed up in the worker, sent
+    down a pipe, and rebuilt in the parent. For a moment the same numbers
+    exist twice. With one worker per FaIR parameterisation, all finishing at
+    roughly the same time, that copying is the single largest memory cost of
+    a GWI run. Measured on a 4 GB result: 4.0x its size when each worker
+    returned its own block and the parent joined them with np.concatenate,
+    3.5x when the parent wrote the returned blocks into a pre-made array,
+    and 1.0x using this.
+
+    How it works
+    ------------
+    The array is placed in memory the operating system marks as shareable,
+    so when the parent forks a worker, the worker sees the very same memory
+    rather than a private copy of it. Anything a worker writes is
+    immediately visible to the parent and to every other worker. Nothing is
+    sent down a pipe and workers need not return anything at all.
+
+    Two conditions, both of which the caller must arrange:
+
+      1. Create the array BEFORE creating the worker processes. Workers
+         inherit it as they are forked; an array made afterwards is not
+         shared.
+      2. Start the workers with the 'fork' method, which is the Linux
+         default but is worth stating explicitly, e.g.
+         ProcessPoolExecutor(n, mp_context=mp.get_context('fork')).
+
+    Each worker should write only to its own part of the array. Two workers
+    writing to the same elements would race, exactly as two threads would.
+
+    The memory holds no filename and belongs to no process in particular:
+    the operating system reclaims it once the parent and all its workers
+    have exited, including if they are killed outright. So there is nothing
+    to clean up and nothing that can be left behind on the node.
+    """
+    n_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
+    _refuse_if_it_cannot_fit(n_bytes, shape)
+    # mmap(-1, ...) asks the OS for anonymous shared memory: no file and no
+    # name. The request itself is cheap -- the pages are only charged to the
+    # job as they are written -- but it can still fail outright if the array
+    # is larger than the whole machine, since shareable memory is backed by
+    # the node's RAM. Hence both this and the check above.
+    try:
+        buffer = mmap.mmap(-1, n_bytes)
+    except OSError as err:
+        raise MemoryError(
+            f'Could not reserve {n_bytes / 1024**3:.1f} GiB for the results '
+            f'of this run. That is more memory than this compute node has in '
+            f'total, so no memory request would make it fit; lower the '
+            f'number of samples, or use a larger node.') from err
+    return np.ndarray(shape, dtype=dtype, buffer=buffer)
+
+
+def job_memory_limit():
+    """Return the memory this job may use, in bytes, or None if not in a job.
+
+    Slurm confines each job to a 'cgroup' with a hard memory ceiling, set by
+    --cpus-per-task x --mem-per-cpu. Exceeding it is what gets a run killed,
+    so it is the number worth checking against before starting work.
+    """
+    job_id = os.environ.get('SLURM_JOB_ID')
+    if not job_id:
+        return None
+    path = ('/sys/fs/cgroup/system.slice/slurmstepd.scope/'
+            f'job_{job_id}/memory.max')
+    try:
+        with open(path) as fh:
+            return int(fh.read())
+    except (OSError, ValueError):
+        return None
+
+
+def _refuse_if_it_cannot_fit(n_bytes, shape):
+    """Stop now if the results cannot possibly fit in this job's memory.
+
+    Without this the run would start, spend minutes emulating, and only then
+    be killed by the operating system with no explanation of what went wrong.
+    Checking first turns that into an immediate, readable message.
+
+    The peak comes to roughly TWICE the size of the results array, because
+    np.percentile copies whatever it is given (see percentile_threaded). So
+    needing more than the limit for the array alone is hopeless and stops the
+    run; needing more than the limit for twice it will almost certainly die
+    later at the percentile step, which is worth warning about but not worth
+    refusing outright, since the earlier stages may still be of interest.
+    """
+    limit = job_memory_limit()
+    if limit is None:
+        return
+    describe = (f'{n_bytes / 1024**3:.1f} GiB ({shape[0]} years x {shape[1]} '
+                f'variables x {shape[2]:,} ensemble members)')
+    advice = ('Lower the number of samples, or raise CPU_MEM in '
+              'schedule-gwi.sh.')
+    if n_bytes > limit:
+        raise MemoryError(
+            f'This run cannot fit in the memory it has been given. The '
+            f'results alone need {describe}, and this job may use only '
+            f'{limit / 1024**3:.1f} GiB. {advice}')
+    if 2 * n_bytes > limit:
+        print(f'WARNING: the results need {describe} and this job may use '
+              f'{limit / 1024**3:.1f} GiB. The peak is about twice the '
+              f'results array, because np.percentile copies its input, so '
+              f'this run will probably be killed at the percentile step. '
+              f'{advice}', flush=True)
+
+
+def attribution_output_vars(df_forc, regress_vars):
+    """Return the variable names along axis 1 of the attribution array.
+
+    These are the forcing variables actually present in df_forc, followed by
+    the aggregates diagnosed after the regression (see extra_vars) that are
+    not already among them. The order matters: it is the order of the
+    variable axis of temp_Att_Results, and of the output CSV columns.
+
+    Both the emulation and the code that sizes the shared results array need
+    this list, so it lives here rather than being worked out twice.
+    """
+    forc_vars = sorted(
+        df_forc.columns.get_level_values('variable').unique().to_list())
+    diagnosed = extra_vars(regress_vars)
+    return forc_vars + [v for v in diagnosed if v not in forc_vars]
+
+
+def ensemble_members_per_model(df_forc, df_temp_Obs, df_temp_PiC):
+    """Return how many ensemble members one FaIR parameterisation produces.
+
+    Each emulation crosses every sampled ERF ensemble member with every
+    sampled observational temperature member and every sampled piControl
+    member, so the count is simply the product of the three.
+    """
+    n_erf = len(df_forc.columns.get_level_values('ensemble').unique())
+    return n_erf * df_temp_Obs.shape[1] * df_temp_PiC.shape[1]
 
 
 def extra_vars(forc_vars):
