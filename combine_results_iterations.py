@@ -355,15 +355,100 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
     return df_avg, dict_iterations, size_iterations
 
 
-def load_nested_dfs(d):
-    """Return nested dictionary with DataFrames instead of file paths."""
+def read_results_csv(path):
+    """Read one results CSV into a DataFrame, or None if it does not exist.
+
+    The file has two header rows -- variable and percentile -- read as a
+    column MultiIndex, with the year or period as its index. A missing file
+    gives None, which is how the rest of the script tells a result that was
+    never written from one that was.
+
+    In the pipeline: load_nested_dfs runs it in a pool, once for every path
+    in a nested dictionary of results files (or directly, for a small one).
+
+    Replaces the reading step inside the old recursive load_nested_dfs,
+    which read each file as it came to it. It is a function of its own now
+    so that the pool can call it.
+    """
+    if os.path.exists(path):
+        return pd.read_csv(path, index_col=0, header=[0, 1], skiprows=0)
+    return None
+
+
+def collect_nested_paths(d, paths):
+    """Add every file path in a nested dictionary to the set `paths`.
+
+    Walks dictionaries nested to any depth and takes every string value to
+    be a path. Returns `paths`, so it can be called as
+    collect_nested_paths(d, set()).
+
+    In the pipeline: load_nested_dfs calls it first, for the flat list of
+    files it then reads in the pool.
+    """
     if isinstance(d, dict):
-        return {k: load_nested_dfs(v) for k, v in d.items()}
+        for v in d.values():
+            collect_nested_paths(v, paths)
     elif isinstance(d, str):
-        if os.path.exists(d):
-            return pd.read_csv(d, index_col=0, header=[0, 1], skiprows=0)
-        return None
+        paths.add(d)
+    return paths
+
+
+def substitute_nested_dfs(d, frames):
+    """Copy a nested dictionary, replacing each path with its frame.
+
+    Keeps the keys, their nesting and their order. Every string value is
+    looked up in `frames` (path -> DataFrame, or None for a missing file);
+    anything else is kept as it is. A path that is not in `frames` raises
+    KeyError, rather than coming back as None and being taken for a file
+    that was never written.
+
+    In the pipeline: load_nested_dfs calls it last, to put the frames read
+    in the pool back where their paths were.
+    """
+    if isinstance(d, dict):
+        return {k: substitute_nested_dfs(v, frames) for k, v in d.items()}
+    elif isinstance(d, str):
+        return frames[d]
     return d
+
+
+def load_nested_dfs(d):
+    """Return a nested dictionary of file paths with the files read in.
+
+    Takes a dictionary, nested to any depth, whose string values are paths
+    to results CSVs, and returns the same structure with each path replaced
+    by its DataFrame -- or by None where the file does not exist.
+
+    In the pipeline: load_gwi_priors_erf_obs calls it four times, for the GWI
+    results, priors, ERFs and observations. It collects every path into one
+    flat list (collect_nested_paths), reads them in a pool
+    (read_results_csv), and puts the frames back (substitute_nested_dfs). A
+    dictionary of fewer than 64 files is read directly instead.
+
+    Replaces a version that walked the dictionary recursively and read each
+    file in the parent as it came to it. This is better because the reading
+    is now parallel. pandas spends several milliseconds on each file building
+    its two-row column MultiIndex, and a scenario run member by member --
+    e.g. GMT={1..100} with ERF=all, as in the Thorne et al. analysis -- is
+    fifteen thousand files: for results_Thorne_2026, 87 s one after another
+    against about 5 s in the pool on 28 workers. The frames are small, so
+    sending them back to the parent costs far less than parsing them there.
+    """
+    paths = sorted(collect_nested_paths(d, set()))
+
+    # Starting a pool costs about 0.2 s, the same as reading 60-70 files one
+    # after another (measured with all of results_Thorne_2026 loaded, 28
+    # workers). So smaller dictionaries -- the priors and ERFs, a handful of
+    # files each -- are read directly.
+    if len(paths) < 64:
+        frames = {path: read_results_csv(path) for path in paths}
+    else:
+        # Pool's default chunksize, for the reasons given in
+        # calculate_iteration_averages.
+        with mp.Pool(defs.n_workers()) as p:
+            frames = dict(zip(paths, p.map(read_results_csv, paths)))
+
+    return substitute_nested_dfs(d, frames)
 
 
 def load_gwi_priors_erf_obs():
