@@ -792,15 +792,20 @@ def headline_var_available(df, period, var, context=''):
         "(eg a truncation range extending beyond the observations).")
 
 
-def figure_timeseries(reg_range, scen, ens, reg_vars,
-                      results_dfs, df_temp_Obs, params
+def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
+                      df_temp_Obs, params
                       ):
-    """Plot single timeseries plots."""
+    """Plot single timeseries plots.
+
+    Takes this range's own timeseries rather than the whole results_dfs: the
+    pool sends every argument to the worker, so asking for the nested
+    dictionary would ship every scenario, ensemble and range to every worker
+    for every figure. See overarching_base_result_plotter.
+    """
     # print('Creating single timeseries plots for:',
     #       scen, ens, reg_vars, reg_range, end='\r')
 
     # Get all variables present in the data
-    df_ts = results_dfs[scen][ens][reg_vars][reg_range]['timeseries']
     all_data_vars = df_ts.columns.get_level_values(0).unique().to_list()
 
     # Define major variables (for plumes)
@@ -900,12 +905,15 @@ def figure_timeseries(reg_range, scen, ens, reg_vars,
     return plot_name
 
 
-def figure_rates(reg_range, scen, ens, reg_vars,
-                 results_dfs, df_temp_Obs, params
+def figure_rates(reg_range, df_ts, scen, ens, reg_vars,
+                 df_temp_Obs, params
                  ):
-    """Plot single rates plots."""
+    """Plot single rates plots.
+
+    Takes this range's own rates rather than the whole results_dfs; see
+    figure_timeseries.
+    """
     # Get all variables present in the data
-    df_ts = results_dfs[scen][ens][reg_vars][reg_range]['rates']
     all_data_vars = df_ts.columns.get_level_values(0).unique().to_list()
 
     # Transform the index of df_ts to numeric - it is currently of the form
@@ -1010,8 +1018,8 @@ def figure_rates(reg_range, scen, ens, reg_vars,
     return plot_name
 
 
-def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
-                                results_dfs, params
+def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
+                                params
                                 ):
     """Plot the spread between repeat iterations of the sampling.
 
@@ -1019,6 +1027,9 @@ def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
     same configuration differ slightly. The left panel shows each iteration
     against the ensemble-size-weighted average of all of them; the right panel
     shows each iteration minus that average, which is the sampling variance.
+
+    Takes this range's own averaged timeseries rather than the whole
+    results_dfs; see figure_timeseries.
     """
     dict_iterations, _ = load_iteration_dfs(
         reg_range, 'timeseries', scen, ens, reg_vars)
@@ -1027,8 +1038,6 @@ def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
     # more than once.
     if len(dict_iterations) < 2:
         return None
-
-    df_avg = results_dfs[scen][ens][reg_vars][reg_range]['timeseries']
 
     # Compare only the major variables, as including the sub-variables makes
     # the spread hard to read.
@@ -1118,16 +1127,15 @@ def figure_iteration_comparison(reg_range, scen, ens, reg_vars,
 
 
 def figure_spm2(
-        reg_range, scen, ens, reg_vars,
-        results_dfs, obs_dfs,
+        reg_range, df_headlines, obs_dict, scen, ens, reg_vars,
         params):
-    """Plot single SPM2 bar plot."""
+    """Plot single SPM2 bar plot.
 
-    # Get headlines
-    df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
+    Takes this range's own headlines and observations rather than the whole
+    results_dfs and obs_dfs; see figure_timeseries.
+    """
 
     # Get observations headlines
-    obs_dict = obs_dfs[scen][ens][reg_range]
     if is_dataset_present(obs_dict, 'headlines'):
         df_obs_headlines = obs_dict['headlines']
     else:
@@ -1304,15 +1312,14 @@ def figure_spm2(
 
 
 def figure_waterfall(
-        reg_range, scen, ens, reg_vars,
-        results_dfs, obs_dfs,
+        reg_range, df_headlines, obs_dict, scen, ens, reg_vars,
         params):
-    """Plot single waterfall plot (Horizontal Design with Subtotals)."""
+    """Plot single waterfall plot (Horizontal Design with Subtotals).
 
-    # Get headlines
-    df_headlines = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
-    
-    obs_dict = obs_dfs[scen][ens][reg_range]
+    Takes this range's own headlines and observations rather than the whole
+    results_dfs and obs_dfs; see figure_timeseries.
+    """
+
     if is_dataset_present(obs_dict, 'headlines'):
         df_obs_headlines = obs_dict['headlines']
     else:
@@ -2647,13 +2654,39 @@ def figure_delta_contributions(
           delta_rms / residual_rms)
 
 
+def headline_tasks(scen, ens, reg_vars, reg_ranges, results_dfs, obs_dfs):
+    """Pair each regressed range with the headlines the bar plotters need.
+
+    The SPM2 and waterfall figures each read one range's headlines and that
+    range's observed headlines, so those are what the pool is given -- see
+    the note in overarching_base_result_plotter.
+    """
+    return [
+        (r,
+         results_dfs[scen][ens][reg_vars][r]['headlines'],
+         obs_dfs[scen][ens][r])
+        for r in reg_ranges
+    ]
+
+
 def overarching_base_result_plotter(
     results_dfs,
     obs_dfs,
     erf_dfs,
     priors_dfs
 ):
-    """Plot figures of base results."""
+    """Plot figures of base results.
+
+    The pools below are given each figure's own slice of results_dfs and
+    obs_dfs rather than the dictionaries themselves. Every argument to a pool
+    task is pickled by the parent and unpickled by the worker that runs it,
+    so passing the nested dictionary sent a copy of every scenario, ensemble,
+    regressed-variable set and regressed range to a worker for each single
+    figure -- hundreds of megabytes per task, of which a figure reads one
+    dataframe. On a 100-member ensemble that exhausted the job's memory and
+    the whole run was OOM-killed partway through the bar plots. A slice is
+    around a hundred kilobytes, and costs nothing to send.
+    """
 
     print('\nPlotting single-run timeseries')
     for scen in results_dfs.keys():
@@ -2687,30 +2720,33 @@ def overarching_base_result_plotter(
                         with mp.Pool(defs.n_workers()) as p:
                             print('        Plotting figure_timeseries for GWI')
                             # print('  in parallel for:', valid_ranges_ts)
-                            plot_names = p.map(
+                            plot_names = p.starmap(
                                 functools.partial(
                                     figure_timeseries,
                                     scen=scen, ens=ens, reg_vars=reg_vars,
-                                    results_dfs=results_dfs,
                                     df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
                                     params=params
                                     ),
-                                valid_ranges_ts
+                                [(r,
+                                  results_dfs[scen][ens][reg_vars][r][
+                                      'timeseries'])
+                                 for r in valid_ranges_ts]
                             )
 
                     valid_ranges_rates = [r for r in reg_ranges_all if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
                     if valid_ranges_rates:
                         with mp.Pool(defs.n_workers()) as p:
                             print('        Plotting figure_rates for GWI')
-                            p.map(
+                            p.starmap(
                                 functools.partial(
                                     figure_rates,
                                     scen=scen, ens=ens, reg_vars=reg_vars,
-                                    results_dfs=results_dfs,
                                     df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
                                     params=params
                                     ),
-                                valid_ranges_rates
+                                [(r,
+                                  results_dfs[scen][ens][reg_vars][r]['rates'])
+                                 for r in valid_ranges_rates]
                             )
 
                     ###########################################################
@@ -2739,14 +2775,15 @@ def overarching_base_result_plotter(
                 if iteration_comparison_toggle and valid_ranges_iters:
                     with mp.Pool(defs.n_workers()) as p:
                         print('        Plotting figure_iteration_comparison')
-                        p.map(
+                        p.starmap(
                             functools.partial(
                                 figure_iteration_comparison,
                                 scen=scen, ens=ens, reg_vars=reg_vars,
-                                results_dfs=results_dfs,
                                 params=params
                                 ),
-                            valid_ranges_iters
+                            [(r,
+                              results_dfs[scen][ens][reg_vars][r]['timeseries'])
+                             for r in valid_ranges_iters]
                         )
 
                 ###############################################################
@@ -2774,15 +2811,15 @@ def overarching_base_result_plotter(
                 if valid_ranges_headlines:
                     print('        Plotting SPM2 for GWI in parallel')
                     with mp.Pool(defs.n_workers()) as p:
-                        p.map(
+                        p.starmap(
                             functools.partial(
                                 figure_spm2,
                                 scen=scen, ens=ens, reg_vars=reg_vars,
-                                results_dfs=results_dfs,
-                                obs_dfs=obs_dfs,
                                 params=params
                             ),
-                            valid_ranges_headlines
+                            headline_tasks(
+                                scen, ens, reg_vars, valid_ranges_headlines,
+                                results_dfs, obs_dfs)
                         )
 
                 ###############################################################
@@ -2790,15 +2827,15 @@ def overarching_base_result_plotter(
                 if valid_ranges_headlines:
                     print('        Plotting Waterfall for GWI in parallel')
                     with mp.Pool(defs.n_workers()) as p:
-                        p.map(
+                        p.starmap(
                             functools.partial(
                                 figure_waterfall,
                                 scen=scen, ens=ens, reg_vars=reg_vars,
-                                results_dfs=results_dfs,
-                                obs_dfs=obs_dfs,
                                 params=params
                             ),
-                            valid_ranges_headlines
+                            headline_tasks(
+                                scen, ens, reg_vars, valid_ranges_headlines,
+                                results_dfs, obs_dfs)
                         )
 
 
