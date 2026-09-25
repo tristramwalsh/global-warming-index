@@ -1975,8 +1975,9 @@ def parse_argvs():
                            of the plain results/ and plots/ folders. Use the
                            same tag that was given to gwi.py. Empty or absent
                            means the plain folders, as before.
-      --re-calculate=y|n   whether to recompute the iteration averages, or
-                           reuse what is already in the aggregated folder.
+      --re-calculate=y|n   whether to recompute the iteration averages, and
+                           the historical-only datasets derived from them,
+                           or reuse what is already in the aggregated folder.
                            Defaults to y.
 
     Returns (output_tag, re_calculate).
