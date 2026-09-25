@@ -85,63 +85,110 @@ def setup_plot_params(scen, ens, reg_vars, results_dfs):
     }
 
 
-def check_headlines_files(scenario, ensemble_selection,
-                          regressed_vars, regressed_years_vars):
-    """Check if any headline files exist for the given configuration."""
-    for reg_year in regressed_years_vars:
-        path = (f'{ITERATIONS_FOLDER}/'
-                f'SCENARIO--{scenario}/'
-                f'ENSEMBLE-MEMBER--{ensemble_selection}/'
-                f'VARIABLES--{regressed_vars}/'
-                f'REGRESSED-YEARS--{reg_year}/')
-        if os.path.exists(path):
-            for f in os.listdir(path):
-                if 'headlines' in f:
-                    return True
-    return False
+def range_result_types(base_path):
+    """List the result types that have iteration files in one directory.
+
+    Returns the subset of ('timeseries', 'headlines', 'rates') for which
+    base_path -- one regressed-years directory under ITERATIONS_FOLDER --
+    holds at least one file, or [] if the directory does not exist. The
+    directory is listed once, and that one listing answers for all three.
+
+    In the pipeline: calculate_iteration_averages runs it in a pool, once for
+    every regressed-years directory of every scenario, ensemble selection and
+    set of regressed variables, and queues an average only for the result
+    types it returns.
+
+    Replaces check_headlines_files and check_rates_files. Those ran in the
+    parent, one configuration at a time; each listed the configuration's
+    directories until it found a file of its type, and if it did, switched
+    that type on for every range of the configuration. This is better
+    because:
+      - the listings run in parallel rather than one after another. Rates
+        are rarely written, so check_rates_files listed every directory --
+        all 7676 in results_Thorne_2026, which took from 2 s to 35 s on the
+        network filesystem depending on its load;
+      - each directory is judged on its own files, so nothing is queued for
+        a range without iterations of that type. The old checks queued
+        those, and each then printed 'No iterations found'.
+    """
+    try:
+        files = os.listdir(base_path)
+    except FileNotFoundError:
+        return []
+
+    # any() consumes the generator lazily, so for each result type it stops
+    # at the first file name containing it rather than testing every name.
+    return [
+        result_type for result_type in ('timeseries', 'headlines', 'rates')
+        if any(result_type in f for f in files)
+        ]
 
 
-def check_rates_files(scenario, ensemble_selection,
-                      regressed_vars, regressed_years_vars):
-    """Check if any rates files exist for the given configuration."""
-    for reg_year in regressed_years_vars:
-        path = (f'{ITERATIONS_FOLDER}/'
-                f'SCENARIO--{scenario}/'
-                f'ENSEMBLE-MEMBER--{ensemble_selection}/'
-                f'VARIABLES--{regressed_vars}/'
-                f'REGRESSED-YEARS--{reg_year}/')
-        if os.path.exists(path):
-            for f in os.listdir(path):
-                if 'rates' in f:
-                    return True
-    return False
+def write_repeat_average(regressed_years, result_type, scenario,
+                         ensemble_selection, regressed_vars):
+    """Average one dataset's iterations and write the average to disk.
+
+    Calls combine_repeats for one regressed range and result type, which
+    writes the ensemble-size-weighted average of that dataset's iterations
+    to AGGREGATED_FOLDER. Returns nothing.
+
+    In the pipeline: calculate_iteration_averages runs it in a pool, once for
+    every (regressed range, result type) that range_result_types found
+    iteration files for.
+
+    Replaces running combine_repeats in the pool directly. combine_repeats
+    also returns the averaged frame and every iteration behind it, and a
+    pool pickles every return value back to the parent -- which discarded
+    them. Returning nothing avoids that transfer, and leaves combine_repeats,
+    which does the averaging itself, unchanged.
+    """
+    combine_repeats(regressed_years, result_type, scenario,
+                    ensemble_selection, regressed_vars)
 
 
 def calculate_iteration_averages():
-    """Average the timeseries, headlines, and rates iterations."""
+    """Average the timeseries, headlines and rates iterations of every run.
+
+    Walks ITERATIONS_FOLDER through every scenario, ensemble selection, set
+    of regressed variables and regressed range; finds which result types
+    each range has iteration files for; and writes the average of each of
+    those datasets to AGGREGATED_FOLDER. Returns nothing: the averages are
+    read back from disk by load_gwi_priors_erf_obs.
+
+    In the pipeline: the first step of the script, run when --re-calculate=y.
+    It uses two pools, each over one flat list of all the work -- first
+    range_result_types over every regressed-years directory, then
+    write_repeat_average over every (range, result type) to average.
+
+    Replaces a loop over the configurations (scenario, ensemble selection,
+    regressed variables) that built a new pool for each one and averaged
+    only that configuration's ranges in it. This is better because one pool
+    is started instead of one per configuration -- a hundred, for a
+    member-by-member scenario -- and the workers share one list of all the
+    work instead of one configuration's ranges at a time.
+    """
 
     scenarios_all = get_subdirs(ITERATIONS_FOLDER, 'SCENARIO--')
     print(scenarios_all)
 
+    # Walk the tree first, so that the log still reads as a hierarchy even
+    # though the averaging that follows is one flat pass.
+    range_dirs = []
+
     for scenario in scenarios_all:
-        print('Calculating SCENARIO:', scenario)
+        print('Collecting SCENARIO:', scenario)
 
         ensemble_selections = get_subdirs(
             f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/', 'ENSEMBLE-MEMBER--')
 
         for ensemble_selection in ensemble_selections:
-            print('  Calculating ensemble selection:', ensemble_selection)
 
             regressed_variables_all = get_subdirs(
                 f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/'
                 f'ENSEMBLE-MEMBER--{ensemble_selection}/',
                 'VARIABLES--')
 
-            print('    All regressed variables for scenario:',
-                  regressed_variables_all)
-
             for regressed_vars in regressed_variables_all:
-                print('      Calculating regressed variables:', regressed_vars)
                 _path = (f'{ITERATIONS_FOLDER}/' +
                          f'SCENARIO--{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
@@ -150,37 +197,48 @@ def calculate_iteration_averages():
                 regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
 
                 if defs.check_steps(regressed_years_vars)['check_bool']:
-                    print(f'        All regressed years for {regressed_vars}:',
-                          defs.check_steps(regressed_years_vars)['range'])
+                    print(f'  {ensemble_selection} {regressed_vars}: '
+                          "all regressed years "
+                          f"{defs.check_steps(regressed_years_vars)['range']}")
 
-                # Check if headlines are available
-                headline_toggle = check_headlines_files(
-                    scenario, ensemble_selection,
-                    regressed_vars, regressed_years_vars)
+                for regressed_years in regressed_years_vars:
+                    range_dirs.append(
+                        (regressed_years, scenario,
+                         ensemble_selection, regressed_vars))
 
-                # Check if rates are available
-                rate_toggle = check_rates_files(
-                    scenario, ensemble_selection,
-                    regressed_vars, regressed_years_vars)
+    # Both pools below use Pool's default chunksize, ceil(tasks / (4 x
+    # workers)). A chunk goes whole to one worker, so a fixed size puts a
+    # small job -- a handful of directories -- on a single worker; the
+    # default makes chunks of one until there are more than four tasks per
+    # worker, and only then batches them. On results_Thorne_2026 (15353
+    # averages, 28 workers) a fixed size was no faster.
 
-                result_types_to_process = ['timeseries']
-                if headline_toggle:
-                    result_types_to_process.append('headlines')
-                if rate_toggle:
-                    result_types_to_process.append('rates')
+    # The directory of each regressed range, whose files say which result
+    # types it has iterations for.
+    range_paths = [
+        iteration_base_path(regressed_years, scenario,
+                            ensemble_selection, regressed_vars)
+        for regressed_years, scenario, ensemble_selection, regressed_vars
+        in range_dirs]
 
-                with mp.Pool(defs.n_workers()) as p:
-                    print('        Calculating (parallel regressed_years) ',
-                          'for:',
-                          scenario, ensemble_selection, regressed_vars)
-                    for res_type in result_types_to_process:
-                        p.map(
-                            functools.partial(
-                                combine_repeats,
-                                result_type=res_type, scenario=scenario,
-                                ensemble_selection=ensemble_selection,
-                                regressed_vars=regressed_vars),
-                            regressed_years_vars)
+    # Which result types each directory holds. These are thousands of
+    # network listings, none depending on another, so they run in the pool.
+    print(f'\nChecking {len(range_paths)} regressed-year directories')
+    with mp.Pool(defs.n_workers()) as p:
+        types_per_dir = p.map(range_result_types, range_paths)
+
+    # One averaging task for each result type found in each directory.
+    tasks = []
+    for range_dir, result_types in zip(range_dirs, types_per_dir):
+        regressed_years, scenario, ensemble_selection, regressed_vars = range_dir
+        for result_type in result_types:
+            tasks.append((regressed_years, result_type, scenario,
+                          ensemble_selection, regressed_vars))
+
+    print(f'Averaging {len(tasks)} datasets from '
+          f'{len(range_dirs)} regressed-year directories')
+    with mp.Pool(defs.n_workers()) as p:
+        p.starmap(write_repeat_average, tasks)
 
 
 def iteration_base_path(regressed_years, scenario, ensemble_selection,
