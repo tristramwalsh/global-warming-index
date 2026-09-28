@@ -670,7 +670,17 @@ def get_available_headlines(results_dfs, scen, ens, reg_vars, reg_ranges_all):
 def calculate_historical_only(
     results_dfs
 ):
-    """Generate historical-only timeseries and plot them."""
+    """Derive the historical-only datasets and save them as CSVs.
+
+    For every scenario, selection and set of regressed variables with more
+    than one regressed range, and for each headline available (ANNUAL, AR6,
+    SR15, CGWL), builds a timeseries in which each year's value comes from
+    the regression that ends in that year, and writes it to
+    AGGREGATED_FOLDER (combine_historical_only). Plots nothing.
+
+    In the pipeline: step 4 of the script, run with --re-calculate=y. Step 5,
+    load_historical_only_dfs, reads the CSVs back for plotting.
+    """
 
     print('\nGenerating historical-only timeseries')
     for scen in sorted(results_dfs.keys()):
@@ -950,12 +960,20 @@ def headline_var_available(df, period, var, context=''):
 def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
                       df_temp_Obs, params
                       ):
-    """Plot single timeseries plots.
+    """Plot the GWI timeseries of one regressed range, and save it.
 
-    Takes this range's own timeseries rather than the whole results_dfs: the
-    pool sends every argument to the worker, so asking for the nested
-    dictionary would ship every scenario, ensemble and range to every worker
-    for every figure. See overarching_base_result_plotter.
+    df_ts is the range's averaged timeseries, and df_temp_Obs the observed
+    temperatures it is drawn against. Returns the saved figure's path.
+
+    In the pipeline: overarching_base_result_plotter runs it in a pool, once
+    per regressed range of a selection, and makes the selection's gif from
+    the paths returned.
+
+    Replaces a version that took the whole results_dfs and looked the
+    range's timeseries up in it. A pool sends every argument to its worker,
+    so each figure was sent every scenario, selection and range -- enough,
+    for a member-by-member scenario, to run the job out of memory. It is now
+    sent only the frame it draws.
     """
     # print('Creating single timeseries plots for:',
     #       scen, ens, reg_vars, reg_range, end='\r')
@@ -1063,9 +1081,18 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
 def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  df_temp_Obs, params
                  ):
-    """Plot single rates plots.
+    """Plot the warming rates of one regressed range, and save it.
 
-    Takes this range's own rates rather than the whole results_dfs; see
+    df_rates is the range's averaged rates, indexed by period (e.g.
+    '1941-1950 (AR6 rate definition)'), and df_temp_Obs the observed
+    temperatures. Re-indexes df_rates in place by each period's end year,
+    which is safe because each pool worker has its own copy. Returns the
+    saved figure's path.
+
+    In the pipeline: overarching_base_result_plotter runs it in a pool, once
+    per regressed range that has rates.
+
+    Replaces a version that took the whole results_dfs; see
     figure_timeseries.
     """
     # Get all variables present in the data
@@ -1183,8 +1210,15 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
     against the ensemble-size-weighted average of all of them; the right panel
     shows each iteration minus that average, which is the sampling variance.
 
-    Takes this range's own averaged timeseries rather than the whole
-    results_dfs; see figure_timeseries.
+    df_avg is the range's averaged timeseries; its iterations are read from
+    ITERATIONS_FOLDER. Returns the saved figure's path, or None where the
+    range has fewer than two iterations.
+
+    In the pipeline: overarching_base_result_plotter runs it in a pool, once
+    per regressed range, on the same tasks as figure_timeseries.
+
+    Replaces a version that took the whole results_dfs; see
+    figure_timeseries.
     """
     dict_iterations, _ = load_iteration_dfs(
         reg_range, 'timeseries', scen, ens, reg_vars)
@@ -1284,11 +1318,18 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
 def figure_spm2(
         reg_range, df_headlines, df_obs_headlines, scen, ens, reg_vars,
         params):
-    """Plot single SPM2 bar plot.
+    """Plot the SPM2 bar plot for each headline period of one regressed range.
 
-    Takes this range's own headlines and observed headlines rather than the
-    whole results_dfs and obs_dfs; see figure_timeseries. df_obs_headlines is
-    None where no observed headlines were written for this range.
+    df_headlines is the range's averaged headlines, one row per headline
+    period. df_obs_headlines is its observed headlines, or None where none
+    were written, in which case the figures are drawn without observations.
+    Saves one figure per period, and returns nothing.
+
+    In the pipeline: overarching_base_result_plotter runs it in a pool, once
+    per regressed range that has headlines.
+
+    Replaces a version that took the whole results_dfs and obs_dfs; see
+    figure_timeseries.
     """
 
     periods = list(df_headlines.index)
@@ -1464,11 +1505,19 @@ def figure_spm2(
 def figure_waterfall(
         reg_range, df_headlines, df_obs_headlines, scen, ens, reg_vars,
         params):
-    """Plot single waterfall plot (Horizontal Design with Subtotals).
+    """Plot the waterfall bar plot for each headline period of one range.
 
-    Takes this range's own headlines and observed headlines rather than the
-    whole results_dfs and obs_dfs; see figure_timeseries. df_obs_headlines is
-    None where no observed headlines were written for this range.
+    The waterfall is horizontal, with subtotals. df_headlines is the range's
+    averaged headlines, one row per headline period. df_obs_headlines is its
+    observed headlines, or None where none were written, in which case the
+    figures are drawn without observations. Saves one figure per period, and
+    returns nothing.
+
+    In the pipeline: overarching_base_result_plotter runs it in a pool, once
+    per regressed range that has headlines.
+
+    Replaces a version that took the whole results_dfs and obs_dfs; see
+    figure_timeseries.
     """
 
     periods = list(df_headlines.index)
@@ -2912,17 +2961,22 @@ def overarching_base_result_plotter(
     erf_dfs,
     priors_dfs
 ):
-    """Plot figures of base results.
+    """Draw the base figures of every scenario, selection and variable set.
 
-    The pools below are given each figure's own slice of results_dfs and
-    obs_dfs rather than the dictionaries themselves. Every argument to a pool
-    task is pickled by the parent and unpickled by the worker that runs it,
-    so passing the nested dictionary sent a copy of every scenario, ensemble,
-    regressed-variable set and regressed range to a worker for each single
-    figure -- hundreds of megabytes per task, of which a figure reads one
-    dataframe. On a 100-member ensemble that exhausted the job's memory and
-    the whole run was OOM-killed partway through the bar plots. A slice is
-    around a hundred kilobytes, and costs nothing to send.
+    For each, draws the GWI timeseries, rates, iteration comparison, SPM2 and
+    waterfall figures for the regressed ranges ranges_to_plot chooses, and
+    the gif, priors and ERF figures where there is something to draw. Saves
+    them under PLOT_FOLDER, and returns nothing.
+
+    In the pipeline: step 3 of the script, after the averaged results are
+    loaded. Each per-range figure type runs in its own pool, in parallel
+    over the regressed ranges, and each task carries only the frames its
+    figure draws (tasks_ts, tasks_rates, tasks_headlines).
+
+    Replaces a version that passed results_dfs and obs_dfs whole with every
+    task. A pool sends every argument to its worker, so each figure was sent
+    every scenario, selection and range -- which, for a member-by-member
+    scenario, ran the job out of memory.
     """
 
     print('\nPlotting single-run timeseries')
