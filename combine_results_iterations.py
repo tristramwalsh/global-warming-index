@@ -1282,19 +1282,14 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
 
 
 def figure_spm2(
-        reg_range, df_headlines, obs_dict, scen, ens, reg_vars,
+        reg_range, df_headlines, df_obs_headlines, scen, ens, reg_vars,
         params):
     """Plot single SPM2 bar plot.
 
-    Takes this range's own headlines and observations rather than the whole
-    results_dfs and obs_dfs; see figure_timeseries.
+    Takes this range's own headlines and observed headlines rather than the
+    whole results_dfs and obs_dfs; see figure_timeseries. df_obs_headlines is
+    None where no observed headlines were written for this range.
     """
-
-    # Get observations headlines
-    if is_dataset_present(obs_dict, 'headlines'):
-        df_obs_headlines = obs_dict['headlines']
-    else:
-        df_obs_headlines = None
 
     periods = list(df_headlines.index)
     if not periods:
@@ -1467,18 +1462,14 @@ def figure_spm2(
 
 
 def figure_waterfall(
-        reg_range, df_headlines, obs_dict, scen, ens, reg_vars,
+        reg_range, df_headlines, df_obs_headlines, scen, ens, reg_vars,
         params):
     """Plot single waterfall plot (Horizontal Design with Subtotals).
 
-    Takes this range's own headlines and observations rather than the whole
-    results_dfs and obs_dfs; see figure_timeseries.
+    Takes this range's own headlines and observed headlines rather than the
+    whole results_dfs and obs_dfs; see figure_timeseries. df_obs_headlines is
+    None where no observed headlines were written for this range.
     """
-
-    if is_dataset_present(obs_dict, 'headlines'):
-        df_obs_headlines = obs_dict['headlines']
-    else:
-        df_obs_headlines = None
 
     periods = list(df_headlines.index)
     if not periods:
@@ -2895,21 +2886,6 @@ def figure_delta_contributions(
           delta_rms / residual_rms)
 
 
-def headline_tasks(scen, ens, reg_vars, reg_ranges, results_dfs, obs_dfs):
-    """Pair each regressed range with the headlines the bar plotters need.
-
-    The SPM2 and waterfall figures each read one range's headlines and that
-    range's observed headlines, so those are what the pool is given -- see
-    the note in overarching_base_result_plotter.
-    """
-    return [
-        (r,
-         results_dfs[scen][ens][reg_vars][r]['headlines'],
-         obs_dfs[scen][ens][r])
-        for r in reg_ranges
-    ]
-
-
 def describe_ranges(reg_ranges):
     """Summarise a list of regressed ranges by their end years, for the log.
 
@@ -2992,6 +2968,9 @@ def overarching_base_result_plotter(
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'timeseries')
                     ]
+                tasks_ts = [
+                    (r, results_dfs[scen][ens][reg_vars][r]['timeseries'])
+                    for r in valid_ranges_ts]
                 if valid_ranges_ts:
                     with mp.Pool(defs.n_workers()) as p:
                         print('        Plotting figure_timeseries for GWI: 1 figure per '
@@ -3006,13 +2985,16 @@ def overarching_base_result_plotter(
                                 df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
                                 params=params
                                 ),
-                            [(r,
-                              results_dfs[scen][ens][reg_vars][r][
-                                  'timeseries'])
-                             for r in valid_ranges_ts]
-                        )
+                            tasks_ts)
 
-                valid_ranges_rates = [r for r in reg_ranges_plot if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
+                valid_ranges_rates = [
+                    r for r in reg_ranges_plot
+                    if is_dataset_present(
+                        results_dfs[scen][ens][reg_vars][r], 'rates')
+                    ]
+                tasks_rates = [
+                    (r, results_dfs[scen][ens][reg_vars][r]['rates'])
+                    for r in valid_ranges_rates]
                 if valid_ranges_rates:
                     with mp.Pool(defs.n_workers()) as p:
                         print('        Plotting figure_rates for GWI: 1 figure per '
@@ -3027,10 +3009,7 @@ def overarching_base_result_plotter(
                                 df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
                                 params=params
                                 ),
-                            [(r,
-                              results_dfs[scen][ens][reg_vars][r]['rates'])
-                             for r in valid_ranges_rates]
-                        )
+                            tasks_rates)
 
                 ###########################################################
                 # 2. Create GIF of Timeseries Plots
@@ -3057,6 +3036,9 @@ def overarching_base_result_plotter(
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'timeseries')
                     ]
+                tasks_iters = [
+                    (r, results_dfs[scen][ens][reg_vars][r]['timeseries'])
+                    for r in valid_ranges_iters]
                 if iteration_comparison_toggle and valid_ranges_iters:
                     with mp.Pool(defs.n_workers()) as p:
                         print('        Plotting figure_iteration_comparison: 1 figure per '
@@ -3071,10 +3053,7 @@ def overarching_base_result_plotter(
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 params=params
                                 ),
-                            [(r,
-                              results_dfs[scen][ens][reg_vars][r]['timeseries'])
-                             for r in valid_ranges_iters]
-                        )
+                            tasks_iters)
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
@@ -3098,6 +3077,15 @@ def overarching_base_result_plotter(
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'headlines')
                     ]
+                # Each range here has its own headlines -- that is what the
+                # filter above checks -- but observed headlines are optional:
+                # the loader only adds them where it found a file. So they
+                # are looked up with .get, and a range without them gets
+                # None and is drawn without observations.
+                tasks_headlines = [
+                    (r, results_dfs[scen][ens][reg_vars][r]['headlines'],
+                     obs_dfs[scen][ens][r].get('headlines'))
+                    for r in valid_ranges_headlines]
 
                 # For the log: the SPM2 and waterfall figures each draw one
                 # bar plot per headline period (row) of each range's
@@ -3129,10 +3117,7 @@ def overarching_base_result_plotter(
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 params=params
                             ),
-                            headline_tasks(
-                                scen, ens, reg_vars, valid_ranges_headlines,
-                                results_dfs, obs_dfs)
-                        )
+                            tasks_headlines)
 
                 ###############################################################
                 # 5. Plot Waterfall Plot
@@ -3153,10 +3138,7 @@ def overarching_base_result_plotter(
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 params=params
                             ),
-                            headline_tasks(
-                                scen, ens, reg_vars, valid_ranges_headlines,
-                                results_dfs, obs_dfs)
-                        )
+                            tasks_headlines)
 
 
 def overarching_historical_only_plotter(
