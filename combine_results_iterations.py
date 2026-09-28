@@ -1060,7 +1060,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
     return plot_name
 
 
-def figure_rates(reg_range, df_ts, scen, ens, reg_vars,
+def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  df_temp_Obs, params
                  ):
     """Plot single rates plots.
@@ -1069,12 +1069,12 @@ def figure_rates(reg_range, df_ts, scen, ens, reg_vars,
     figure_timeseries.
     """
     # Get all variables present in the data
-    all_data_vars = df_ts.columns.get_level_values(0).unique().to_list()
+    all_data_vars = df_rates.columns.get_level_values(0).unique().to_list()
 
-    # Transform the index of df_ts to numeric - it is currently of the form
+    # Transform the index of df_rates to numeric - it is currently of the form
     # '1941-1950 (AR6 rate definition)' and we want that to be '1950' for
     # plotting.
-    df_ts.index = df_ts.index.to_series().apply(
+    df_rates.index = df_rates.index.to_series().apply(
         lambda x: int(x.split('-')[1].split()[0]) if '-' in x else int(x.split()[0])
         )
 
@@ -1096,27 +1096,27 @@ def figure_rates(reg_range, df_ts, scen, ens, reg_vars,
 
     reg_start = int(reg_range.split('-')[0])
     reg_end = int(reg_range.split('-')[1])
-    trunc_start = df_ts.index.min()
-    trunc_end = df_ts.index.max()
+    trunc_start = df_rates.index.min()
+    trunc_end = df_rates.index.max()
 
-    if not df_ts.loc[reg_end:, :].empty:
+    if not df_rates.loc[reg_end:, :].empty:
         gr.gwi_timeseries(
             ax, None, None,
-            df_ts.loc[reg_end:, :],
+            df_rates.loc[reg_end:, :],
             all_data_vars, params['colours'], hatch='x', linestyle='dashed',
             plume_vars=plume_vars, ylabel='Warming Rate')
 
     gr.gwi_timeseries(
         ax, None, None,
-        df_ts.loc[reg_start:reg_end, :],
+        df_rates.loc[reg_start:reg_end, :],
         all_data_vars, params['colours'], linestyle=var_linestyles,
         plume_vars=plume_vars, ylabel='Warming Rate')
 
     try:
-        if 'Res' in df_ts.columns.get_level_values(0):
-            df_for_ylim = df_ts.drop(columns='Res', level=0)
+        if 'Res' in df_rates.columns.get_level_values(0):
+            df_for_ylim = df_rates.drop(columns='Res', level=0)
         else:
-            df_for_ylim = df_ts
+            df_for_ylim = df_rates
         y_min = np.floor(np.nanmin(df_for_ylim.values) * 10) / 40
         y_max = np.ceil(np.nanmax(df_for_ylim.values) * 10) / 20
         ax.set_ylim(y_min, y_max)
@@ -2973,8 +2973,8 @@ def overarching_base_result_plotter(
                     for r in valid_ranges_ts]
                 if valid_ranges_ts:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_timeseries for GWI: 1 figure per '
-                              'regressed range, for '
+                        print('        Plotting figure_timeseries for GWI: '
+                              '1 figure per regressed range, for '
                               f'{len(valid_ranges_ts)} regressed range/s '
                               f'ending {describe_ranges(valid_ranges_ts)}; '
                               f'in parallel on {defs.n_workers()} worker/s')
@@ -2997,8 +2997,8 @@ def overarching_base_result_plotter(
                     for r in valid_ranges_rates]
                 if valid_ranges_rates:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_rates for GWI: 1 figure per '
-                              'regressed range, for '
+                        print('        Plotting figure_rates for GWI: '
+                              '1 figure per regressed range, for '
                               f'{len(valid_ranges_rates)} regressed range/s '
                               f'ending {describe_ranges(valid_ranges_rates)}; '
                               f'in parallel on {defs.n_workers()} worker/s')
@@ -3030,22 +3030,17 @@ def overarching_base_result_plotter(
                 # Add a toggle, because this is a diagnostic of the sampling
                 # variance rather than a result. The figure is skipped
                 # automatically where a configuration has only one iteration.
+                # It draws each range's averaged timeseries against that
+                # range's iterations, so it takes the same ranges and tasks
+                # as the timeseries figures above.
                 iteration_comparison_toggle = True
-                valid_ranges_iters = [
-                    r for r in reg_ranges_plot
-                    if is_dataset_present(
-                        results_dfs[scen][ens][reg_vars][r], 'timeseries')
-                    ]
-                tasks_iters = [
-                    (r, results_dfs[scen][ens][reg_vars][r]['timeseries'])
-                    for r in valid_ranges_iters]
-                if iteration_comparison_toggle and valid_ranges_iters:
+                if iteration_comparison_toggle and valid_ranges_ts:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_iteration_comparison: 1 figure per '
-                              'regressed range with more than one '
-                              'iteration, for '
-                              f'{len(valid_ranges_iters)} regressed range/s '
-                              f'ending {describe_ranges(valid_ranges_iters)}; '
+                        print('        Plotting figure_iteration_comparison: '
+                              '1 figure per regressed range with more '
+                              'than one iteration, for '
+                              f'{len(valid_ranges_ts)} regressed range/s '
+                              f'ending {describe_ranges(valid_ranges_ts)}; '
                               f'in parallel on {defs.n_workers()} worker/s')
                         p.starmap(
                             functools.partial(
@@ -3053,7 +3048,7 @@ def overarching_base_result_plotter(
                                 scen=scen, ens=ens, reg_vars=reg_vars,
                                 params=params
                                 ),
-                            tasks_iters)
+                            tasks_ts)
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
