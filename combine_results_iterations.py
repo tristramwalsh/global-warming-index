@@ -238,7 +238,8 @@ def calculate_iteration_averages():
     # One averaging task for each result type found in each directory.
     tasks = []
     for range_dir, result_types in zip(range_dirs, types_per_dir):
-        regressed_years, scenario, ensemble_selection, regressed_vars = range_dir
+        (regressed_years, scenario,
+         ensemble_selection, regressed_vars) = range_dir
         for result_type in result_types:
             tasks.append((regressed_years, result_type, scenario,
                           ensemble_selection, regressed_vars))
@@ -268,7 +269,8 @@ def load_iteration_dfs(regressed_years, result_type, scenario,
 
     Args:
         regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines', 'rates').
+        result_type: The type of result (e.g., 'timeseries', 'headlines',
+            'rates').
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.
@@ -317,7 +319,8 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
 
     Args:
         regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines', 'rates').
+        result_type: The type of result (e.g., 'timeseries', 'headlines',
+            'rates').
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.
@@ -840,7 +843,8 @@ def load_historical_only_dfs(results_dfs):
                 # lines and legends differently.
                 hist_files = sorted([
                     f for f in os.listdir(_path)
-                    if f.startswith('GWI_results_') and 'HISTORICAL-ONLY' in f])
+                    if f.startswith('GWI_results_')
+                    and 'HISTORICAL-ONLY' in f])
 
                 for hist_file in hist_files:
                     _df = pd.read_csv(_path + hist_file,
@@ -868,14 +872,16 @@ def is_dataset_present(data_dict, required_keys):
     Parameters:
     -----------
     data_dict : dict
-        Dictionary containing datasets, typically results_dfs[scen][ens][reg_vars][reg_range]
+        Dictionary containing datasets, typically
+        results_dfs[scen][ens][reg_vars][reg_range]
     required_keys : list or str
         List of keys (or single key) that must be present and not None.
         
     Returns:
     --------
     bool
-        True if all required datasets are present and not None, False otherwise.
+        True if all required datasets are present and not None, False
+        otherwise.
     """
     if isinstance(required_keys, str):
         required_keys = [required_keys]
@@ -1102,7 +1108,8 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
     # '1941-1950 (AR6 rate definition)' and we want that to be '1950' for
     # plotting.
     df_rates.index = df_rates.index.to_series().apply(
-        lambda x: int(x.split('-')[1].split()[0]) if '-' in x else int(x.split()[0])
+        lambda x: (int(x.split('-')[1].split()[0]) if '-' in x
+                   else int(x.split()[0]))
         )
 
     # Define major variables (for plumes)
@@ -1670,7 +1677,8 @@ def figure_waterfall(
 
                 # Make the axhlne the same colour as the bar to signify
                 # aggregate
-                ax.axhline(y=y_pos, color=params['colours'][var], linewidth=1.5)
+                ax.axhline(y=y_pos, color=params['colours'][var],
+                           linewidth=1.5)
 
                 # Plot Bar
                 ax.barh(
@@ -1811,7 +1819,8 @@ def figure_waterfall(
         ax.set_axisbelow(True)
 
         ax.set_xlabel(
-            'Change in global mean surface temperature relative to 1850-1900 (°C)',
+            'Change in global mean surface temperature relative to '
+            '1850-1900 (°C)',
             fontsize=12)
 
         # Title
@@ -3207,8 +3216,10 @@ def overarching_historical_only_plotter(
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED-VARIABLES:', reg_vars)
 
-                if not is_dataset_present(results_dfs[scen][ens][reg_vars], 'HISTORICAL-ONLY'):
-                    print('      No historical-only datasets available; skipping historical-only plotting.')
+                if not is_dataset_present(
+                        results_dfs[scen][ens][reg_vars], 'HISTORICAL-ONLY'):
+                    print('      No historical-only datasets available; '
+                          'skipping historical-only plotting.')
                     continue
 
                 plot_path = f'{PLOT_FOLDER}aggregated/' + \
