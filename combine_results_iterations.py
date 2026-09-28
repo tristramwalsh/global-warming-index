@@ -12,6 +12,14 @@ import functools
 from pprint import pprint
 
 
+# How far to thin the figures of member-by-member selections (GMT-7_ERF-all
+# and the like). Never applies to GMT-all_ERF-all, which is always drawn in
+# full. Overridden from the command line by --plot-every; see
+# ranges_to_plot() for what it means and parse_argvs() for the option
+# itself. 1 draws everything.
+PLOT_EVERY = 10
+
+
 # Where this run reads and writes. PLOT_FOLDER, AGGREGATED_FOLDER,
 # ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER and OBSERVATIONS_FOLDER are
 # created by set_output_folders() below -- the only place the layout is
@@ -1979,8 +1987,22 @@ def parse_argvs():
                            the historical-only datasets derived from them,
                            or reuse what is already in the aggregated folder.
                            Defaults to y.
+      --plot-every=<N>     thin the figures of member-by-member selections
+                           only -- the runs made with
+                           --specify-ensemble-member that pull out one member
+                           (e.g. GMT-7_ERF-all) and run the whole analysis
+                           against it, as for Thorne et al. The standard
+                           GMT-all_ERF-all run handles the members inside the
+                           Monte Carlo instead and is ALWAYS plotted in full,
+                           whatever N is.
+                           For member-by-member selections: every one gets
+                           its final regressed range; beyond that, only every
+                           Nth member is plotted, and only at ranges ending
+                           on every Nth year. The historical-only figures are
+                           never thinned. Defaults to 10; pass 1 to draw
+                           everything.
 
-    Returns (output_tag, re_calculate).
+    Returns (output_tag, re_calculate, plot_every).
     """
     if len(sys.argv) > 1:
         # Separate out the names and values for each argv, and place them in
@@ -1997,7 +2019,10 @@ def parse_argvs():
     output_tag = argv_dict.get('--output-tag')
     # Default to re-calculating if not asked otherwise.
     re_calculate = argv_dict.get('--re-calculate', 'y') == 'y'
-    return output_tag, re_calculate
+    plot_every = int(argv_dict.get('--plot-every', PLOT_EVERY))
+    if plot_every < 1:
+        sys.exit(f'--plot-every must be 1 or more, not {plot_every}')
+    return output_tag, re_calculate, plot_every
 
 
 def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
@@ -2033,31 +2058,95 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
         optimize=False, duration=500, loop=0)
 
 
-def toggle_single_timeseries(
-        ens,
-        number_divisor=10):
-    """Toggle whether to plot single timeseries or not.
+def ensemble_uses_all_members(ens):
+    """Whether a selection uses every member of every source.
 
-    This is particulatly useful for large ensembles (e.g. SMILEs),
-    where plotting all ensemble members would take a long time
-    and create a large number of files."""
+    True for GMT-all_ERF-all. False for any selection that names a member,
+    such as GMT-7_ERF-all or GMT-all_ERF-7.
 
-    ens_values = [
+    In the pipeline: ranges_to_plot and ensemble_is_plotted use it to exempt
+    the full-ensemble selection from --plot-every, and
+    overarching_base_result_plotter to say so in the log.
+    """
+    return set(
         combo.split('-')[1] for combo in ens.split('_')
-        ]
-    ens_nums = [
-        s for s in ens_values if s.isdigit()
-        ]
-    if set(ens_values) == {'all'}:
-        single_toggle = True
-    # If divisible by 10, then plot (i.e. just plot 1/10 of the
-    # available ensemble members to save space/time)
-    elif any(int(s) % number_divisor == 0 for s in ens_nums):
-        single_toggle = True
-    else:
-        single_toggle = False
+        ) == {'all'}
 
-    return single_toggle
+
+def ensemble_is_plotted(ens, plot_every):
+    """Whether a selection gets base figures beyond its final regressed range.
+
+    True for the full-ensemble selection, and for a member-by-member
+    selection whose member number is a multiple of plot_every -- GMT-10,
+    GMT-20, ... for the default of 10. False for every other member.
+
+    In the pipeline: ranges_to_plot calls it for each member-by-member
+    selection.
+
+    With ranges_to_plot, replaces toggle_single_timeseries, which picked the
+    same one-in-ten members but applied the choice to the timeseries, rates
+    and gif only. Every member still got the iteration comparison, SPM2 and
+    waterfall figures for every regressed range.
+    """
+    if ensemble_uses_all_members(ens):
+        return True
+    ens_nums = [
+        s for s in (combo.split('-')[1] for combo in ens.split('_'))
+        if s.isdigit()
+        ]
+    return any(int(s) % plot_every == 0 for s in ens_nums)
+
+
+def ranges_to_plot(ens, reg_ranges, plot_every=None):
+    """Choose the regressed ranges a selection gets base figures for.
+
+    Returns a sorted subset of reg_ranges:
+      * all of them, for the full-ensemble selection (GMT-all_ERF-all), and
+        for every selection when plot_every is 1;
+      * the final range only, for a member-by-member selection whose member
+        is not a multiple of plot_every (GMT-7, with the default of 10);
+      * the final range and every range ending on a multiple of plot_every
+        (1850-1950, 1850-1960, ...), for one whose member is (GMT-10).
+    plot_every defaults to PLOT_EVERY, which --plot-every sets.
+
+    Member-by-member selections are the runs that pull one member out of an
+    ensemble and run the whole analysis against it, as for the Thorne et al.
+    comparison against each GMST realisation. The standard run,
+    GMT-all_ERF-all, samples the members inside the Monte Carlo instead. So
+    with the default of 10, all hundred members of a member-by-member
+    scenario get figures for their final range, and ten of them for
+    1850-1950, 1850-1960, ... as well.
+
+    In the pipeline: overarching_base_result_plotter calls it once for each
+    selection and set of regressed variables, and draws every base figure --
+    timeseries, rates, iteration comparison, SPM2 and waterfall -- for the
+    ranges it returns only. The historical-only figures do not use it, and
+    are drawn for every selection.
+
+    Replaces toggle_single_timeseries (see ensemble_is_plotted). This is
+    better because every base figure is thinned the same way, which takes a
+    hundred-member scenario from about 61,600 figures to about 1,600, and
+    because the final range -- the headline result, and the reason for
+    running every member -- is kept for every member.
+    """
+    if plot_every is None:
+        plot_every = PLOT_EVERY
+
+    reg_ranges = sorted(reg_ranges)
+    if not reg_ranges:
+        return reg_ranges
+    final_range = reg_ranges[-1]
+
+    if plot_every <= 1 or ensemble_uses_all_members(ens):
+        return reg_ranges
+
+    if not ensemble_is_plotted(ens, plot_every):
+        return [final_range]
+
+    return [
+        r for r in reg_ranges
+        if r == final_range or int(r.split('-')[1]) % plot_every == 0
+        ]
 
 
 def figure_historical_only_timeseries(
@@ -2813,6 +2902,26 @@ def headline_tasks(scen, ens, reg_vars, reg_ranges, results_dfs, obs_dfs):
     ]
 
 
+def describe_ranges(reg_ranges):
+    """Summarise a list of regressed ranges by their end years, for the log.
+
+    Returns the end years joined by commas -- '1950, 1960, 2025' -- or, for
+    more than ten ranges, the first two and last two: '1950, 1951, ... 2024,
+    2025'. Returns 'none' for an empty list. The ranges of one selection
+    share a start year, so their end years are what tell them apart.
+
+    In the pipeline: overarching_base_result_plotter uses it in the log line
+    for each selection, which says which ranges it is drawing.
+    """
+    if not reg_ranges:
+        return 'none'
+
+    ends = [r.split('-')[1] for r in reg_ranges]
+    if len(ends) <= 10:
+        return ', '.join(ends)
+    return f'{ends[0]}, {ends[1]}, ... {ends[-2]}, {ends[-1]}'
+
+
 def overarching_base_result_plotter(
     results_dfs,
     obs_dfs,
@@ -2849,60 +2958,77 @@ def overarching_base_result_plotter(
                     print('      All years available for: ',
                           defs.check_steps(reg_ranges_all)['range'])
 
+                # The regressed ranges to draw the base figures below for,
+                # chosen once here for all of them (see ranges_to_plot).
+                # params keeps the full list, reg_ranges_all, because the
+                # figures also look results up by params['max_range'] etc.
+                reg_ranges_plot = ranges_to_plot(ens, reg_ranges_all)
+                if ensemble_uses_all_members(ens):
+                    print('      Plotting all '
+                          f'{len(reg_ranges_all)} regressed ranges '
+                          '(full ensemble: --plot-every does not apply)')
+                elif len(reg_ranges_plot) == len(reg_ranges_all):
+                    print('      Plotting all '
+                          f'{len(reg_ranges_all)} regressed ranges '
+                          f'(--plot-every={PLOT_EVERY})')
+                else:
+                    print(f'      Plotting {len(reg_ranges_plot)} of '
+                          f'{len(reg_ranges_all)} regressed ranges '
+                          f'(--plot-every={PLOT_EVERY}), ending '
+                          f'{describe_ranges(reg_ranges_plot)}')
+
                 ###############################################################
                 # 1. Plot GWI Timeseries
+                valid_ranges_ts = [
+                    r for r in reg_ranges_plot
+                    if is_dataset_present(
+                        results_dfs[scen][ens][reg_vars][r], 'timeseries')
+                    ]
+                if valid_ranges_ts:
+                    with mp.Pool(defs.n_workers()) as p:
+                        print('        Plotting figure_timeseries for GWI')
+                        # print('  in parallel for:', valid_ranges_ts)
+                        plot_names = p.starmap(
+                            functools.partial(
+                                figure_timeseries,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                                params=params
+                                ),
+                            [(r,
+                              results_dfs[scen][ens][reg_vars][r][
+                                  'timeseries'])
+                             for r in valid_ranges_ts]
+                        )
 
-                single_toggle = toggle_single_timeseries(ens, 10)
+                valid_ranges_rates = [r for r in reg_ranges_plot if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
+                if valid_ranges_rates:
+                    with mp.Pool(defs.n_workers()) as p:
+                        print('        Plotting figure_rates for GWI')
+                        p.starmap(
+                            functools.partial(
+                                figure_rates,
+                                scen=scen, ens=ens, reg_vars=reg_vars,
+                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                                params=params
+                                ),
+                            [(r,
+                              results_dfs[scen][ens][reg_vars][r]['rates'])
+                             for r in valid_ranges_rates]
+                        )
 
-                if single_toggle:
-                    valid_ranges_ts = [
-                        r for r in reg_ranges_all
-                        if is_dataset_present(
-                            results_dfs[scen][ens][reg_vars][r], 'timeseries')
-                        ]
-                    if valid_ranges_ts:
-                        with mp.Pool(defs.n_workers()) as p:
-                            print('        Plotting figure_timeseries for GWI')
-                            # print('  in parallel for:', valid_ranges_ts)
-                            plot_names = p.starmap(
-                                functools.partial(
-                                    figure_timeseries,
-                                    scen=scen, ens=ens, reg_vars=reg_vars,
-                                    df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                    params=params
-                                    ),
-                                [(r,
-                                  results_dfs[scen][ens][reg_vars][r][
-                                      'timeseries'])
-                                 for r in valid_ranges_ts]
-                            )
+                ###########################################################
+                # 2. Create GIF of Timeseries Plots
 
-                    valid_ranges_rates = [r for r in reg_ranges_all if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
-                    if valid_ranges_rates:
-                        with mp.Pool(defs.n_workers()) as p:
-                            print('        Plotting figure_rates for GWI')
-                            p.starmap(
-                                functools.partial(
-                                    figure_rates,
-                                    scen=scen, ens=ens, reg_vars=reg_vars,
-                                    df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                    params=params
-                                    ),
-                                [(r,
-                                  results_dfs[scen][ens][reg_vars][r]['rates'])
-                                 for r in valid_ranges_rates]
-                            )
-
-                    ###########################################################
-                    # 2. Create GIF of Timeseries Plots
-
-                    # Add a toggle, because this is quite slow for the SMILE
-                    # ensembles (e.g. where we have an entirely different
-                    # set of results for a different ensemble member).
-                    gif_toggle = True
-                    if gif_toggle and valid_ranges_ts:
-                        figure_gif_animation(
-                            plot_names, scen, ens, reg_vars, valid_ranges_ts)
+                # Add a toggle, because this is quite slow for the SMILE
+                # ensembles (e.g. where we have an entirely different
+                # set of results for a different ensemble member).
+                # One frame is not an animation, which is what a member
+                # selection thinned down to its final range produces.
+                gif_toggle = True
+                if gif_toggle and len(valid_ranges_ts) > 1:
+                    figure_gif_animation(
+                        plot_names, scen, ens, reg_vars, valid_ranges_ts)
 
                 ###############################################################
                 # 2b. Plot Comparison of Repeat Sampling Iterations
@@ -2912,7 +3038,7 @@ def overarching_base_result_plotter(
                 # automatically where a configuration has only one iteration.
                 iteration_comparison_toggle = True
                 valid_ranges_iters = [
-                    r for r in reg_ranges_all
+                    r for r in reg_ranges_plot
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'timeseries')
                     ]
@@ -2948,7 +3074,7 @@ def overarching_base_result_plotter(
                 ###############################################################
                 # 4. Plot SPM2 Bar Plot
                 valid_ranges_headlines = [
-                    r for r in reg_ranges_all
+                    r for r in reg_ranges_plot
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'headlines')
                     ]
@@ -3068,9 +3194,16 @@ if __name__ == '__main__':
     # over, or 'historical-only', which is the range of years that the
     # historical-only dataset was calculated over.
 
-    output_tag, re_calculate = parse_argvs()
+    output_tag, re_calculate, plot_every = parse_argvs()
     set_output_folders(output_tag)
+    PLOT_EVERY = plot_every
     print(f'Re-calculate results: {re_calculate}')
+    if PLOT_EVERY > 1:
+        print(f'--plot-every={PLOT_EVERY}: member-by-member selections are '
+              f'thinned to one in {PLOT_EVERY} members and ranges; '
+              'GMT-all_ERF-all is always plotted in full')
+    else:
+        print('--plot-every=1: plotting every figure')
 
     # Ensure directoriesfor plots and results exist
     for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:
