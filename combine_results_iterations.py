@@ -2986,8 +2986,11 @@ def overarching_base_result_plotter(
                     ]
                 if valid_ranges_ts:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_timeseries for GWI')
-                        # print('  in parallel for:', valid_ranges_ts)
+                        print('        Plotting figure_timeseries for GWI: 1 figure per '
+                              'regressed range, for '
+                              f'{len(valid_ranges_ts)} regressed range/s '
+                              f'ending {describe_ranges(valid_ranges_ts)}; '
+                              f'in parallel on {defs.n_workers()} worker/s')
                         plot_names = p.starmap(
                             functools.partial(
                                 figure_timeseries,
@@ -3004,7 +3007,11 @@ def overarching_base_result_plotter(
                 valid_ranges_rates = [r for r in reg_ranges_plot if is_dataset_present(results_dfs[scen][ens][reg_vars][r], 'rates')]
                 if valid_ranges_rates:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_rates for GWI')
+                        print('        Plotting figure_rates for GWI: 1 figure per '
+                              'regressed range, for '
+                              f'{len(valid_ranges_rates)} regressed range/s '
+                              f'ending {describe_ranges(valid_ranges_rates)}; '
+                              f'in parallel on {defs.n_workers()} worker/s')
                         p.starmap(
                             functools.partial(
                                 figure_rates,
@@ -3044,7 +3051,12 @@ def overarching_base_result_plotter(
                     ]
                 if iteration_comparison_toggle and valid_ranges_iters:
                     with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_iteration_comparison')
+                        print('        Plotting figure_iteration_comparison: 1 figure per '
+                              'regressed range with more than one '
+                              'iteration, for '
+                              f'{len(valid_ranges_iters)} regressed range/s '
+                              f'ending {describe_ranges(valid_ranges_iters)}; '
+                              f'in parallel on {defs.n_workers()} worker/s')
                         p.starmap(
                             functools.partial(
                                 figure_iteration_comparison,
@@ -3078,8 +3090,30 @@ def overarching_base_result_plotter(
                     if is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'headlines')
                     ]
+
+                # For the log: the SPM2 and waterfall figures each draw one
+                # bar plot per headline period (row) of each range's
+                # headlines, and these are the headline definitions they
+                # belong to.
+                headline_periods = [
+                    period for r in valid_ranges_headlines
+                    for period in results_dfs[scen][ens][reg_vars][r][
+                        'headlines'].index
+                    ]
+                n_headline_figures = len(headline_periods)
+                headline_names = list(dict.fromkeys(
+                    map_headline_to_index(index_str=str(period), invert=True)
+                    for period in headline_periods))
                 if valid_ranges_headlines:
-                    print('        Plotting SPM2 for GWI in parallel')
+                    print('        Plotting SPM2 for GWI: '
+                          f'{n_headline_figures} figure/s, 1 per headline '
+                          f'period ({", ".join(headline_names)}) of each '
+                          'range, for '
+                          f'{len(valid_ranges_headlines)} regressed range/s '
+                          'ending '
+                          f'{describe_ranges(valid_ranges_headlines)}; in '
+                          'parallel over the ranges on '
+                          f'{defs.n_workers()} worker/s')
                     with mp.Pool(defs.n_workers()) as p:
                         p.starmap(
                             functools.partial(
@@ -3095,7 +3129,15 @@ def overarching_base_result_plotter(
                 ###############################################################
                 # 5. Plot Waterfall Plot
                 if valid_ranges_headlines:
-                    print('        Plotting Waterfall for GWI in parallel')
+                    print('        Plotting Waterfall for GWI: '
+                          f'{n_headline_figures} figure/s, 1 per headline '
+                          f'period ({", ".join(headline_names)}) of each '
+                          'range, for '
+                          f'{len(valid_ranges_headlines)} regressed range/s '
+                          'ending '
+                          f'{describe_ranges(valid_ranges_headlines)}; in '
+                          'parallel over the ranges on '
+                          f'{defs.n_workers()} worker/s')
                     with mp.Pool(defs.n_workers()) as p:
                         p.starmap(
                             functools.partial(
