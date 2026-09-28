@@ -824,9 +824,13 @@ def load_historical_only_dfs(results_dfs):
                          f'SCENARIO--{scen}/' +
                          f'ENSEMBLE-MEMBER--{ens}/' +
                          f'VARIABLES--{reg_vars}/')
-                hist_files = [
+                # Sorted, because os.listdir order is whatever the
+                # filesystem gives, and the headlines are drawn in this order
+                # -- unsorted, two runs on the same numbers could stack their
+                # lines and legends differently.
+                hist_files = sorted([
                     f for f in os.listdir(_path)
-                    if f.startswith('GWI_results_') and 'HISTORICAL-ONLY' in f]
+                    if f.startswith('GWI_results_') and 'HISTORICAL-ONLY' in f])
 
                 for hist_file in hist_files:
                     _df = pd.read_csv(_path + hist_file,
@@ -2319,9 +2323,11 @@ def figure_headlines_comparison(
 
     # for headline in headlines:
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
-        plot_vars_main = params['plot_vars'].copy()
         unwanted_vars = ['GHG', 'OHF', 'Res']
-        plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
+        # Filtered in the results' own column order: a set difference would
+        # come back in an order that changes every time Python starts.
+        plot_vars_main = [
+            v for v in params['plot_vars'] if v not in unwanted_vars]
         for vv in plot_vars_main:
             # Determine line style
             ls = gr.HEADLINE_LINE_STYLE.get(vv)
@@ -2478,9 +2484,11 @@ def figure_thorne_et_al(
         # hatch='\\', linestyle='dashed'
     )
     # for headline in headlines:
-    plot_vars_main = params['plot_vars'].copy()
     unwanted_vars = ['GHG', 'OHF', 'Res']
-    plot_vars_main = list(set(plot_vars_main) - set(unwanted_vars))
+    # Filtered in the results' own column order: a set difference would come
+    # back in an order that changes every time Python starts.
+    plot_vars_main = [
+        v for v in params['plot_vars'] if v not in unwanted_vars]
 
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
         for vv in plot_vars_main:
