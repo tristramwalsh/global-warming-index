@@ -8,6 +8,7 @@ from PIL import Image
 import src.graphing as gr
 import src.definitions as defs
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 import functools
 from pprint import pprint
 
@@ -91,6 +92,28 @@ def setup_plot_params(scen, ens, reg_vars, results_dfs):
         'scaling_map': scaling_map,
         'reg_ranges_all': reg_ranges_all
     }
+
+
+def run_in_pool(func, tasks):
+    """Call func(*task) for each task in a process pool; return the results.
+
+    The results come back in the order of tasks. Tasks are sent in chunks
+    sized so that each worker gets about four, however many tasks there are.
+
+    In the pipeline: every parallel step of the script runs through it -- the
+    averaging, the loading, and each type of base figure.
+
+    Replaces mp.Pool, which cannot recover from a worker dying. When the
+    kernel kills a worker for using too much memory, mp.Pool starts a
+    replacement but never fails the task the dead worker held, so the run
+    hangs; ProcessPoolExecutor raises BrokenProcessPool instead. (If it is
+    this parent process the kernel kills, the shell prints 'Killed' and there
+    is nothing left to report anything.)
+    """
+    n_workers = defs.n_workers()
+    chunksize = max(1, int(np.ceil(len(tasks) / (4 * n_workers))))
+    with ProcessPoolExecutor(n_workers) as executor:
+        return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
 
 
 def range_result_types(base_path):
@@ -214,13 +237,6 @@ def calculate_iteration_averages():
                         (regressed_years, scenario,
                          ensemble_selection, regressed_vars))
 
-    # Both pools below use Pool's default chunksize, ceil(tasks / (4 x
-    # workers)). A chunk goes whole to one worker, so a fixed size puts a
-    # small job -- a handful of directories -- on a single worker; the
-    # default makes chunks of one until there are more than four tasks per
-    # worker, and only then batches them. On results_Thorne_2026 (15353
-    # averages, 28 workers) a fixed size was no faster.
-
     # The directory of each regressed range, whose files say which result
     # types it has iterations for.
     range_paths = [
@@ -232,8 +248,8 @@ def calculate_iteration_averages():
     # Which result types each directory holds. These are thousands of
     # network listings, none depending on another, so they run in the pool.
     print(f'\nChecking {len(range_paths)} regressed-year directories')
-    with mp.Pool(defs.n_workers()) as p:
-        types_per_dir = p.map(range_result_types, range_paths)
+    types_per_dir = run_in_pool(
+        range_result_types, [(path,) for path in range_paths])
 
     # One averaging task for each result type found in each directory.
     tasks = []
@@ -246,8 +262,7 @@ def calculate_iteration_averages():
 
     print(f'Averaging {len(tasks)} datasets from '
           f'{len(range_dirs)} regressed-year directories')
-    with mp.Pool(defs.n_workers()) as p:
-        p.starmap(write_repeat_average, tasks)
+    run_in_pool(write_repeat_average, tasks)
 
 
 def iteration_base_path(regressed_years, scenario, ensemble_selection,
@@ -454,10 +469,8 @@ def load_nested_dfs(d):
     if len(paths) < 64:
         frames = {path: read_results_csv(path) for path in paths}
     else:
-        # Pool's default chunksize, for the reasons given in
-        # calculate_iteration_averages.
-        with mp.Pool(defs.n_workers()) as p:
-            frames = dict(zip(paths, p.map(read_results_csv, paths)))
+        frames = dict(zip(paths, run_in_pool(
+            read_results_csv, [(path,) for path in paths])))
 
     return substitute_nested_dfs(d, frames)
 
@@ -3035,20 +3048,19 @@ def overarching_base_result_plotter(
                     (r, results_dfs[scen][ens][reg_vars][r]['timeseries'])
                     for r in valid_ranges_ts]
                 if valid_ranges_ts:
-                    with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_timeseries for GWI: '
-                              '1 figure per regressed range, for '
-                              f'{len(valid_ranges_ts)} regressed range/s '
-                              f'ending {describe_ranges(valid_ranges_ts)}; '
-                              f'in parallel on {defs.n_workers()} worker/s')
-                        plot_names = p.starmap(
-                            functools.partial(
-                                figure_timeseries,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                params=params
-                                ),
-                            tasks_ts)
+                    print('        Plotting figure_timeseries for GWI: '
+                          '1 figure per regressed range, for '
+                          f'{len(valid_ranges_ts)} regressed range/s '
+                          f'ending {describe_ranges(valid_ranges_ts)}; '
+                          f'in parallel on {defs.n_workers()} worker/s')
+                    plot_names = run_in_pool(
+                        functools.partial(
+                            figure_timeseries,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                            params=params
+                            ),
+                        tasks_ts)
 
                 valid_ranges_rates = [
                     r for r in reg_ranges_plot
@@ -3059,20 +3071,19 @@ def overarching_base_result_plotter(
                     (r, results_dfs[scen][ens][reg_vars][r]['rates'])
                     for r in valid_ranges_rates]
                 if valid_ranges_rates:
-                    with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_rates for GWI: '
-                              '1 figure per regressed range, for '
-                              f'{len(valid_ranges_rates)} regressed range/s '
-                              f'ending {describe_ranges(valid_ranges_rates)}; '
-                              f'in parallel on {defs.n_workers()} worker/s')
-                        p.starmap(
-                            functools.partial(
-                                figure_rates,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
-                                params=params
-                                ),
-                            tasks_rates)
+                    print('        Plotting figure_rates for GWI: '
+                          '1 figure per regressed range, for '
+                          f'{len(valid_ranges_rates)} regressed range/s '
+                          f'ending {describe_ranges(valid_ranges_rates)}; '
+                          f'in parallel on {defs.n_workers()} worker/s')
+                    run_in_pool(
+                        functools.partial(
+                            figure_rates,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            df_temp_Obs=obs_dfs[scen][ens]['timeseries'],
+                            params=params
+                            ),
+                        tasks_rates)
 
                 ###########################################################
                 # 2. Create GIF of Timeseries Plots
@@ -3098,20 +3109,19 @@ def overarching_base_result_plotter(
                 # as the timeseries figures above.
                 iteration_comparison_toggle = True
                 if iteration_comparison_toggle and valid_ranges_ts:
-                    with mp.Pool(defs.n_workers()) as p:
-                        print('        Plotting figure_iteration_comparison: '
-                              '1 figure per regressed range with more '
-                              'than one iteration, for '
-                              f'{len(valid_ranges_ts)} regressed range/s '
-                              f'ending {describe_ranges(valid_ranges_ts)}; '
-                              f'in parallel on {defs.n_workers()} worker/s')
-                        p.starmap(
-                            functools.partial(
-                                figure_iteration_comparison,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                params=params
-                                ),
-                            tasks_ts)
+                    print('        Plotting figure_iteration_comparison: '
+                          '1 figure per regressed range with more '
+                          'than one iteration, for '
+                          f'{len(valid_ranges_ts)} regressed range/s '
+                          f'ending {describe_ranges(valid_ranges_ts)}; '
+                          f'in parallel on {defs.n_workers()} worker/s')
+                    run_in_pool(
+                        functools.partial(
+                            figure_iteration_comparison,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            params=params
+                            ),
+                        tasks_ts)
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
@@ -3168,14 +3178,13 @@ def overarching_base_result_plotter(
                           f'{describe_ranges(valid_ranges_headlines)}; in '
                           'parallel over the ranges on '
                           f'{defs.n_workers()} worker/s')
-                    with mp.Pool(defs.n_workers()) as p:
-                        p.starmap(
-                            functools.partial(
-                                figure_spm2,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                params=params
-                            ),
-                            tasks_headlines)
+                    run_in_pool(
+                        functools.partial(
+                            figure_spm2,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            params=params
+                        ),
+                        tasks_headlines)
 
                 ###############################################################
                 # 5. Plot Waterfall Plot
@@ -3189,14 +3198,13 @@ def overarching_base_result_plotter(
                           f'{describe_ranges(valid_ranges_headlines)}; in '
                           'parallel over the ranges on '
                           f'{defs.n_workers()} worker/s')
-                    with mp.Pool(defs.n_workers()) as p:
-                        p.starmap(
-                            functools.partial(
-                                figure_waterfall,
-                                scen=scen, ens=ens, reg_vars=reg_vars,
-                                params=params
-                            ),
-                            tasks_headlines)
+                    run_in_pool(
+                        functools.partial(
+                            figure_waterfall,
+                            scen=scen, ens=ens, reg_vars=reg_vars,
+                            params=params
+                        ),
+                        tasks_headlines)
 
 
 def overarching_historical_only_plotter(
