@@ -1,5 +1,6 @@
 import os
 import sys
+import gc
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -94,6 +95,22 @@ def setup_plot_params(scen, ens, reg_vars, results_dfs):
     }
 
 
+def close_figure(fig):
+    """Close a figure and free its memory straight away.
+
+    plt.close only drops pyplot's own reference to the figure. The figure,
+    its axes and their artists still refer to one another in cycles, which
+    only Python's periodic cycle collection frees, so a process drawing many
+    figures holds hundreds of megabytes of closed ones between collections.
+    gc.collect frees them now.
+
+    In the pipeline: used by the figure functions that run in a pool, where
+    that memory is held once per worker.
+    """
+    plt.close(fig)
+    gc.collect()
+
+
 def run_in_pool(func, tasks):
     """Call func(*task) for each task in a process pool; return the results.
 
@@ -112,8 +129,17 @@ def run_in_pool(func, tasks):
     """
     n_workers = defs.n_workers()
     chunksize = max(1, int(np.ceil(len(tasks) / (4 * n_workers))))
-    with ProcessPoolExecutor(n_workers) as executor:
-        return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
+    # Frozen, the objects already in this process -- all the loaded results
+    # -- are left out of the garbage collections the workers make after each
+    # figure (close_figure), which then stay quick and do not copy the
+    # parent's memory into every worker.
+    gc.collect()
+    gc.freeze()
+    try:
+        with ProcessPoolExecutor(n_workers) as executor:
+            return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
+    finally:
+        gc.unfreeze()
 
 
 def range_result_types(base_path):
@@ -1093,7 +1119,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
                  f'REGRESSED-YEARS--{reg_range}.png')
     # plot_names.append(plot_name)
     fig.savefig(plot_name)
-    plt.close(fig)
+    close_figure(fig)
     return plot_name
 
 
@@ -1216,7 +1242,7 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
     fig.savefig(plot_name)
-    plt.close(fig)
+    close_figure(fig)
     return plot_name
 
 
@@ -1331,7 +1357,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
     fig.savefig(plot_name)
-    plt.close(fig)
+    close_figure(fig)
     return plot_name
 
 
@@ -1519,7 +1545,7 @@ def figure_spm2(
                      f'REGRESSED-YEARS--{reg_range}_' +
                      f'PERIOD--{period_token}.png')
         fig.savefig(plot_name)
-        plt.close(fig)
+        close_figure(fig)
 
 
 def figure_waterfall(
@@ -1868,7 +1894,7 @@ def figure_waterfall(
                      f'REGRESSED-YEARS--{reg_range}_' +
                      f'PERIOD--{period_token}.png')
         fig.savefig(plot_name)
-        plt.close(fig)
+        close_figure(fig)
 
 
 def priors_available(priors_dfs, scen, ens):
