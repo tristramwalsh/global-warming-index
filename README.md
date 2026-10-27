@@ -26,8 +26,8 @@ The most recent results, published in the annual IGCC assessments can be found a
 - https://github.com/ClimateIndicator/anthropogenic-warming-assessment
 
 If you use this code or results, these references should be cited:
-- > Forster, P., Smith, C., Walsh, T. et al. (2025) *Indicators of Global Climate Change 2024: annual update of key indicators of the state of the climate system and human influence*. https://doi.org/10.5194/essd-17-2641-2025
-    - The most recent published verison of the results from the GWI using this repository, with fully updated GWI methodology.
+- > Forster, P., Smith, C., Walsh, T. et al. (2026) *Indicators of Global Climate Change 2025: annual update of key indicators of the state of the climate system and human influence*. https://doi.org/10.5194/essd-18-3889-2026
+    - The most recent published version of the results from the GWI using this repository, with fully updated GWI methodology.
 - > Haustein, K., Allen, M.R., Forster, P.M. et al. (2017) *A real-time Global Warming Index*. https://doi.org/10.1038/s41598-017-14828-5
     - The original reference for the original GWI method.
 
@@ -40,7 +40,7 @@ Prerequisites:
 ### 1. Setting up the environment
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/global-warming-index.git
+   git clone https://github.com/tristramwalsh/global-warming-index.git
    cd global-warming-index
    ```
 
@@ -64,11 +64,15 @@ bash schedule-gwi.sh
 This script automatically generates and submits SLURM jobs. Before running, you should edit the key parameters at the top of `schedule-gwi.sh` (see **Configuration Arguments** below).
 
 ##### 2.1.2. Combine results from multiple iterations
-If only one timeseries was generated, Step 1 is sufficient. However, in most cases, you will want to run multiple iterations to recombine later. Once the jobs have completed, run:
+Once the jobs have completed, run the combination script with the same tag:
 
 ```bash
-python combine_results_iterations.py --re-calculate=y
+python combine_results_iterations.py
 ```
+
+This averages the repeat iterations, where applicable derives the historical-information-only timeseries (when a sequence of regression end years are used), and produces all associated figures.
+
+See **Combining Results from Multiple Iterations** for its options, and **Output Structure** for where everything is written.
 
 #### 2.2. Configuration Arguments
 
@@ -102,9 +106,9 @@ The following parameters in `schedule-gwi.sh` control the analysis:
     - `n` = no pre-industrial offset applied (temperatures are left in their default state, which may be relative to a different baseline depending on the dataset)
 
 **`INCLUDE_REG_CONST`**: Toggle regression constant (`y` or `n`)
-- Specifies whether to include a constant term offset within the multi-variable regression. Typically left as `y`.
+- Specifies whether to include a constant term offset within the multi-variable regression. We typically set this to `n`, as in `schedule-gwi.sh`. (`gwi.py` itself defaults to `y` if the option is not passed.)
 - Examples:
-    - `y` = include the constant term in the regression (default)
+    - `y` = include the constant term in the regression
     - `n` = do not include the constant term in the regression
 
 **`VARS`**: Variables to regress on (comma-separated, no spaces)
@@ -119,11 +123,14 @@ The following parameters in `schedule-gwi.sh` control the analysis:
 
 
 **`SCENARIO`**: Which dataset/scenario to analyse
-- `observed-2024` = Latest observed temperatures and ERFs (to 2024). Available years:
-    - 2023, 2024
-- `observed-SSP<scen>` = Observed data (2024) with future SSP scenario extension. Available scenarios:
-    - SSP119, SSP126, SSP245, SSP370, SSP585
-- `observed_JK-2024-SSP<scen>` = John Kennedy's multi-dataset observation ensemble data, and historical ERFs to 2024 with `<scen>` extension so that CGWL headlines can be generated.
+- `observed-<YYYY>` = Observed temperatures (HadCRUT5) and historical ERFs, as published up to year `<YYYY>`. The observations are cut off at that year. Available years:
+    - `2023`, `2024`, `2025`
+- `observed-<YYYY>-SSP<scen>` = The same observations, with ERFs extended from 2024 into the future along an SSP scenario, so that CGWL headlines and constrained projections can be produced (e.g. `observed-2025-SSP245`). Note that the historical ERFS before 2024 in these scenarios are calculated using different methodology than the `observed-<YYYY>` ERFs, and therefore won't match. Different Available scenarios:
+    - `SSP119`, `SSP126`, `SSP245`, `SSP370`, `SSP434`, `SSP460`, `SSP585`
+- `observed_JK-<YYYY>` = John Kennedy's multi-dataset observation ensemble, with the same historical ERFs as `observed-<YYYY>` (e.g. `observed_JK-2025`). Available years:
+    - `2024`, `2025`
+- `observed_JK-<YYYY>-SSP<scen>` = John Kennedy's multi-dataset observation ensemble, with SSP-extended ERFs as above (e.g. `observed_JK-2025-SSP245`). Available years:
+    - `2024`, `2025`
 - `SMILE_ESM-SSP<scen>` = Single model initial-condition large ensemble. Available scenarios:
     - SSP126, SSP245, SSP370
 - `NorESM_rcp45-Volc` = NorESM2-LM large ensemble with RCP4.5 forcing and volcanic eruptions included
@@ -174,6 +181,8 @@ The following parameters in `schedule-gwi.sh` control the analysis:
     - `all` = use all available ensemble members (default)
     - `1` = use specific ensemble member number 1 (for example)
     - `{1..60}` = use specific member range from 1 to 60 (for example) (for specialized analyses)
+- Member numbers are the dataset's own, and start at 1: HadCRUT5 has 200 (`{1..200}`), the John Kennedy ensemble 100 (`{1..100}`).
+- See **Running the GWI for Individual Ensemble Members** for running the full calculation separately for each member.
 
 
 **`SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR`**: Specify which dataset the ensemble member selection (above) applies to.
@@ -181,13 +190,31 @@ The following parameters in `schedule-gwi.sh` control the analysis:
 - `GMT` = Apply above selection to GMT only
 - `ERF,GMT` = apply above selection to both ERF and GMT; in this case, the same ensemble members will be paired for both sources; i.e. ensemble member i for ERF is paired with ensemble member i for GMT
 
+
+**`CALCULATE_PRIORS_OUTPUT`**: Also output the prior (pre-constraint) warming (`y` or `n`)
+- The priors depend only on the ERF ensemble and FaIR parameters, not on the reference temperatures. These are useful for understanding the prior distribution of warming before the observational constraint. All ensemble members are used for this, so note that, depending on the size of the GWI Monte Carlo ensemble, the output priors could be a different sample than used in the GWI calculation itself. The priors are saved in the same hierarchy as the GWI results, but in `results/priors/` (or `results_<tag>/priors/`).
+- `y` = calculate and save the priors (default in `gwi.py`)
+- `n` = skip them, e.g. for member-by-member runs that select only temperature members, where they would be identical for every member
+
+
+**`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
+- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and Slurm logs to `slurm_logs_<tag>/`.
+- Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`).
+- Left empty (the default), the plain `results/`, `plots/` and `slurm_logs/` folders are used.
+
+
+**Slurm resources**: `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
+- `CLUSTER` = which Slurm cluster to submit to on Oxford ARC: `arc`, `htc`, or `arc,htc` to take whichever starts sooner. The partition is set automatically from the host.
+- `SIM_CPUS`, `CPU_MEM`, `WALLTIME` = CPUs, memory per CPU, and time limit for each job.
+- Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits `SUBSAMPLE_ITERATIONS` of about 60-100 samples without rates. Larger ensembles need more memory (see **Memory and Computing Resources**), and rates or member-by-member runs need more time.
+
 #### 2.3. What the Script Does
 
 The `schedule-gwi.sh` script:
 1. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
-2. Generates a SLURM job file for each combination
-3. Each job calls `gwi.py` with the specified CLI arguments.
-4. Submits the job to SLURM and cleans up the temporary job files
+2. Generates a SLURM job file for each combination, named after the run's configuration
+3. Each job calls `gwi.py` with the specified CLI arguments (once per member, one after another, when `SPECIFY_ENSEMBLE_MEMBERS` lists several)
+4. Submits the job to SLURM and cleans up the temporary job files; each job's log goes to `slurm_logs/` (or `slurm_logs_<tag>/`)
 
 
 #### 2.4. Technical Notes
@@ -235,8 +262,13 @@ The code handles different regression configurations automatically.
 After running multiple iterations, use `combine_results_iterations.py` to aggregate the results:
 
 ```shell
-python combine_results_iterations.py --re-calculate=<y/n>
+python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --plot-every=<N>
 ```
+
+All three options are optional:
+- `--output-tag=<tag>` = the `OUTPUT_TAG` used in `schedule-gwi.sh`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+- `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
+- `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `GMT-all_ERF-all` selection is always plotted in full.
 
 ###### 2.4.3.1 Aggregating Iteration Outputs
 For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
@@ -244,29 +276,38 @@ For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
 2. Combines them using a weighted average (weighted by ensemble size)
 3. Saves combined results to `results/aggregated/`
 
+(With a tag set, these are `results_<tag>/iterations/` and `results_<tag>/aggregated/`.)
+
 ###### 2.4.3.2 Historical-Only Timeseries
 For iterations generated in order to provide different regression end years (e.g., `END_REGRESS=$(seq 1950 2024)`):
 1. For each regression end year (e.g., 1950, 1951, ..., 2024), a separate GWI calculation is performed
 2. The `calculate_historical_only()` function extracts values for each year from the appropriate regression period
     1. When `headline` datasets are available, this pulls from the **`headlines`** dataframes at the appropriate string index
-    2. When `headline` datasets are not , this pulls from the **`timeseries`** dataframes at the index `current_year`
+    2. When `headline` datasets are not available, this pulls from the **`timeseries`** dataframes at the index `current_year`
 3. The result is a timeseries where each year's attribution is based only on data available up to that year, which provides an estimate of what the GWI would have been if calculated in real-time each year, though note that the datasets and climate parameters are still the same as used in the full-information GWI.
 
 
-### 2.4.4. Output Structure
-Results are organized hierarchically:
+##### 2.4.4. Output Structure
+Results are organized hierarchically (`results_<tag>/`, `plots_<tag>/` and `slurm_logs_<tag>/` when `OUTPUT_TAG` is set):
 ```
 global-warming-index/
-└── results/
-     └── {category}/
-         └── SCENARIO--{scenario}/
-             └── ENSEMBLE-MEMBER--{ensemble}/
-                 └── VARIABLES--{vars}/
-                     └── REGRESSED-YEARS--{start}-{end}/
-                         ├── GWI_results_timeseries_*.csv
-                         ├── GWI_results_headlines_*.csv
-                         └── GWI_results_rates_*.csv  (if INCLUDE_RATE=y)
+├── results/
+│    └── {category}/
+│        └── SCENARIO--{scenario}/
+│            └── ENSEMBLE-MEMBER--{ensemble}/
+│                └── VARIABLES--{vars}/
+│                    └── REGRESSED-YEARS--{start}-{end}/
+│                        ├── GWI_results_timeseries_*.csv
+│                        ├── GWI_results_headlines_*.csv
+│                        └── GWI_results_rates_*.csv  (if INCLUDE_RATE=y)
+├── plots/        figures drawn by combine_results_iterations.py (see below)
+└── slurm_logs/   one log per Slurm job
 ```
+
+where `{category}` is one of:
+- `iterations/` = the results of each `gwi.py` run
+- `aggregated/` = those averaged across iterations by `combine_results_iterations.py`, plus the historical-only timeseries
+- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply
 
 The CSVs are:
 - **Timeseries**: Annual values for all variables and percentiles
@@ -275,7 +316,21 @@ The CSVs are:
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 
-## 2.4.5. Data Inputs
+The figures in `plots/aggregated/` follow the same `SCENARIO--`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
+- `Timeseries_*` = the attributed warming timeseries, with uncertainty, against the observations
+- `Rates_*` = warming rates (if `INCLUDE_RATE=y`)
+- `SPM2_BarPlot_*` = one per headline period: a bar chart of the attributed warming, in the style of IPCC AR6 WGI Figure SPM.2
+- `Waterfall_BarPlot_*` = one per headline period: the contributions to total warming as a waterfall, with subtotals
+
+And for each selection as a whole:
+- `Timeseries-animation_*.gif` = the timeseries figures as an animation across the regressed ranges
+- `Historical_only_<headline>_*`, `Historical_only_headlines_*`, `Historical_and_full_headlines_*`, `ANNUAL_Historical_vs_Full_timeseries_*` = the historical-only timeseries for each headline definition, compared with each other and with the full-information GWI
+- `Historical_delta_contributions_*` = the sources of the change in the GWI from each year to the next
+- `Projected_warming_in_<year>_*` = the projected warming constrained by the final regressed range
+
+Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showing the spread between repeat iterations (only where there are two or more), and `plots/erfs/` and `plots/priors/` the ERF and prior timeseries.
+
+##### 2.4.5. Data Inputs
 
 Input data is stored in the `data/` directory. This includes:
 - **Temperatures:**
@@ -284,3 +339,22 @@ Input data is stored in the `data/` directory. This includes:
 - **Forcings:** Effective Radiative Forcing (ERF) timeseries.
 
 Ensure that the data corresponding to your `SCENARIO` selection in `schedule-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
+
+
+##### 2.4.6. Memory and Computing Resources
+
+The uncertainty calculation is heavily memory-constrained. `gwi.py` holds every attributed ensemble member in one array, whose size grows steeply with the number of samples per uncertainty source (`SUBSAMPLE_ITERATIONS`), and its peak memory use is about twice that array.
+
+To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, the size of that array, the peak to expect, and the memory Slurm allocated to the job, and says whether it expects to run out. A run whose array cannot fit at all stops there, before any work is done. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
+
+Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though prjects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
+
+
+##### 2.4.7. Running the GWI for Individual Ensemble Members
+
+Normally (`SPECIFY_ENSEMBLE_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
+1. Set `SPECIFY_ENSEMBLE_MEMBERS` to the members wanted (e.g. `{1..100}`), and `SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR` to the source they apply to (e.g. `GMT`).
+2. Set `CALCULATE_PRIORS_OUTPUT=n` if only temperature members are selected, since the priors would be the same for every GMT member.
+3. Allow enough `WALLTIME`: each job runs `gwi.py` once for every member, one after another.
+
+Each member's results go to their own `ENSEMBLE-MEMBER--{selection}` folder (e.g. `ENSEMBLE-MEMBER--GMT-7_ERF-all`), and `combine_results_iterations.py` processes them all. As a full set of figures for every member would run to tens of thousands, it thins the figures of member-by-member selections by default (`--plot-every=10`): every member gets the figures for its final regressed range, and one member in ten also gets them for every tenth regression end year. The historical-only figures are drawn for every member.
