@@ -140,8 +140,14 @@ def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
     # 'observed-<YYYY>': no SSP suffix, so use the historical ERFs.
     elif 'observed-20' in scenario:
         df_ERF = load_ERF_CMIP6(scenario, include_sub_vars=include_sub_vars)
-    elif 'observed_JK' in scenario:
+    # 'observed_JK-<YYYY>-SSP<NNN>': the SSP suffix selects the ERFs.
+    elif 'observed_JK' in scenario and 'SSP' in scenario:
         df_ERF = load_ERF_SSP(scenario, regress_vars)
+    # 'observed_JK-<YYYY>': no SSP suffix, so use observed-<YYYY>'s
+    # historical ERFs; the JK data provides only the temperatures.
+    elif 'observed_JK' in scenario:
+        df_ERF = load_ERF_CMIP6(scenario.replace('observed_JK', 'observed'),
+                                include_sub_vars=include_sub_vars)
     elif 'SMILE_ESM' in scenario:
         df_ERF = load_ERF_SMILE(scenario, regress_vars)
     elif 'NorESM' in scenario:
