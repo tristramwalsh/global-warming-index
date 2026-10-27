@@ -1065,18 +1065,38 @@ def _job_cgroup_value(filename):
     """Read one of Slurm's memory counters for this job, in bytes.
 
     Slurm confines each job to a 'cgroup', a kernel accounting box, and
-    reports its memory through small files. Returns None when not running
-    under Slurm, or if the file is unreadable.
+    reports its memory through small files. filename is the counter's name
+    under cgroup v2. Nodes running the older cgroup v1, such as ARC's, keep
+    the same counters elsewhere under other names, and those are read
+    instead. Returns None when not running under Slurm, or if neither can be
+    read.
+
+    In the pipeline: behind job_memory_limit and job_memory_peak, which
+    gwi.py uses to report memory in its log, and to refuse up front a run
+    whose results cannot fit.
+
+    Replaces a version that read only the cgroup v2 layout, so on ARC both
+    came back as None: the log showed '?' and the up-front check was
+    skipped.
     """
     job_id = os.environ.get('SLURM_JOB_ID')
     if not job_id:
         return None
-    try:
-        with open('/sys/fs/cgroup/system.slice/slurmstepd.scope/'
-                  f'job_{job_id}/{filename}') as fh:
-            return int(fh.read())
-    except (OSError, ValueError):
-        return None
+    v1_names = {'memory.max': 'memory.limit_in_bytes',
+                'memory.peak': 'memory.max_usage_in_bytes'}
+    paths = [
+        f'/sys/fs/cgroup/system.slice/slurmstepd.scope/job_{job_id}/'
+        f'{filename}',
+        f'/sys/fs/cgroup/memory/slurm/uid_{os.getuid()}/job_{job_id}/'
+        f'{v1_names[filename]}',
+        ]
+    for path in paths:
+        try:
+            with open(path) as fh:
+                return int(fh.read())
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def job_memory_limit():
