@@ -9,13 +9,11 @@ Outputs were added to the repository on 6 November 2026; the code at each tag is
 | --- | --- | --- | --- | --- |
 | submission_models/ | Submission; reused unchanged in the final paper | SMILE_ESM-SSP126/245/370, NorESM_rcp45-Volc/VolcConst | Thorne_et_al-2025 (c14ecfa) | 2 Apr 2025 |
 | submission_observed/ | Submission | observed-SSP245: HadCRUT5.0.2 to 2024, all members in one calculation | Thorne_et_al-2025 (c14ecfa) | 2 Apr 2025 |
+| submission_observed/ | Submission; superseded in the final paper by the revision | observed_JK-2024-SSP245: multi-dataset observational ensemble (Kennedy and Calvert) to 2024, each of members 0-99 attributed separately | Thorne_et_al-2025-JK (c414146) | 20 Oct 2025 |
 
-Not in this release, because they were made with later code:
-- the submission's per-member runs on the multi-dataset observational ensemble
-  to 2024: release Thorne_et_al-2025-JK (code of 20 Oct 2025);
-- the revision's HadCRUT5.1 and per-member observational-ensemble runs to 2025, which
-  the final paper uses: release Thorne_et_al-2026 (code of 16-17 Sep 2026).
-The Thorne_et_al-2026 release contains every folder.
+Not in this release, because they were made with later code: the revision's HadCRUT5.1
+and per-member observational-ensemble runs to 2025, which the final paper uses (release
+Thorne_et_al-2026, code of 16-17 Sep 2026). The Thorne_et_al-2026 release contains every folder.
 
 ## Contents
 
