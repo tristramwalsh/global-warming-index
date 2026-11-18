@@ -44,10 +44,9 @@ Prerequisites:
    cd global-warming-index
    ```
 
-2. Create a new environment with the required dependencies. We provide environment files for specific hosts (e.g., `arc-htc`, `ouce-linux`), but you can use them as a template:
+2. Create a new environment with the required dependencies (tested on Oxford's ARC and OUCE Linux systems):
    ```bash
-   # Replace <host> with your system configuration file (e.g., environment_arc-htc.yml)
-   micromamba env create -n gwi -f environment-<host>.yml
+   micromamba env create -f environment.yml
    micromamba activate gwi
    ```
 
