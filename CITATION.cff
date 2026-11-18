@@ -1,0 +1,81 @@
+cff-version: 1.2.0
+message: >-
+  If you use this code or its outputs, please cite the version you used
+  via its Zenodo DOI, together with the method papers listed below. The
+  concept DOI 10.5281/zenodo.24020859 covers all versions.
+title: "Global Warming Index"
+type: software
+authors:
+  - family-names: Walsh
+    given-names: Tristram
+    affiliation: "Environmental Change Institute, University of Oxford"
+    orcid: "https://orcid.org/0000-0002-5227-9432"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24020859
+    description: "Concept DOI: all versions; resolves to the latest"
+repository-code: "https://github.com/tristramwalsh/global-warming-index"
+url: "https://globalwarmingindex.org"
+license: MIT
+keywords:
+  - Global Warming Index
+  - human-induced warming
+  - attributable warming
+  - climate change attribution
+  - global mean surface temperature
+  - Indicators of Global Climate Change
+references:
+  - type: article
+    authors:
+      - family-names: Otto
+        given-names: Friederike E. L.
+      - family-names: Frame
+        given-names: David J.
+      - family-names: Otto
+        given-names: Alexander
+      - family-names: Allen
+        given-names: Myles R.
+    title: "Embracing uncertainty in climate change policy"
+    journal: "Nature Climate Change"
+    volume: 5
+    start: 917
+    end: 920
+    year: 2015
+    doi: 10.1038/nclimate2716
+  - type: article
+    authors:
+      - family-names: Haustein
+        given-names: Karsten
+      - family-names: Allen
+        given-names: Myles R.
+      - family-names: Forster
+        given-names: Piers M.
+      - family-names: Otto
+        given-names: Friederike E. L.
+      - family-names: Mitchell
+        given-names: Daniel M.
+      - family-names: Matthews
+        given-names: H. Damon
+      - family-names: Frame
+        given-names: David J.
+    title: "A real-time Global Warming Index"
+    journal: "Scientific Reports"
+    volume: 7
+    start: 15417
+    year: 2017
+    doi: 10.1038/s41598-017-14828-5
+  - type: article
+    authors:
+      - family-names: Forster
+        given-names: Piers M.
+      - family-names: Walsh
+        given-names: Tristram
+      - family-names: Smith
+        given-names: Chris
+      - name: "et al."
+    title: "Indicators of Global Climate Change 2025: annual update of key indicators of the state of the climate system and human influence"
+    journal: "Earth System Science Data"
+    volume: 18
+    start: 3889
+    year: 2026
+    doi: 10.5194/essd-18-3889-2026
