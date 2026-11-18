@@ -41,7 +41,7 @@ If you use GWI code or results, cite the release you used and the method papers:
 ### Citing the GWI *generally*
 To refer to the operational Global Warming Index (GWI) project code in general rather than a particular release, use the
 - **Project concept DOI (representing all operational updates)**
-    - Walsh, T. (2026). Global Warming Index (Version Thorne_et_al-2026) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24020859
+    - Walsh, T. Global Warming Index. Zenodo. https://doi.org/10.5281/zenodo.24020859
 - **Most recent GWI-specific methodology paper, providing uncertainty quantification**
     - Haustein, K., Allen, M.R., Forster, P.M. et al. A real-time Global Warming Index. Sci Rep 7, 15417 (2017). https://doi.org/10.1038/s41598-017-14828-5
 - **Concept paper proposing the GWI for policy use**

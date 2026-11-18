@@ -10,10 +10,11 @@ authors:
     given-names: Tristram
     affiliation: "Environmental Change Institute, University of Oxford"
     orcid: "https://orcid.org/0000-0002-5227-9432"
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.24020859
-    description: "Concept DOI: all versions; resolves to the latest"
+# Concept DOI: all versions, resolves to the latest. There is deliberately no
+# `version` or `date-released`: this file describes the project as a whole and
+# needs no change per release. Each Zenodo version record gives the citation
+# for its release, with the tag as its version.
+doi: 10.5281/zenodo.24020859
 repository-code: "https://github.com/tristramwalsh/global-warming-index"
 url: "https://globalwarmingindex.org"
 license: MIT
