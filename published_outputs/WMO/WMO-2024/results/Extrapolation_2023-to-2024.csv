@@ -1,0 +1,18 @@
+ANNUAL MEAN,GWI,,
+Percentile,2023,Rate 2014-2023,Extrap 2024
+50,1.289288735,0.024460486,1.313749222
+5,1.158695024,0.01852486,1.177219885
+95,1.402015119,0.030083039,1.432098158
+,,,
+DECADE MEAN,GWI,,
+Percentile,2014-2023,Rate 2014-2023,Extrap 2015-2024
+50,1.18254441,0.024460486,1.207004896
+5,1.065619364,0.01852486,1.084144224
+95,1.283563308,0.030083039,1.313646347
+,,,
+Info:,,,
+2023,Calculated in 2023 with HadCRUT5 and ERF available up to and including 2023,,
+2014-2023,Calculated in 2023 with HadCRUT5 and ERF available up to and including 2023,,
+Rate 2014-2023,Calculated in 2023 with HadCRUT5 and ERF available up to and including 2023,,
+Extrap 2024,Calculated in 2024 based on linear extrapolation of 2023 level and decadal rate of warming,,
+Extrap 2014-2023,Calculated in 2024 based on linear extrapolation of 2023 level and decadal rate of warming,,
