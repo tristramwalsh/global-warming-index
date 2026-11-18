@@ -1,16 +1,16 @@
 # The Global Warming Index
 
-<!-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.placeholder.svg)](https://doi.org/10.5281/zenodo.placeholder)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) -->
-<!-- [![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/downloads/release/python-390/) -->
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24020859.svg)](https://doi.org/10.5281/zenodo.24020859)
+[![Code licence: MIT](https://img.shields.io/badge/code%20licence-MIT-yellow.svg)](LICENSE)
+[![Outputs licence: CC BY 4.0](https://img.shields.io/badge/outputs%20licence-CC%20BY%204.0-lightgrey.svg)](published_outputs/LICENSE.md)
 
 ## Introduction
 
 The Global Warming Index (GWI) is a method for attributing observed global temperature changes to different climate forcing components.
 
-It uses a two-step regression approach: first, prior estimates of the temperature responses to individual forcings (greenhouse gases, other human forcing, and natural forcings) are generated using a climate emulator model (FaIR), then these modelled responses are constrained via regression against observed temperatures and pre-industrial control simulations to determine posterior estimate.
+It uses a two-step regression approach: first, prior estimates of the temperature responses to individual forcings (greenhouse gases, other human forcing, and natural forcings) are generated using a climate emulator model, then these modelled responses are constrained via regression against observed temperatures and pre-industrial control simulations to determine posterior estimate.
 
-The attribution is modular in the climate model: the prior responses can come from any model that turns forcing into temperature, using as many parameterisations as wanted, such as emulations of different CMIP6 models. Results to date use FaIR v2 emulating 28 CMIP6 models (see [Climate Models](#246-climate-models)).
+The pipeline is designed to be is fully modular and flexible for our quick turnaround operational attribution of arbitrary scenarios and data. Modularity currently covers the input data, climate model, reference temperatures, reference constraining period, preindustrial baseline, targeting individual ensemble members, headline warming definition (annual mean, SR1.5, AR6, CGWL, etc), rate calculation, warming component outputs, etc. Further modularity will soon also include turning on and off individual uncertainty sources, selecting regression method to better handle differences between historical-information-only or full-information constraining, rate definitions, and adding additional attributable natural components.
 
 Very large Monte Carlo simulations (with $\mathcal{O}(10^8)$ ensemble members) are used to produce probabilistic estimates of human-caused warming, natural contributions, and total warming with full uncertainty quantification across multiple sources of uncertainty, including:
 - radiative forcing uncertainty
@@ -18,20 +18,65 @@ Very large Monte Carlo simulations (with $\mathcal{O}(10^8)$ ensemble members) a
 - observed temperature uncertainty
 - possible alternative realisations of internal variability
 
-## Results Availability and Citations
+## Results
 
-The Global Warming Index is hosted by the Environmental Change Institute (ECI) at the University of Oxford, and is operationally updated as part of the Indicators of Global Climate Change (IGCC) project.
+The Global Warming Index is hosted by the Environmental Change Institute (ECI) at the University of Oxford, and is updated operationally as part of the Indicators of Global Climate Change (IGCC) project.
 
-This repository does not contain pre-generated results, but provides the code and instructions to replicate the results.
+Every set of GWI results that has been published is in [`published_outputs/`](published_outputs/), with a README for each saying where it was published and which release made it:
 
-The most recent results, published in the annual IGCC assessments can be found at:
-- https://github.com/ClimateIndicator/anthropogenic-warming-assessment
+- `published_outputs/IGCC/`: the annual IGCC updates.
+- `published_outputs/WMO/`: contributions to the WMO State of the Global Climate.
+- `published_outputs/papers/`: results provided for individual papers.
 
-If you use this code or results, these references should be cited:
-- > Forster, P., Smith, C., Walsh, T. et al. (2026) *Indicators of Global Climate Change 2025: annual update of key indicators of the state of the climate system and human influence*. https://doi.org/10.5194/essd-18-3889-2026
-    - The most recent published version of the results from the GWI using this repository, with fully updated GWI methodology.
-- > Haustein, K., Allen, M.R., Forster, P.M. et al. (2017) *A real-time Global Warming Index*. https://doi.org/10.1038/s41598-017-14828-5
-    - The original reference for the original GWI method.
+### IGCC outputs
+The annual IGCC global assessment, which combines the GWI with the other attribution methods is at:
+- GitHub Code: https://github.com/ClimateIndicator/anthropogenic-warming-assessment
+- Zenodo Results: https://doi.org/10.5281/zenodo.7883757
+
+## How to cite
+
+If you use GWI code or results, cite the release you used and the method papers:
+
+
+### Citing the GWI *generally*
+To refer to the operational Global Warming Index (GWI) project code in general rather than a particular release, use the
+- **Project concept DOI (representing all operational updates)**
+    - Walsh, T. (2026). Global Warming Index (Version Thorne_et_al-2026) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24020859
+- **Most recent GWI-specific methodology paper, providing uncertainty quantification**
+    - Haustein, K., Allen, M.R., Forster, P.M. et al. A real-time Global Warming Index. Sci Rep 7, 15417 (2017). https://doi.org/10.1038/s41598-017-14828-5
+- **Concept paper proposing the GWI for policy use**
+    - Otto, F., Frame, D., Otto, A. et al. Embracing uncertainty in climate change policy. Nature Clim Change 5, 917–920 (2015). https://doi.org/10.1038/nclimate2716
+
+
+### Using and citing the *most recent* published GWI data release (2025)
+- **GWI Project, 2025 release DOI**
+    - Walsh, T. (2026). Global Warming Index (Version IGCC-2025) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24023147
+- **IGCC Publication, 2025 global indicators journal article**
+    - Forster, P. M., Walsh, T., Smith, C., et al.: Indicators of Global Climate Change 2025: annual update of key indicators of the state of the climate system and human influence, Earth Syst. Sci. Data, 18, 3889–3933, https://doi.org/10.5194/essd-18-3889-2026, 2026.
+- **Most recent methods paper**
+    - Haustein, K., Allen, M.R., Forster, P.M. et al. A real-time Global Warming Index. Sci Rep 7, 15417 (2017). https://doi.org/10.1038/s41598-017-14828-5
+
+### Using and citing other specific GWI project outputs
+
+If you use results from `published_outputs/`, e.g. the outputs for other specific papers, please follow the citations given in that folder's README, which covers both published outputs and specific code release DOIs.
+
+## Releases
+
+Each release has a git tag and GitHub release, and is archived on Zenodo as a version named after the tag, under the concept DOI https://doi.org/10.5281/zenodo.24020859 (each version's own DOI is on its Zenodo page).
+
+The code is MIT-licensed ([`LICENSE`](LICENSE)); the published outputs are [`CC BY 4.0`](published_outputs/LICENSE.md); the input data keep their own licences (see the `SOURCE.md` in each data folder).
+
+TODO: Add history of version changes in a [`CHANGELOG.md`](CHANGELOG.md) file, and add the release process in [`RELEASING.md`](RELEASING.md).
+
+| Release | Made for | Outputs in `published_outputs/` |
+| --- | --- | --- |
+| `Thorne_et_al-2026` | Thorne et al. (2026), revision, [10.5194/essd-2025-825](https://doi.org/10.5194/essd-2025-825) | `papers/Thorne_et_al-2026/` (all three Thorne releases) |
+| `IGCC-2025` | IGCC 2025: Forster et al. (2026), [10.5194/essd-18-3889-2026](https://doi.org/10.5194/essd-18-3889-2026) | `IGCC/IGCC-2025/` |
+| `IGCC-2024` | IGCC 2024: Forster et al. (2025), [10.5194/essd-17-2641-2025](https://doi.org/10.5194/essd-17-2641-2025) | `IGCC/IGCC-2024/` |
+| `WMO-2024` | WMO State of the Global Climate 2024, https://wmo.int/files/state-of-global-climate-2024 | `WMO/WMO-2024/` |
+| `IGCC-2023` | IGCC 2023: Forster et al. (2024), [10.5194/essd-16-2625-2024](https://doi.org/10.5194/essd-16-2625-2024) | `IGCC/IGCC-2023/` |
+| `IGCC-2022` | IGCC 2022: Forster et al. (2023), [10.5194/essd-15-2295-2023](https://doi.org/10.5194/essd-15-2295-2023) | `IGCC/IGCC-2022/` |
+
 
 
 ## Replicating the Results
@@ -333,11 +378,19 @@ Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showin
 
 ##### 2.4.5. Data Inputs
 
-Input data is stored in the `data/` directory. This includes:
-- **Temperatures:**
-    - **Observations:** Temperature datasets (e.g., HadCRUT, CMIP simulation outputs).
-    - **Simulated internal variability:** PiControl CMIP simulations
-- **Forcings:** Effective Radiative Forcing (ERF) timeseries.
+Input data are in `data/`, one folder per scenario. Each data folder has a `SOURCE.md` giving the dataset, how to cite it, its licence and where it came from.
+
+Each climate model's source file is in its folder in `models/` (see [Climate Models](#246-climate-models)).
+
+```markdown
+**Dataset:** <name and version>
+
+**Cite:** <reference, with DOI>
+
+**Licence:** <licence>
+
+**From:** <URL or DOI, or who supplied it; date>
+```
 
 Ensure that the data corresponding to your `SCENARIO` selection in `schedule-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
 
@@ -365,7 +418,7 @@ The uncertainty calculation is heavily memory-constrained. `gwi.py` holds every 
 
 To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, the size of that array, the peak to expect, and the memory Slurm allocated to the job, and says whether it expects to run out. A run whose array cannot fit at all stops there, before any work is done. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
 
-Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though prjects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
+Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
 
 
 ##### 2.4.8. Running the GWI for Individual Ensemble Members
