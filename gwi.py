@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import src.graphing as gr
 import src.definitions as defs
 
-import models.AR5_IR as AR5_IR
+import models.AR5_IR.AR5_IR as AR5_IR
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 
@@ -1045,7 +1045,7 @@ if __name__ == "__main__":
         #                    'parameter-sets/CMIP6_climresp.csv')
         # Which is simply copied to the following location and committed
         # to repo explicitly for transparency and convenience.
-        CMIP6_param_csv = ('models/FaIR_CMIP6_climresp.csv')
+        CMIP6_param_csv = ('models/FaIR_V2/FaIR_CMIP6_climresp.csv')
         CMIP6_param_df = pd.read_csv(
             CMIP6_param_csv, index_col=[0], header=[0, 1])
 

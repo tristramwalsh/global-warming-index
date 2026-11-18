@@ -1,5 +1,6 @@
-# FaIR Climate Model
-models/FaIR_V2
+# FaIR Climate Model code, downloaded on first run (see models/__init__.py).
+# The rest of models/FaIR_V2/ (SOURCE.md, CMIP6 parameters) is tracked.
+/models/FaIR_V2/FaIRv2_0_0_alpha1/
 
 # slurm logs
 /slurm_logs*/

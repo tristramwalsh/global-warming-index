@@ -10,6 +10,8 @@ The Global Warming Index (GWI) is a method for attributing observed global tempe
 
 It uses a two-step regression approach: first, prior estimates of the temperature responses to individual forcings (greenhouse gases, other human forcing, and natural forcings) are generated using a climate emulator model (FaIR), then these modelled responses are constrained via regression against observed temperatures and pre-industrial control simulations to determine posterior estimate.
 
+The attribution is modular in the climate model: the prior responses can come from any model that turns forcing into temperature, using as many parameterisations as wanted, such as emulations of different CMIP6 models. Results to date use FaIR v2 emulating 28 CMIP6 models (see [Climate Models](#246-climate-models)).
+
 Very large Monte Carlo simulations (with $\mathcal{O}(10^8)$ ensemble members) are used to produce probabilistic estimates of human-caused warming, natural contributions, and total warming with full uncertainty quantification across multiple sources of uncertainty, including:
 - radiative forcing uncertainty
 - climate parameter uncertainty
@@ -340,7 +342,24 @@ Input data is stored in the `data/` directory. This includes:
 Ensure that the data corresponding to your `SCENARIO` selection in `schedule-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
 
 
-##### 2.4.6. Memory and Computing Resources
+##### 2.4.6. Climate Models
+
+The prior temperature responses come from a climate model, and the rest of the
+attribution doesn't depend on which one. Each model has its own folder in
+`models/`, named after its `model_choice` in `gwi.py`, holding the model's code
+or parameters and a `SOURCE.md`:
+
+- `models/FaIR_V2/`: FaIR v2.0.0-alpha1, used for all published results, with
+  parameters emulating 28 CMIP6 models (`FaIR_CMIP6_climresp.csv`). The GWI
+  runs every parameterisation, in parallel, so the spread between them is part
+  of the climate parameter uncertainty. The FaIR code is downloaded from Zenodo
+  into `models/FaIR_V2/FaIRv2_0_0_alpha1/` the first time `models` is imported,
+  and is not tracked by git.
+- `models/AR5_IR/`: the IPCC AR5 impulse response model, from earlier versions
+  of the GWI. It is not wired into the current analysis.
+
+
+##### 2.4.7. Memory and Computing Resources
 
 The uncertainty calculation is heavily memory-constrained. `gwi.py` holds every attributed ensemble member in one array, whose size grows steeply with the number of samples per uncertainty source (`SUBSAMPLE_ITERATIONS`), and its peak memory use is about twice that array.
 
@@ -349,7 +368,7 @@ To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEM
 Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though prjects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
 
 
-##### 2.4.7. Running the GWI for Individual Ensemble Members
+##### 2.4.8. Running the GWI for Individual Ensemble Members
 
 Normally (`SPECIFY_ENSEMBLE_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
 1. Set `SPECIFY_ENSEMBLE_MEMBERS` to the members wanted (e.g. `{1..100}`), and `SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR` to the source they apply to (e.g. `GMT`).
