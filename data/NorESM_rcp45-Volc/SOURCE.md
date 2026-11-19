@@ -5,3 +5,5 @@
 **Licence:** Creative Commons Attribution 4.0 International
 
 **From:** Supplied by John Nicklas
+
+**Notes:** Model output, so the ERF and GMST here pair only with each other, never with observations or another model. Each GMST member has its own natural (volcanic) ERF member, with the same label: attribute them one-to-one, one member at a time (ERF member 1 with GMST member 1, and so on).

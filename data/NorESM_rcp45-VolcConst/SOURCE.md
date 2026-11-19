@@ -5,3 +5,5 @@
 **Licence:** Creative Commons Attribution 4.0 International
 
 **From:** Supplied by John Nicklas
+
+**Notes:** Model output, so the ERF and GMST here pair only with each other, never with observations or another model. The ERF is a single timeseries shared by all GMST members.

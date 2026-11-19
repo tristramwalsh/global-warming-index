@@ -139,15 +139,15 @@ def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
         df_ERF = load_ERF_SSP(scenario, regress_vars)
     # 'observed-<YYYY>': no SSP suffix, so use the historical ERFs.
     elif 'observed-20' in scenario:
-        df_ERF = load_ERF_CMIP6(scenario, include_sub_vars=include_sub_vars)
+        df_ERF = load_ERF_IGCC(scenario, include_sub_vars=include_sub_vars)
     # 'observed_JK-<YYYY>-SSP<NNN>': the SSP suffix selects the ERFs.
     elif 'observed_JK' in scenario and 'SSP' in scenario:
         df_ERF = load_ERF_SSP(scenario, regress_vars)
     # 'observed_JK-<YYYY>': no SSP suffix, so use observed-<YYYY>'s
     # historical ERFs; the JK data provides only the temperatures.
     elif 'observed_JK' in scenario:
-        df_ERF = load_ERF_CMIP6(scenario.replace('observed_JK', 'observed'),
-                                include_sub_vars=include_sub_vars)
+        df_ERF = load_ERF_IGCC(scenario.replace('observed_JK', 'observed'),
+                               include_sub_vars=include_sub_vars)
     elif 'SMILE_ESM' in scenario:
         df_ERF = load_ERF_SMILE(scenario, regress_vars)
     elif 'NorESM' in scenario:
@@ -328,17 +328,17 @@ def check_ensemble_matching(df_ERF):
     return check_ens
 
 
-def load_ERF_CMIP6(scenario, include_sub_vars=False):
-    """Load the ERFs from Chris."""
+def load_ERF_IGCC(scenario, include_sub_vars=False):
+    """Load the IGCC historical ERFs (supplied by Chris Smith)."""
 
     # ERF location
     here = Path(__file__).parent
     end = scenario.split('-')[-1]
 
     if include_sub_vars:
-        file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}_full.nc'
+        file_ERF = here / f'../data/{scenario}/ERF/IGCC/ERF_DAMIP_1000_1750-{end}_full.nc'
     else:
-        file_ERF = here / f'../data/{scenario}/ERF/Chris/ERF_DAMIP_1000_1750-{end}.nc'
+        file_ERF = here / f'../data/{scenario}/ERF/IGCC/ERF_DAMIP_1000_1750-{end}.nc'
 
     # import ERF_file to xarray dataset and convert to pandas dataframe
     df_ERF = xr.open_dataset(file_ERF).to_dataframe()
@@ -523,7 +523,10 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     # ERF location
     here = Path(__file__).parent
     scen = scenario.split('-')[-1]
-    file_ERF = here / f'../data/observed_SSP-extension/ERF/ssp_forcing_fair2.1.3_cal1.4.5.nc'
+    # The SSPs share their history to 2022 and diverge from 2023, so the
+    # dataset is filed with the 2022 data.
+    file_ERF = (here / '../data/observed-2022/ERF/SSP_extension/'
+                'ssp_forcing_fair2.1.3_cal1.4.5.nc')
     # import ERF_file to xarray dataset and convert to pandas dataframe
     df_ERF = xr.open_dataset(file_ERF).to_dataframe()
     # Rename the 'config' column in the index to be 'ensemble'
@@ -636,17 +639,21 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     # value for us (eg HadCRUT 5.1.0.0 in data/observed-2025/ carries a 2026 row
     # whose coverage uncertainty is ~30x that of the complete years).
 
+    return truncate_to_end_year(df_temp_Obs, scenario, temp_ens_Path.name)
+
+
+def truncate_to_end_year(df_temp_Obs, scenario, file_name):
+    """Cut observations off at the final year in the scenario name, eg 2025
+    for 'observed-2025' or 'observed_JK-2025'."""
     end_obs = int(scenario.split('-')[1])
     if end_obs not in df_temp_Obs.index:
         # The file is short of what the scenario name claims: fail loudly
         # rather than silently analysing a shorter record than intended.
         raise ValueError(
             f"Scenario '{scenario}' declares observations through {end_obs}, "
-            f"but {temp_ens_Path.name} only covers "
+            f"but {file_name} only covers "
             f"{df_temp_Obs.index.min()}-{df_temp_Obs.index.max()}.")
-    df_temp_Obs = df_temp_Obs.loc[:end_obs]
-
-    return df_temp_Obs
+    return df_temp_Obs.loc[:end_obs]
 
 
 def load_Temp_JK(scenario, start_pi, end_pi):
@@ -654,9 +661,9 @@ def load_Temp_JK(scenario, start_pi, end_pi):
     remove PI baseline."""
 
     here = Path(__file__).parent
-    temp_ens_Path = (
-        f'../data/{scenario}/Temp/JohnKennedy/' +
-        'sst_pseudo.csv')
+    # 'observed_JK-<YYYY>' reads data/observed-<YYYY>/Temp/JK_multi/.
+    year = scenario.split('-')[1]
+    temp_ens_Path = f'../data/observed-{year}/Temp/JK_multi/sst_pseudo.csv'
 
     # Read the csv file into a pandas dataframe. But note that, unlike the
     # HadCRUT dataset, there are no column names in this csv; we need the
@@ -669,7 +676,9 @@ def load_Temp_JK(scenario, start_pi, end_pi):
                             for realisation in range(n_ens)]
     df_temp_Obs.columns = col_names
     df_temp_Obs = df_temp_Obs.set_index('Year')
-    return df_temp_Obs
+
+    # Same cut-off as HadCRUT (see load_Temp_HadCRUT).
+    return truncate_to_end_year(df_temp_Obs, scenario, temp_ens_Path.name)
 
 # def load_PiC_Old(n_yrs):
 #     """Load piControl data from Stuart's ERF datasets."""
@@ -781,13 +790,16 @@ def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
     # downloaded from https://cmip6.science.unimelb.edu.au/results?experiment_id=piControl&normalised=&mip_era=CMIP6&timeseriestype=average-year-mid-year&variable_id=tas&region=World#download
     # (ie a CMIP6 archive for pre-meaned data, saving data/time.)
     here = Path(__file__).parent
-    path_PiC = here / '../data/piControl/CMIP6/**/*.MAG'
-    path_PiC = str(path_PiC)
+    dir_PiC = (here / '../data/piControl/CMIP6').resolve()
+    path_PiC = str(dir_PiC / '**/*.MAG')
     mag_files = sorted(glob.glob(path_PiC, recursive=True))
     dict_temp = {}
     for file in mag_files:
-        # Adopt nomenclature format that matches earlier csv from Stuart
-        group = file.split('/')[6]
+        # Adopt nomenclature format that matches earlier csv from Stuart.
+        # The group is the institution, read from the path inside
+        # data/piControl/CMIP6/, which is laid out as
+        # average-year-mid-year/CMIP6/<activity>/<institution>/<model>/...
+        group = Path(file).relative_to(dir_PiC).parts[3]
         model = file.split('/')[-1].split('_')[3]
         member = file.split('/')[-1].split('_')[5]
         var = file.split('/')[-1].split('_')[1]
