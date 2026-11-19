@@ -62,6 +62,17 @@ END_REGRESS=`seq 2020 2025`
 # SUBSAMPLE_ITERATIONS=(10000)  # Size of subsampling to max out the calculation
 SUBSAMPLE_ITERATIONS=(60 60 60)  # Size of subsampling
 
+# Select a seed for the random sampling of ensemble members, for exactly
+# reproducible runs: runs of the same configuration on the same inputs then
+# give identical results (e.g. to check that a code change leaves the results
+# unchanged). Leave empty for the usual, unseeded sampling, in which every run
+# samples afresh.
+# NOTE: every run uses the same seed, so with a seed set, repeat iterations
+# of the same configuration in SUBSAMPLE_ITERATIONS give identical results.
+# e.g. SEED=     (unseeded; the usual setting)
+# e.g. SEED=42
+SEED=
+
 # Select the reference period for the temperature datasets
 # The selected period offset applies to FaIR outputs, GMT Observations,
 # and piControl internal variability.
@@ -278,6 +289,7 @@ gwi_command() {
   GWI_COMMAND=(
     python gwi.py
     --samples="$1"
+    --seed="${SEED}"
     --regress-range="${START_REGRESS}-$2"
     --truncate="${TRUNCATION}"
     --include-rate="${INCLUDE_RATE}"
@@ -343,6 +355,9 @@ if [ "${INCLUDE_RATE}" = "y" ]; then
 fi
 if [ "${CALCULATE_PRIORS_OUTPUT}" = "n" ]; then
   RUN_TAG="${RUN_TAG}_PRIORS--n"
+fi
+if [ -n "${SEED}" ]; then
+  RUN_TAG="${RUN_TAG}_SEED--${SEED}"
 fi
 
 if [ "${MODE}" = "dry" ]; then

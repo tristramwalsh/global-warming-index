@@ -153,6 +153,11 @@ The following parameters in `run-gwi.sh` control the analysis:
     - e.g.`(90 90 90 90)` runs 4 repeat iterations with a maximum of 90 samples for each of the 4 uncertainty sources (observations, forcing, climate parameters, internal variability)
     - e.g. `(30 60 90)` runs 3 repeat iterations with 30, 60, and 90 samples respectively
 
+**`SEED`**: A seed for the random sampling of ensemble members, for exactly reproducible runs
+- Leave empty (the usual setting) for unseeded sampling: every run samples afresh, so repeat iterations differ, and averaging them reduces the sampling noise.
+- Set to a whole number (e.g. `42`) to draw exactly the same samples each time: runs of the same configuration on the same inputs then give identical results. This is useful for checking that a code change leaves the results unchanged.
+- Every run uses the same seed, so with a seed set, repeat iterations of the same configuration in `SUBSAMPLE_ITERATIONS` give identical results.
+
 
 **`PREINDUSTRIAL_ERA`**: Pre-industrial baseline period
 - Used to define the baseline pre-industrial proxy for temperatures to be produced relative to.

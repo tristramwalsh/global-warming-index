@@ -696,6 +696,22 @@ if __name__ == "__main__":
     # combine_results_iterations.py so that it reads what this run writes.
     output_tag = argv_dict.get('--output-tag')
 
+    # Optional seed for the random sampling of ensemble members. With no seed
+    # (no --seed, or --seed= left empty) every run samples afresh, so repeat
+    # runs of the same configuration differ, as they always have. With a seed,
+    # runs of the same configuration on the same inputs draw exactly the same
+    # samples, and so give identical results: useful for checking that a code
+    # change leaves the results unchanged.
+    seed = argv_dict.get('--seed', '')
+    if seed == '':
+        seed = None
+    elif seed.isdigit() and int(seed) < 2**32:
+        seed = int(seed)
+    else:
+        raise ValueError(
+            f'Invalid --seed {seed!r}: use a whole number from 0 to 2**32-1, '
+            'or leave it empty for unseeded sampling.')
+
     # Determine whether to calculate rates (computaitonally expensive).
     if '--include-rate' in argv_dict:
         rate_toggle = argv_dict['--include-rate']
@@ -967,6 +983,8 @@ if __name__ == "__main__":
     print(f'Truncation range: {start_trunc}-{end_trunc}')
     print(f'Regression range: {start_regress}-{end_regress}')
     print(f'Number of samples: {samples}')
+    print('Random seed: '
+          f'{seed if seed is not None else "none (unseeded sampling)"}')
     print(f'Calculate and save rates: {rate_toggle}')
     print(f'Calculate and save priors: {calculate_priors_output}')
     print(f'Include pre-industrial offset: {inc_pi_offset}')
@@ -1066,6 +1084,14 @@ if __name__ == "__main__":
     # differences between samplings are well below the overall unceratinty
     # range. Variance is compensated for by making several repeat calculations
     # and averaging the resulting timeseries - see combine_results.py.
+
+    # Seed the random sampling, if asked to. All three draws below (forcing,
+    # temperature and internal variability members) use numpy's global
+    # random state -- pandas' .sample() does too when given no random_state
+    # -- and they are the only random draws in a run, so seeding here, just
+    # before them, makes the whole run reproducible.
+    if seed is not None:
+        np.random.seed(seed)
 
     # 1. Select random samples of the forcing data
     defs.log_notes()
