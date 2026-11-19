@@ -82,7 +82,7 @@ TODO: Add history of version changes in a [`CHANGELOG.md`](CHANGELOG.md) file, a
 ## Replicating the Results
 Prerequisites:
 - **Package Manager:** `Micromamba` (Conda may not solve dependencies for all systems)
-- **HPC:** `SLURM` (The workflow is optimized for SLURM-based HPC clusters but can be adapted for local execution).
+- **HPC:** `SLURM` for full-size runs. Small runs, such as quick tests and development work, can also run directly on a laptop or an interactive node (see **Run modes**).
 
 ### 1. Setting up the environment
 1. Clone the repository:
@@ -97,20 +97,28 @@ Prerequisites:
    micromamba activate gwi
    ```
 
-### 2. Running the Analysis with SLURM Batch Processing
+### 2. Running the Analysis
 
-The main analysis is designed to run on HPC clusters using SLURM job submission. The workflow is controlled by the `schedule-gwi.sh` script, which generates and submits multiple SLURM job files to calculate the GWI for all required analysis configurations.
+The workflow is controlled by the `run-gwi.sh` script, which calculates the GWI for every configuration set at its top: either by submitting a SLURM job for each, or by running them directly in the current shell.
 
 #### 2.1. Basic Usage
 
-##### 2.1.1. Generate and submit GWI iteration jobs
+##### 2.1.1. Run the GWI iterations
+Edit the settings at the top of `run-gwi.sh` (see **Configuration Arguments** below), activate the `gwi` environment, then:
 ```bash
-bash schedule-gwi.sh
+bash run-gwi.sh
 ```
-This script automatically generates and submits SLURM jobs. Before running, you should edit the key parameters at the top of `schedule-gwi.sh` (see **Configuration Arguments** below).
+The script checks that the `gwi` environment is active before running anything; it does not activate it for you, as that differs between machines.
+
+**Run modes** (`MODE`):
+- `slurm` = generate and submit one SLURM job per configuration. Use this for full-size runs.
+- `direct` = run each configuration now, one after another, in this shell: on a laptop or on an interactive node. Use this for quick tests and development. It stops at the first failure, and logs go to `logs_direct/` (or `logs_direct_<tag>/`).
+- `dry` = print the `gwi.py` commands that would run, and run nothing.
+
+For a quick test, set `MODE=direct` and uncomment the **Quick test** settings in `run-gwi.sh`; on a laptop this takes well under a minute.
 
 ##### 2.1.2. Combine results from multiple iterations
-Once the jobs have completed, run the combination script with the same tag:
+Once the runs have completed, run the combination script with the same tag:
 
 ```bash
 python combine_results_iterations.py
@@ -122,7 +130,9 @@ See **Combining Results from Multiple Iterations** for its options, and **Output
 
 #### 2.2. Configuration Arguments
 
-The following parameters in `schedule-gwi.sh` control the analysis:
+The following parameters in `run-gwi.sh` control the analysis:
+
+**`MODE`**: How to run each configuration: `slurm`, `direct` or `dry` (see **Run modes** above).
 
 **`START_REGRESS`**: The starting year for the observational constraint period (e.g., `1850`)
 - Defines when start year of the data ranges that the regression constraint is applied over.
@@ -152,7 +162,7 @@ The following parameters in `schedule-gwi.sh` control the analysis:
     - `n` = no pre-industrial offset applied (temperatures are left in their default state, which may be relative to a different baseline depending on the dataset)
 
 **`INCLUDE_REG_CONST`**: Toggle regression constant (`y` or `n`)
-- Specifies whether to include a constant term offset within the multi-variable regression. We typically set this to `n`, as in `schedule-gwi.sh`. (`gwi.py` itself defaults to `y` if the option is not passed.)
+- Specifies whether to include a constant term offset within the multi-variable regression. We typically set this to `n`, as in `run-gwi.sh`. (`gwi.py` itself defaults to `y` if the option is not passed.)
 - Examples:
     - `y` = include the constant term in the regression
     - `n` = do not include the constant term in the regression
@@ -244,23 +254,23 @@ The following parameters in `schedule-gwi.sh` control the analysis:
 
 
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
-- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and Slurm logs to `slurm_logs_<tag>/`.
+- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
 - Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`).
-- Left empty (the default), the plain `results/`, `plots/` and `slurm_logs/` folders are used.
+- Left empty, the plain `results/`, `plots/` and `logs_slurm/` (or `logs_direct/`) folders are used.
 
 
-**Slurm resources**: `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
+**Slurm resources** (slurm mode only): `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
 - `CLUSTER` = which Slurm cluster to submit to on Oxford ARC: `arc`, `htc`, or `arc,htc` to take whichever starts sooner. The partition is set automatically from the host.
 - `SIM_CPUS`, `CPU_MEM`, `WALLTIME` = CPUs, memory per CPU, and time limit for each job.
 - Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits `SUBSAMPLE_ITERATIONS` of about 60-100 samples without rates. Larger ensembles need more memory (see **Memory and Computing Resources**), and rates or member-by-member runs need more time.
 
 #### 2.3. What the Script Does
 
-The `schedule-gwi.sh` script:
+The `run-gwi.sh` script:
 1. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
-2. Generates a SLURM job file for each combination, named after the run's configuration
-3. Each job calls `gwi.py` with the specified CLI arguments (once per member, one after another, when `SPECIFY_ENSEMBLE_MEMBERS` lists several)
-4. Submits the job to SLURM and cleans up the temporary job files; each job's log goes to `slurm_logs/` (or `slurm_logs_<tag>/`)
+2. For each combination, calls `gwi.py` with the specified CLI arguments (once per member, one after another, when `SPECIFY_ENSEMBLE_MEMBERS` lists several):
+    - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
+    - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
 
 
 #### 2.4. Technical Notes
@@ -312,7 +322,7 @@ python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --p
 ```
 
 All three options are optional:
-- `--output-tag=<tag>` = the `OUTPUT_TAG` used in `schedule-gwi.sh`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+- `--output-tag=<tag>` = the `OUTPUT_TAG` used in `run-gwi.sh`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
 - `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
 - `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `GMT-all_ERF-all` selection is always plotted in full.
 
@@ -334,7 +344,7 @@ For iterations generated in order to provide different regression end years (e.g
 
 
 ##### 2.4.4. Output Structure
-Results are organized hierarchically (`results_<tag>/`, `plots_<tag>/` and `slurm_logs_<tag>/` when `OUTPUT_TAG` is set):
+Results are organized hierarchically (`results_<tag>/`, `plots_<tag>/` and `logs_slurm_<tag>/` or `logs_direct_<tag>/` when `OUTPUT_TAG` is set):
 ```
 global-warming-index/
 ├── results/
@@ -347,7 +357,8 @@ global-warming-index/
 │                        ├── GWI_results_headlines_*.csv
 │                        └── GWI_results_rates_*.csv  (if INCLUDE_RATE=y)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
-└── slurm_logs/   one log per Slurm job
+├── logs_slurm/   one log per Slurm job (slurm mode)
+└── logs_direct/  one log per configuration (direct mode)
 ```
 
 where `{category}` is one of:
@@ -392,7 +403,7 @@ Each climate model's source file is in its folder in `models/` (see [Climate Mod
 **From:** <URL or DOI, or who supplied it; date>
 ```
 
-Ensure that the data corresponding to your `SCENARIO` selection in `schedule-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
+Ensure that the data corresponding to your `SCENARIO` selection in `run-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
 
 
 ##### 2.4.6. Climate Models
@@ -418,7 +429,7 @@ The uncertainty calculation is heavily memory-constrained. `gwi.py` holds every 
 
 To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, the size of that array, the peak to expect, and the memory Slurm allocated to the job, and says whether it expects to run out. A run whose array cannot fit at all stops there, before any work is done. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
 
-Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
+Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job, or, outside Slurm, as the CPUs of the machine; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
 
 
 ##### 2.4.8. Running the GWI for Individual Ensemble Members

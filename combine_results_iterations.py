@@ -3,6 +3,11 @@ import sys
 import gc
 import numpy as np
 import pandas as pd
+import matplotlib
+# Draw figures straight to file: this script only saves them, never shows
+# them. Without this, macOS picks its interactive backend, which is not safe
+# to use in the forked worker processes that draw the figures.
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from highlight_text import ax_text
 from PIL import Image
@@ -135,8 +140,14 @@ def run_in_pool(func, tasks):
     # parent's memory into every worker.
     gc.collect()
     gc.freeze()
+    # The workers must be forked, not spawned. A forked worker starts as a
+    # copy of this process, with the output folders set_output_folders() set
+    # and the results already loaded; a spawned one starts afresh and has
+    # neither. Fork is the default on Linux but not on macOS (spawn, since
+    # Python 3.8), so it is requested explicitly, as gwi.py does.
     try:
-        with ProcessPoolExecutor(n_workers) as executor:
+        with ProcessPoolExecutor(
+                n_workers, mp_context=mp.get_context('fork')) as executor:
             return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
     finally:
         gc.unfreeze()
