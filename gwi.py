@@ -11,11 +11,8 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
-# import matplotlib
-import matplotlib.pyplot as plt
 # import scipy.stats as ss
 
-import src.graphing as gr
 import src.definitions as defs
 import src.input_datasets as datasets
 
@@ -552,11 +549,6 @@ if __name__ == "__main__":
     # model_choice = 'AR5_IR'
     model_choice = 'FaIR_V2'
 
-    # Determine whether to plot the filtered piControl ensemble members.
-    # Defaults to 'no', as it useful only for diagnosing the method, and
-    # doesn't need re-plotting every time.
-    plot_piControl = False
-
     # Use command line arguments instead of interactivity, so that we can
     # run the script using nohup and later slurm.
 
@@ -864,20 +856,22 @@ if __name__ == "__main__":
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
+    # piControl segments, which depend only on the inputs (not on the members
+    # or the regression range)
+    out_path_picontrol = (
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/'
+    )
 
-    # Create a folder to store the plots
+    # Create the results folders
     results_root = defs.tagged_folder('results', output_tag)
-    plots_root = defs.tagged_folder('plots', output_tag)
     results_folder = f'{results_root}/iterations/'
     if not os.path.exists(f'{results_folder}{output_path}'):
         os.makedirs(f'{results_folder}{output_path}',
         exist_ok=True)
-    # Only made when something is actually going to be plotted. The only
-    # figures this script writes are the pruned-piControl ones below, so
-    # otherwise this would leave an empty tree behind on every run.
-    plot_folder = f'{plots_root}/iterations/'
-    if plot_piControl and not os.path.exists(f'{plot_folder}{output_path}'):
-        os.makedirs(f'{plot_folder}{output_path}', exist_ok=True)
+    results_folder_picontrol = f'{results_root}/picontrol/'
+    os.makedirs(f'{results_folder_picontrol}{out_path_picontrol}',
+                exist_ok=True)
     results_folder_priors = f'{results_root}/priors/'
     if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
         os.makedirs(f'{results_folder_priors}{output_path_priors}',
@@ -998,8 +992,7 @@ if __name__ == "__main__":
     print(f'Include pre-industrial offset: {inc_pi_offset}')
     print(f'Include constant term in regression: {inc_reg_const}')
     print(f'Using model: {model_choice}')
-    print(f'Plotting pruned piControl: {plot_piControl}')
-    print(f'Output folders: {results_root}/ and {plots_root}/'
+    print(f'Output folder: {results_root}/'
           f'{"" if output_tag else "  (no tag set)"}')
 
     # CMIP6 PI-CONTROL
@@ -1010,40 +1003,15 @@ if __name__ == "__main__":
     # NOTE: For 1850-2022, we get 183 realisations for piControl
     # NOTE: For 1850-2023, we get 181 realisations for piControl
 
-    # Create a very rough estimate of the internal variability for the HadCRUT5
-    # best estimate. This is used to roughly compare the piControl internal
-    # variability to the observed internal variability to roughly remove
-    # ensemble members that are too variable in piControl.
-    # TODO: regress natural forcings out of this as well...
-    # TODO: check whether picontrol simulations have natural forcings such as
-    # volcanic and solar activity.
-    temp_Obs_signal = defs.temp_signal(
-        df_temp_Obs.quantile(q=0.5, axis=1).to_numpy(), 30, 'extrapolate')
-    temp_Obs_IV = df_temp_Obs.quantile(q=0.5, axis=1) - temp_Obs_signal
-
-    if plot_piControl:
-        # PLOT THE INTERNAL VARIABILITY #######################################
-        fig = plt.figure(figsize=(15, 10))
-        gr.running_mean_internal_variability(
-            timeframes, df_temp_PiC, temp_Obs_IV, gmt_id)
-        gr.overall_legend(fig, loc='lower center', ncol=2, nrow=False)
-        fig.suptitle(
-            'Selected Sample of Internal Variability from CMIP6 PiControl')
-        fig.savefig(f'{plot_folder}{output_path}' +
-                    '0_Selected_CMIP6_Ensembles.png')
-
-        # PLOT THE ENSEMBLE ###################################################
-        fig = plt.figure(figsize=(15, 10))
-        ax1 = plt.subplot2grid(shape=(1, 4), loc=(0, 0), rowspan=1, colspan=3)
-        ax2 = plt.subplot2grid(shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
-        gr.plot_internal_variability_sample(
-            ax1, ax2, df_temp_PiC, df_temp_Obs, temp_Obs_IV,
-            sigmas, sigmas_all, gmt_id)
-        gr.overall_legend(fig, loc='lower center', ncol=3, nrow=False)
-        fig.suptitle(
-            'Selected Sample of Internal Variability from CMIP6 pi-control')
-        fig.savefig(f'{plot_folder}{output_path}' +
-                    '1_Distribution_Internal_Variability.png')
+    # Save the filtered piControl segments, for the internal-variability
+    # figures drawn by combine_results_iterations.py. Identical for every
+    # iteration of these inputs, so (like the priors) the file has no date
+    # and is simply overwritten.
+    df_temp_PiC.to_csv(
+        f'{results_folder_picontrol}{out_path_picontrol}' +
+        f'PiControl_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
+        f'ENSEMBLE-SIZE--{df_temp_PiC.shape[1]}.csv')
 
 
     ###########################################################################

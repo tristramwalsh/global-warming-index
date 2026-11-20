@@ -34,7 +34,8 @@ PLOT_EVERY = 10
 # 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'.
 
 # Where this run reads and writes. PLOT_FOLDER, AGGREGATED_FOLDER,
-# ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER and OBSERVATIONS_FOLDER are
+# ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER and
+# PICONTROL_FOLDER are
 # created by set_output_folders() below -- the only place the layout is
 # written down -- and read by the functions in this file as they run.
 
@@ -52,7 +53,7 @@ def set_output_folders(output_tag=None):
     wrote.
     """
     global PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER
-    global PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER
+    global PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER, PICONTROL_FOLDER
 
     results_root = defs.tagged_folder('results', output_tag)
     PLOT_FOLDER = defs.tagged_folder('plots', output_tag) + '/'
@@ -61,6 +62,7 @@ def set_output_folders(output_tag=None):
     PRIORS_FOLDER = f'{results_root}/priors'
     ERFS_FOLDER = f'{results_root}/erfs'
     OBSERVATIONS_FOLDER = f'{results_root}/observations'
+    PICONTROL_FOLDER = f'{results_root}/picontrol'
 
     print(f'Reading results from {ITERATIONS_FOLDER}/, '
           f'writing plots to {PLOT_FOLDER}'
@@ -114,6 +116,26 @@ def read_observations_timeseries(scen, ens):
         raise FileNotFoundError(
             f'Expected one Obs_timeseries_*.csv file in {folder}, but found '
             f'{len(files)}. Rerun gwi.py for these inputs to save it.')
+
+    return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
+
+
+def read_picontrol_timeseries(scen):
+    """The filtered piControl segments a run sampled internal variability
+    from, as gwi.py saved them: one column per segment, indexed by year. None
+    if there is no such file (results made before gwi.py saved it).
+
+    scen: the inputs label, e.g.
+        'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
+    """
+    # The one PiControl_timeseries file for these inputs
+    folder = f'{PICONTROL_FOLDER}/{scen}/'
+    if not os.path.exists(folder):
+        return None
+    files = sorted(f for f in os.listdir(folder)
+                   if f.startswith('PiControl_timeseries_'))
+    if len(files) != 1:
+        return None
 
     return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
 
@@ -2109,6 +2131,70 @@ def figure_erf_timeseries(
     plt.close(fig)
 
 
+def figure_picontrol(scen, ens, obs_dfs):
+    """Plot the piControl segments a run sampled internal variability from,
+    against a rough estimate of the observed internal variability, and save
+    the two figures: running means of the segments, and their distribution.
+
+    scen: the inputs label, e.g.
+        'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
+    ens: the member selection, e.g. 'ERF-all_GMT-all'
+    obs_dfs: the loaded observations (see load_gwi_priors_erf_obs)
+
+    In the pipeline: overarching_base_result_plotter calls it once for each
+    selection it draws figures for. These figures used to be drawn by gwi.py
+    (behind its plot_piControl switch).
+    """
+    # The filtered piControl segments, as gwi.py saved them
+    df_temp_PiC = read_picontrol_timeseries(scen)
+    if df_temp_PiC is None:
+        print('      Skipping piControl figures (no piControl file)')
+        return
+
+    # A rough estimate of the observed internal variability: the median of
+    # the observations, minus its 30-year smoothed signal
+    df_temp_Obs = obs_dfs[scen][ens]['timeseries']
+    obs_median = df_temp_Obs.quantile(q=0.5, axis=1)
+    temp_Obs_IV = obs_median - defs.temp_signal(
+        obs_median.to_numpy(), 30, 'extrapolate')
+
+    # Running-mean windows (years), and the likely and very likely ranges
+    timeframes = [1, 3, 30]
+    sigmas = [[17, 83], [5, 95]]
+    sigmas_all = [5, 17, 83, 95, 50]
+    gmt_id = gmt_id_from_label(scen)
+
+    # Where the figures go
+    plot_path = f'{PLOT_FOLDER}picontrol/{scen}/ENSEMBLE-MEMBER--{ens}/'
+    os.makedirs(plot_path, exist_ok=True)
+    plot_label = f'{scen}_ENSEMBLE-MEMBER--{ens}'
+
+    # 1. Running means of each segment, and their distributions
+    fig = plt.figure(figsize=(15, 10))
+    gr.running_mean_internal_variability(
+        timeframes, df_temp_PiC, temp_Obs_IV, gmt_id)
+    gr.overall_legend(fig, loc='lower center', ncol=2, nrow=False)
+    fig.suptitle(
+        'Selected Sample of Internal Variability from CMIP6 PiControl')
+    fig.savefig(f'{plot_path}piControl_Selected_Segments_{plot_label}.png')
+    close_figure(fig)
+
+    # 2. The spread of the segments against the observed estimate
+    fig = plt.figure(figsize=(15, 10))
+    ax1 = plt.subplot2grid(shape=(1, 4), loc=(0, 0), rowspan=1, colspan=3)
+    ax2 = plt.subplot2grid(shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
+    gr.plot_internal_variability_sample(
+        ax1, ax2, df_temp_PiC, df_temp_Obs, temp_Obs_IV,
+        sigmas, sigmas_all, gmt_id)
+    gr.overall_legend(fig, loc='lower center', ncol=3, nrow=False)
+    fig.suptitle(
+        'Selected Sample of Internal Variability from CMIP6 pi-control')
+    fig.savefig(
+        f'{plot_path}piControl_Internal_Variability_Distribution_'
+        f'{plot_label}.png')
+    close_figure(fig)
+
+
 def parse_argvs():
     """Read the command line and return the settings it asks for.
 
@@ -3056,7 +3142,8 @@ def overarching_base_result_plotter(
 
     For each, draws the GWI timeseries, rates, iteration comparison, SPM2 and
     waterfall figures for the regressed ranges ranges_to_plot chooses, and
-    the gif, priors and ERF figures where there is something to draw. Saves
+    the gif, priors, ERF and piControl figures where there is something to
+    draw. Saves
     them under PLOT_FOLDER, and returns nothing.
 
     In the pipeline: step 3 of the script, after the averaged results are
@@ -3075,6 +3162,14 @@ def overarching_base_result_plotter(
         print('INPUTS:', scen)
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
+
+            # The piControl figures depend on the inputs and the members,
+            # not on the regressed variables, so are drawn once here (for
+            # the selections that get figures; see ensemble_is_plotted)
+            if ensemble_is_plotted(ens, PLOT_EVERY):
+                print('    Plotting piControl figures')
+                figure_picontrol(scen, ens, obs_dfs)
+
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED_VARIABLES:', reg_vars)
 

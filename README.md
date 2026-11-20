@@ -386,6 +386,7 @@ The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-in
 - `iterations/` = the results of each `gwi.py` run
 - `aggregated/` = those averaged across iterations by `combine_results_iterations.py`, plus the historical-only timeseries
 - `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply. `observations/` also holds `Obs_timeseries_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots.
+- `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries_*.csv`, one per inputs folder), for the internal-variability figures.
 
 The CSVs are:
 - **Timeseries**: Annual values for all variables and percentiles
@@ -406,7 +407,7 @@ And for each selection as a whole:
 - `Historical_delta_contributions_*` = the sources of the change in the GWI from each year to the next
 - `Projected_warming_in_<year>_*` = the projected warming constrained by the final regressed range
 
-Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showing the spread between repeat iterations (only where there are two or more), and `plots/erfs/` and `plots/priors/` the ERF and prior timeseries.
+Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showing the spread between repeat iterations (only where there are two or more), `plots/erfs/` and `plots/priors/` the ERF and prior timeseries, and `plots/picontrol/` two diagnostic figures of the piControl segments used for internal variability, against a rough estimate of the observed internal variability: `piControl_Selected_Segments_*` (running means) and `piControl_Internal_Variability_Distribution_*`.
 
 ##### 2.4.5. Data Inputs
 
