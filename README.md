@@ -66,7 +66,7 @@ Each release has a git tag and GitHub release, and is archived on Zenodo as a ve
 
 The code is MIT-licensed ([`LICENSE`](LICENSE)); the published outputs are [`CC BY 4.0`](published_outputs/LICENSE.md); the input data keep their own licences (see the `SOURCE.md` in each data folder).
 
-TODO: Add history of version changes in a [`CHANGELOG.md`](CHANGELOG.md) file, and add the release process in [`RELEASING.md`](RELEASING.md).
+Changes between releases are in [`CHANGELOG.md`](CHANGELOG.md), and the release process is in [`RELEASING.md`](RELEASING.md).
 
 | Release | Made for | Outputs in `published_outputs/` |
 | --- | --- | --- |
@@ -76,6 +76,7 @@ TODO: Add history of version changes in a [`CHANGELOG.md`](CHANGELOG.md) file, a
 | `WMO-2024` | WMO State of the Global Climate 2024, https://wmo.int/files/state-of-global-climate-2024 | `WMO/WMO-2024/` |
 | `IGCC-2023` | IGCC 2023: Forster et al. (2024), [10.5194/essd-16-2625-2024](https://doi.org/10.5194/essd-16-2625-2024) | `IGCC/IGCC-2023/` |
 | `IGCC-2022` | IGCC 2022: Forster et al. (2023), [10.5194/essd-15-2295-2023](https://doi.org/10.5194/essd-15-2295-2023) | `IGCC/IGCC-2022/` |
+| none (a spreadsheet that predates this code) | Otto et al. (2015), [10.1038/nclimate2716](https://doi.org/10.1038/nclimate2716) | `papers/Otto_et_al-2015/` |
 
 
 
@@ -183,19 +184,47 @@ The following parameters in `run-gwi.sh` control the analysis:
 - Note that these components must be included in the forcing dataset individually for this to be possible.
 
 
-**`SCENARIO`**: Which dataset/scenario to analyse
-- `observed-<YYYY>` = Observed temperatures (HadCRUT5) and historical ERFs, as published up to year `<YYYY>`. The observations are cut off at that year. Available years:
-    - `2023`, `2024`, `2025`
-- `observed-<YYYY>-SSP<scen>` = The same observations, with ERFs extended from 2024 into the future along an SSP scenario, so that CGWL headlines and constrained projections can be produced (e.g. `observed-2025-SSP245`). Note that the historical ERFS before 2024 in these scenarios are calculated using different methodology than the `observed-<YYYY>` ERFs, and therefore won't match. Different Available scenarios:
-    - `SSP119`, `SSP126`, `SSP245`, `SSP370`, `SSP434`, `SSP460`, `SSP585`
-- `observed_JK-<YYYY>` = John Kennedy's multi-dataset observation ensemble, with the same historical ERFs as `observed-<YYYY>` (e.g. `observed_JK-2025`). Available years:
-    - `2024`, `2025`
-- `observed_JK-<YYYY>-SSP<scen>` = John Kennedy's multi-dataset observation ensemble, with SSP-extended ERFs as above (e.g. `observed_JK-2025-SSP245`). Available years:
-    - `2024`, `2025`
-- `SMILE_ESM-SSP<scen>` = Single model initial-condition large ensemble. Available scenarios:
-    - SSP126, SSP245, SSP370
-- `NorESM_rcp45-Volc` = NorESM2-LM large ensemble with RCP4.5 forcing and volcanic eruptions included
-- `NorESM_rcp45-VolcConst` = NorESM2-LM large ensemble with RCP4.5 forcing and volcanic eruptions excluded
+**`ERF_DATASET`** and **`GMT_DATASET`**: Which forcing (ERF) and reference temperature (GMT) datasets to attribute against each other, one of each per run
+- Datasets are named by ID: `<product or experiment>[-<year>][-<variant>]`. The year, for observed datasets only, is the year the dataset's history ends; observed temperatures are cut off at that year.
+- Observed ERF datasets:
+    - `IGCC-<YYYY>` = IGCC historical ERFs, 1000 members.
+        - `<YYYY>` = `2022`, `2023`, `2024`, `2025`
+        - Note: `INCLUDE_SUB_VARS=y` needs `2024` or `2025`.
+    - `SSP_extension-2022-<SSP>` = observed history to 2022, then `<SSP>` to 2100, 841 members.
+        - `<SSP>` = `SSP119`, `SSP126`, `SSP245`, `SSP370`, `SSP434`, `SSP460`, `SSP534-over`, `SSP585`.
+        - Useful: (i) to produce constrained future projections, and (ii) to calculate GWI-CWGL hybrid headlines, which require those future projections to be available.
+        - Note: The historical ERFs are generated differently from the IGCC ERFs, so the two differ before 2022 too.
+- Observed GMT datasets:
+    - `HadCRUT-<YYYY>` = HadCRUT5 ensemble, 200 members.
+        - `<YYYY>` = `2022`, `2023`, `2024`, `2025`.
+    - `JK_multi-<YYYY>` = John Kennedy's multi-dataset ensemble, 100 members.
+        - `<YYYY>` = `2024`, `2025`.
+- Simulated datasets (climate model large ensembles) provide both an ERF and a GMT dataset, and pair only with themselves: set `ERF_DATASET` and `GMT_DATASET` to the same ID.
+    - `SMILE_ESM-<SSP>` = MPI-ESM1.2-LR: historical to 2014
+        - `<SSP>` = `SSP126`, `SSP245`, `SSP370`.
+        - A single ERF timeseries, and 50 GMT members.
+    - `FutureVolc_ESM-rcp45-<Volcanism>` = NorESM1-M (Bethke et al., 2017): historical to 2005, then RCP4.5 with.
+        - `<Volcanism>` = `Volc` or `VolcConst`
+            - `Volc` = stochastic future volcanic eruptions
+                - A single Anthropogenic ERF timeseries, and 60 Volcanism scenarios, each with a different volcanic forcing, with a 1-1 pairing between ERF and GMT members
+            - `VolcConst` = or constant background volcanic forcings
+                - A single ERF timeseries, and 60 GMT members, with no direct pairing needed between ERF and GMT members.
+- Any observed ERF dataset can be paired with any observed GMT dataset, as long as both cover the regressed years.
+- e.g. `ERF_DATASET=IGCC-2025` with `GMT_DATASET=HadCRUT-2025`, for the IGCC assessment.
+
+
+**`ERF_MEMBERS`** and **`GMT_MEMBERS`**: Which ensemble members of each dataset to use
+- `all` = sample from the whole ensemble (the usual setting)
+- `7` = a single member, by its label in the dataset
+- `{1..100}` = each member in turn, one `gwi.py` run each, sampling from the whole ensemble on the other side (set to `all`)
+- `paired_with_GMT_member` (for `ERF_MEMBERS`) or `paired_with_ERF_member` (for `GMT_MEMBERS`) = one run per member listed on the other side, with the ERF and GMT members of the same label. Required for `FutureVolc_ESM-rcp45-Volc`, which has one natural ERF member for each GMT member.
+- Members listed on both sides without a pairing keyword, pairing keywords on both sides, or a pairing keyword opposite `all`, stop the script with an error before anything runs.
+- Member labels are each dataset's own: HadCRUT `{1..200}`, JK_multi `{1..100}`, SMILE_ESM GMT `{0..49}`, FutureVolc_ESM `{1..60}`. IGCC and SSP_extension ERF members are labelled by configuration number, so use `all` for them.
+- See **Running the GWI for Individual Ensemble Members** for running the full calculation separately for each member.
+
+
+**`PICONTROL_DATASET`**: The piControl simulations that sample internal variability
+- `CMIP6` = the CMIP6 piControl simulations in `data/piControl/GMT/CMIP6/` (the only one for now)
 
 
 **`COMMITTED`**: Calculate committed warming (`n` or `start-end`)
@@ -206,7 +235,7 @@ The following parameters in `run-gwi.sh` control the analysis:
     - `n`: No committed warming calculation (default)
     - `2024-2300`: Hold ERF constant from 2024 to 2300
     - `end_regress-2300`: Hold ERF constant from the end of the regression period to 2300
-- The scenario name in the output is appended with `_const-ERF_<start>-<end>`.
+- The results folder name gains `_COMMITTED--<start>-<end>`.
 - Ensure `TRUNCATION` extends to at least the committed end year.
 - **Note**: The regression end year (`END_REGRESS`) cannot be later than the start of the committed warming period (otherwise the sections of the ERF timeseries and reference temperatures being regressed against each other will no longer correspond with each other). This mismatch will raise a `ValueError` to prevent incorrect calculations.
 
@@ -237,21 +266,6 @@ The following parameters in `run-gwi.sh` control the analysis:
 - `$(seq -s, 1950 2024)` = all years in a range (expensive)
 
 
-**`SPECIFY_ENSEMBLE_MEMBERS`**: Select specific ensemble members for Temperature and ERF.
-- Examples:
-    - `all` = use all available ensemble members (default)
-    - `1` = use specific ensemble member number 1 (for example)
-    - `{1..60}` = use specific member range from 1 to 60 (for example) (for specialized analyses)
-- Member numbers are the dataset's own, and start at 1: HadCRUT5 has 200 (`{1..200}`), the John Kennedy ensemble 100 (`{1..100}`).
-- See **Running the GWI for Individual Ensemble Members** for running the full calculation separately for each member.
-
-
-**`SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR`**: Specify which dataset the ensemble member selection (above) applies to.
-- `ERF` = Apply above selection to ERF only
-- `GMT` = Apply above selection to GMT only
-- `ERF,GMT` = apply above selection to both ERF and GMT; in this case, the same ensemble members will be paired for both sources; i.e. ensemble member i for ERF is paired with ensemble member i for GMT
-
-
 **`CALCULATE_PRIORS_OUTPUT`**: Also output the prior (pre-constraint) warming (`y` or `n`)
 - The priors depend only on the ERF ensemble and FaIR parameters, not on the reference temperatures. These are useful for understanding the prior distribution of warming before the observational constraint. All ensemble members are used for this, so note that, depending on the size of the GWI Monte Carlo ensemble, the output priors could be a different sample than used in the GWI calculation itself. The priors are saved in the same hierarchy as the GWI results, but in `results/priors/` (or `results_<tag>/priors/`).
 - `y` = calculate and save the priors (default in `gwi.py`)
@@ -273,7 +287,7 @@ The following parameters in `run-gwi.sh` control the analysis:
 
 The `run-gwi.sh` script:
 1. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
-2. For each combination, calls `gwi.py` with the specified CLI arguments (once per member, one after another, when `SPECIFY_ENSEMBLE_MEMBERS` lists several):
+2. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/prepare_ensemble_selections.sh`):
     - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
     - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
 
@@ -286,7 +300,7 @@ The truncation range defines the output timeseries extent, while the regression 
 
 - **Regression range** (`--regress-range`): Years used to calculate the regression coefficients between modeled responses and observations
   - Must be within both the observed temperature data range AND the forcing data range
-  - The code automatically clips this if you specify years outside available data
+  - If it isn't, the run stops with an error, rather than shortening the range
   
 - **Truncation range** (`--truncate`): Years included in the final output timeseries
   - Can extend beyond the regression range (e.g., for generating constrained future projections)
@@ -329,7 +343,7 @@ python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --p
 All three options are optional:
 - `--output-tag=<tag>` = the `OUTPUT_TAG` used in `run-gwi.sh`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
 - `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
-- `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `GMT-all_ERF-all` selection is always plotted in full.
+- `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `ERF-all_GMT-all` selection is always plotted in full.
 
 ###### 2.4.3.1 Aggregating Iteration Outputs
 For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
@@ -354,8 +368,8 @@ Results are organized hierarchically (`results_<tag>/`, `plots_<tag>/` and `logs
 global-warming-index/
 ├── results/
 │    └── {category}/
-│        └── SCENARIO--{scenario}/
-│            └── ENSEMBLE-MEMBER--{ensemble}/
+│        └── ERF--{erf}_GMT--{gmt}_PREINDUSTRIAL--{start}-{end}/
+│            └── ENSEMBLE-MEMBER--ERF-{member}_GMT-{member}/
 │                └── VARIABLES--{vars}/
 │                    └── REGRESSED-YEARS--{start}-{end}/
 │                        ├── GWI_results_timeseries_*.csv
@@ -366,10 +380,12 @@ global-warming-index/
 └── logs_direct/  one log per configuration (direct mode)
 ```
 
-where `{category}` is one of:
+The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-industrial period (`PREINDUSTRIAL--none` with no offset), plus `_COMMITTED--{start}-{end}` when `COMMITTED` is set; e.g. `ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900`. Below it, `ENSEMBLE-MEMBER--` gives the member selection, ERF first, e.g. `ERF-all_GMT-all` or `ERF-all_GMT-7`. Each file's name repeats these labels.
+
+`{category}` is one of:
 - `iterations/` = the results of each `gwi.py` run
 - `aggregated/` = those averaged across iterations by `combine_results_iterations.py`, plus the historical-only timeseries
-- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply
+- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply. `observations/` also holds `Obs_timeseries_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots.
 
 The CSVs are:
 - **Timeseries**: Annual values for all variables and percentiles
@@ -378,7 +394,7 @@ The CSVs are:
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 
-The figures in `plots/aggregated/` follow the same `SCENARIO--`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
+The figures in `plots/aggregated/` follow the same `ERF--…_GMT--…`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy, and their names carry the same labels. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
 - `Timeseries_*` = the attributed warming timeseries, with uncertainty, against the observations
 - `Rates_*` = warming rates (if `INCLUDE_RATE=y`)
 - `SPM2_BarPlot_*` = one per headline period: a bar chart of the attributed warming, in the style of IPCC AR6 WGI Figure SPM.2
@@ -408,7 +424,7 @@ Each climate model's source file is in its folder in `models/` (see [Climate Mod
 **From:** <URL or DOI, or who supplied it; date>
 ```
 
-Ensure that the data corresponding to your `SCENARIO` selection in `run-gwi.sh` is present in the `data/` folder before running, and that an appropriate data loader function has been written in `definitions.py`.
+To add a new year of an existing dataset (e.g. `HadCRUT-2026`), put its files in `data/observed-2026/GMT/HadCRUT/`, named as for earlier years (the version number in a HadCRUT file name may change), with a `SOURCE.md`: no code changes are needed. A new product needs its own loader in `src/input_datasets.py`; the comment at the top of that file describes the dataset IDs and folders.
 
 
 ##### 2.4.6. Climate Models
@@ -439,9 +455,9 @@ Both `gwi.py` and `combine_results_iterations.py` run as many worker processes a
 
 ##### 2.4.8. Running the GWI for Individual Ensemble Members
 
-Normally (`SPECIFY_ENSEMBLE_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
-1. Set `SPECIFY_ENSEMBLE_MEMBERS` to the members wanted (e.g. `{1..100}`), and `SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR` to the source they apply to (e.g. `GMT`).
+Normally (`ERF_MEMBERS=all`, `GMT_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
+1. Set the members wanted on one side (e.g. `GMT_MEMBERS={1..100}`), and `all` on the other; or, to pair ERF and GMT members one-to-one (as `FutureVolc_ESM-rcp45-Volc` needs), the pairing keyword on the other (e.g. `ERF_MEMBERS=paired_with_GMT_member`).
 2. Set `CALCULATE_PRIORS_OUTPUT=n` if only temperature members are selected, since the priors would be the same for every GMT member.
 3. Allow enough `WALLTIME`: each job runs `gwi.py` once for every member, one after another.
 
-Each member's results go to their own `ENSEMBLE-MEMBER--{selection}` folder (e.g. `ENSEMBLE-MEMBER--GMT-7_ERF-all`), and `combine_results_iterations.py` processes them all. As a full set of figures for every member would run to tens of thousands, it thins the figures of member-by-member selections by default (`--plot-every=10`): every member gets the figures for its final regressed range, and one member in ten also gets them for every tenth regression end year. The historical-only figures are drawn for every member.
+Each member's results go to their own `ENSEMBLE-MEMBER--{selection}` folder (e.g. `ENSEMBLE-MEMBER--ERF-all_GMT-7`), and `combine_results_iterations.py` processes them all. As a full set of figures for every member would run to tens of thousands, it thins the figures of member-by-member selections by default (`--plot-every=10`): every member gets the figures for its final regressed range, and one member in ten also gets them for every tenth regression end year. The historical-only figures are drawn for every member.
