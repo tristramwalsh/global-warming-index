@@ -1461,12 +1461,12 @@ if __name__ == "__main__":
             # Calculate SR15-definition warming for each var-ens combination
             # See SR15 Ch1 1.2.1
             # This previously looped over variables, creating an mp.Pool per
-            # variable and mapping defs.final_value_of_trend over a list of
-            # millions of individual 16-year series. The pickling of those
-            # series dominated the runtime; the vectorised form below fits
-            # every trend in one weighted sum. It agrees with the per-series
-            # function to ~1e-7 (float32 rounding) rather than exactly -- see
-            # final_value_of_trend_vectorised for why.
+            # variable and mapping a per-series np.polyfit function over a
+            # list of millions of individual 16-year series. The pickling of
+            # those series dominated the runtime; the vectorised form below
+            # fits every trend in one weighted sum. It agrees with the
+            # per-series fit to ~1e-7 (float32 rounding) rather than exactly
+            # -- see final_value_of_trend_vectorised for why.
             temp_Att_Results_SR15 = defs.final_value_of_trend_vectorised(
                 temp_Att_Results_SR15_recent)
 
@@ -1725,7 +1725,7 @@ if __name__ == "__main__":
             # hundred pools per member, each pickling millions of 10-year
             # series. That is why enabling rates used to cost days. The
             # vectorised form fits every trend in one weighted sum, and agrees
-            # with rate_func to ~1e-16.
+            # with the per-series np.polyfit fit to ~1e-16.
             temp_Rate_Results = defs.rate_func_vectorised(ten_slice)
 
             # Obtain statistics

@@ -165,28 +165,6 @@ def temp_signal(data, w, method):
     return np.convolve(data_padded, np.ones(w), 'valid') / w
 
 
-def final_value_of_trend(temp):
-    """Used for calculating the SR1.5 definition of present-day warming."""
-
-    """Pass a 15-year long timeseries to this function and it will compute
-    a linear trend through it, and return the final value of the trend. This
-    corresponds to the SR15 definition of warming, if the 'present-day' in
-    consideration is the final observable year; the SR15 definition would
-    extrapolate this linear trend for 15 more years and take the mid-value,
-    which is simply the end value of the first 15 years."""
-
-    """SR1.5 definition: 'warming at a given point in time is defined as the
-    global average temperatures for a 30-year period centred on that time,
-    extrapolating into the future if necessary'. For these calculations,
-    therefore, we take the final 15 years of the timeseries, take the trend
-    through it, and then warming is given by the value of the trend in the
-    final (present-day) year."""
-
-    time = np.arange(temp.shape[0])
-    fit = np.poly1d(np.polyfit(time, temp, 1))
-    return fit(time)[-1]
-
-
 def _trend_weights(n):
     """Ordinary-least-squares slope weights for a fixed x-axis of 0..n-1.
 
@@ -208,48 +186,51 @@ def _trend_weights(n):
 
 
 def final_value_of_trend_vectorised(array):
-    """Vectorised final_value_of_trend, applied along axis 0.
+    """The final value of a linear trend through each series, along axis 0:
+    used for the SR1.5 definition of present-day warming.
+
+    SR1.5 definition: 'warming at a given point in time is defined as the
+    global average temperatures for a 30-year period centred on that time,
+    extrapolating into the future if necessary'. For these calculations,
+    therefore, we take the final 15 years of the timeseries, take the trend
+    through it, and then warming is given by the value of the trend in the
+    final (present-day) year: extrapolating the trend for 15 more years and
+    taking the mid-value gives the same.
 
     Takes an array of shape (n, ...) and returns shape (...), fitting an
-    independent trend down axis 0 for every remaining position. This replaces
-    looping final_value_of_trend over each series individually.
+    independent trend down axis 0 for every remaining position.
 
     A least-squares line passes through (xbar, ybar), so its value at the final
     point is ybar + b * (x_last - xbar).
 
-    NOTE: this agrees with final_value_of_trend to ~1e-7 rather than exactly.
-    np.polyfit solves the least-squares problem via SVD (numpy.linalg.lstsq)
-    instead of the closed form above; the two are mathematically identical but
-    order the floating-point operations differently. The residual difference is
-    float32 rounding on values of order 1.
+    NOTE: this agrees with a per-series np.polyfit fit (the earlier
+    implementation) to ~1e-7 rather than exactly. np.polyfit solves the
+    least-squares problem via SVD (numpy.linalg.lstsq) instead of the closed
+    form above; the two are mathematically identical but order the
+    floating-point operations differently. The residual difference is float32
+    rounding on values of order 1.
     """
     w, dx = _trend_weights(array.shape[0])
     return array.mean(axis=0) + np.tensordot(w, array, axes=(0, 0)) * dx
 
 
-def rate_func(array):
-    # Instead of passing years array, just set the start year for the slice
-    # to zero
-    times = np.arange(array.shape[0])
-    fit = np.polyfit(x=times, y=array, deg=1)
-    return fit[0]
-
-
 def rate_func_vectorised(array):
-    """Vectorised rate_func, applied along axis 0.
+    """The slope of a linear trend through each series, along axis 0: used
+    for the AR6 definition of the warming rate.
 
     Takes an array of shape (n, ...) and returns shape (...), fitting an
     independent trend down axis 0 for every remaining position and returning
-    its slope. This replaces looping rate_func over each series individually.
+    its slope.
 
     The slope is the dot product of the precomputed weights with the data --
     see _trend_weights for the derivation.
 
-    NOTE: this agrees with rate_func to ~1e-16, i.e. float64 machine epsilon,
-    which is far tighter than final_value_of_trend_vectorised manages. The
-    slope is a single weighted sum, whereas the trend endpoint additionally
-    reconstructs the intercept, and that extra arithmetic on float32 inputs is
-    what costs the latter its precision.
+    NOTE: this agrees with a per-series np.polyfit fit (the earlier
+    implementation) to ~1e-16, i.e. float64 machine epsilon, which is far
+    tighter than final_value_of_trend_vectorised manages. The slope is a
+    single weighted sum, whereas the trend endpoint additionally reconstructs
+    the intercept, and that extra arithmetic on float32 inputs is what costs
+    the latter its precision.
     """
     w, _ = _trend_weights(array.shape[0])
     return np.tensordot(w, array, axes=(0, 0))

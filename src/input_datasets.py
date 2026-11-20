@@ -826,41 +826,6 @@ def truncate_to_end_year(df_temp_Obs, metadata, file_name):
     return df_temp_Obs.loc[:end_obs]
 
 
-# def load_PiC_Old(n_yrs):
-#     """Load piControl data from Stuart's ERF datasets."""
-#     here = Path(__file__).parent
-#     file_PiC = here / '../data/piControl/piControl.csv'
-
-#     df_temp_PiC = pd.read_csv(file_PiC
-#                           ).rename(columns={'year': 'Year'}
-#                                    ).set_index('Year')
-#     # model_names = list(set(['_'.join(ens.split('_')[:1])
-#     #                         for ens in list(df_temp_PiC)]))
-
-#     temp_IV_Group = {}
-
-#     for ens in list(df_temp_PiC):
-#         # pi Control data located all over the place in csv; the following
-#         # lines strip the NaN values, and limits slices to the same length as
-#         # observed temperatures
-#         temp = df_temp_PiC[ens].dropna().to_numpy()[:n_yrs]
-
-#         # Remove pre-industrial mean period; this is done because the models
-#         # use different "zero" temperatures (eg 0, 100, 287, etc).
-#         # An alternative approach would be to simply subtract the first value
-#         # to start all models on 0; the removal of the first 50 years
-#         # is used here in case the models don't start in equilibrium (and
-#         # jump up by x degrees at the start, for example), and the baseline
-#         # period is just defined as the same as for the observation PI
-#         # period.
-#         temp -= temp[:start_pi-end_pi+1].mean()
-
-#         if len(temp) == n_yrs:
-#             temp_IV_Group[ens] = temp
-
-#     return pd.DataFrame(temp_IV_Group)
-
-
 def preindustrial_baseline(df_temp, start_pi, end_pi):
     """Remove the pre-industrial baseline from temperatures.
 
