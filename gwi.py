@@ -13,7 +13,12 @@ import pandas as pd
 
 # import scipy.stats as ss
 
-import src.definitions as defs
+import src.attribution as attribution
+import src.compute_resources as compute_resources
+import src.results_layout as results_layout
+import src.run_log as run_log
+import src.variables as variables
+import src.warming_definitions as warming_definitions
 import src.input_datasets as datasets
 
 import models.AR5_IR.AR5_IR as AR5_IR
@@ -34,7 +39,7 @@ def GWI_faster(
     allocated array. That is how the parallel run avoids copying: `out` is
     one parameterisation's slice of a single array shared by all the worker
     processes, so nothing has to be handed back. See
-    defs.shared_results_array.
+    compute_resources.shared_results_array.
     """
     """Parallelise over FaIR parameterisations, exploit vectorisation of
     FaIR model by running all forcings at once through it, and separate
@@ -69,7 +74,7 @@ def GWI_faster(
     # regression. If we aren't directly regressing 'Ant', then we need to
     # include it in the extra_vars list. If we are not, then we need to include
     # 'Ant' in the variables list.
-    extra_vars = defs.extra_vars(regress_vars)
+    extra_vars = variables.extra_vars(regress_vars)
 
     # Create empty output array, with dimensions: (years, variables, samples)
     # We want to output all variables in var_list_ERF (which might include
@@ -81,7 +86,7 @@ def GWI_faster(
     # NOTE: extra_vars should not include variables already in var_list_ERF,
     # as extra_vars are the higher-level aggregates above the regression vars
     # and the residual. The check here is just extra safety.
-    output_vars = defs.attribution_output_vars(df_forc, regress_vars)
+    output_vars = attribution.attribution_output_vars(df_forc, regress_vars)
 
     shape = (end_trunc - start_trunc + 1,  # number of years (after truncation)
              len(output_vars),  # variables dimension
@@ -238,7 +243,7 @@ def GWI_faster(
         temp_Mod_trunc_yrs_ens = temp_Mod_array_all_years_ens[yr_mask, :]
 
         # Get the mapping from variable to regression variable
-        scaling_map = defs.map_var_to_regression_aggregate(
+        scaling_map = variables.map_var_to_regression_aggregate(
             var_list_ERF, regress_vars)
 
         # Now combine the coeffieicnts with the truncated model outputs:
@@ -612,9 +617,9 @@ if __name__ == "__main__":
         inc_reg_const = True
 
     if not inc_pi_offset and not inc_reg_const:
-        defs.note('Both the preindustrial offset and the regression constant '
-                  'are disabled. Without these centring factors the '
-                  'regression attribution may behave unexpectedly.')
+        run_log.note('Both the preindustrial offset and the regression '
+                     'constant are disabled. Without these centring factors '
+                     'the regression attribution may behave unexpectedly.')
 
     # Define the regression year range for the temperature attribution.
     # This is the range over which the regression coefficients are calculated.
@@ -773,7 +778,7 @@ if __name__ == "__main__":
             headline_years = input('Years for headlines: ')
         else:
             headline_years = None
-    headline_years = defs.check_headlines(
+    headline_years = warming_definitions.check_headlines(
         headline_years, end_regress, end_trunc)
 
 
@@ -783,9 +788,9 @@ if __name__ == "__main__":
     else:
         regress_vars = sorted(['GHG', 'Nat', 'OHF'])
 
-    # Specify the input datasets, by ID (see DATASET SELECTION in
-    # src/definitions.py): the ERFs, the reference temperatures (GMT), and the
-    # piControl simulations that sample internal variability.
+    # Specify the input datasets, by ID (see INPUT DATASETS in
+    # src/input_datasets.py): the ERFs, the reference temperatures (GMT), and
+    # the piControl simulations that sample internal variability.
     #   e.g. --erf-dataset=IGCC-2025 --gmt-dataset=HadCRUT-2025
     #   e.g. --erf-dataset=SSP_extension-2022-SSP245 --gmt-dataset=JK_multi-2025
     #   e.g. --erf-dataset=SMILE_ESM-SSP245 --gmt-dataset=SMILE_ESM-SSP245
@@ -864,7 +869,7 @@ if __name__ == "__main__":
     )
 
     # Create the results folders
-    results_root = defs.tagged_folder('results', output_tag)
+    results_root = results_layout.tagged_folder('results', output_tag)
     results_folder = f'{results_root}/iterations/'
     if not os.path.exists(f'{results_folder}{output_path}'):
         os.makedirs(f'{results_folder}{output_path}',
@@ -910,18 +915,18 @@ if __name__ == "__main__":
     # regression).
     if start_trunc < forc_Yrs_min:
         start_trunc = forc_Yrs_min
-        defs.note('Truncation start year was before the ERF data range, so '
-                  f'it was moved to the ERF minimum: {start_trunc}.')
+        run_log.note('Truncation start year was before the ERF data range, so '
+                     f'it was moved to the ERF minimum: {start_trunc}.')
     if end_trunc > forc_Yrs_max:
         end_trunc = forc_Yrs_max
-        defs.note('Truncation end year was after the ERF data range, so it '
-                  f'was moved to the ERF maximum: {end_trunc}.')
+        run_log.note('Truncation end year was after the ERF data range, so it '
+                     f'was moved to the ERF maximum: {end_trunc}.')
     if year_committed_to and (year_committed_to != forc_Yrs_max):
-        defs.note('The ERF data end year does not match the committed '
-                  'warming year.')
+        run_log.note('The ERF data end year does not match the committed '
+                     'warming year.')
     if year_committed_to and (end_trunc < year_committed_to):
-        defs.note(f'Truncation end year {end_trunc} is before the committed '
-                  f'warming end year {year_committed_to}.')
+        run_log.note(f'Truncation end year {end_trunc} is before the '
+                     f'committed warming end year {year_committed_to}.')
 
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
@@ -967,9 +972,9 @@ if __name__ == "__main__":
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
         f'ENSEMBLE-SIZE--{df_temp_Obs.shape[1]}.csv')
 
-    defs.log_slurm_configuration()
+    compute_resources.log_slurm_configuration()
 
-    defs.log_section('Run configuration')
+    run_log.log_section('Run configuration')
     print(f'Regressed variables: {regress_vars}')
     print(f'ERF dataset: {erf_id}')
     print(f'GMT dataset: {gmt_id}')
@@ -1070,9 +1075,9 @@ if __name__ == "__main__":
         np.random.seed(seed)
 
     # 1. Select random samples of the forcing data
-    defs.log_notes()
+    run_log.log_notes()
 
-    defs.log_section('Ensemble sampling')
+    run_log.log_section('Ensemble sampling')
     print('Forcing ensemble all: ' +
           f'{len(df_forc.columns.get_level_values("ensemble").unique())}')
     # Select a random subset of the ensemble names from the forcing data.
@@ -1160,14 +1165,14 @@ if __name__ == "__main__":
     # collect. Sharing is what keeps the memory down -- returning a block
     # means copying it out of the worker and rebuilding it in the parent --
     # and it is also why nothing needs joining together afterwards. See
-    # defs.shared_results_array for the full explanation.
+    # compute_resources.shared_results_array for the full explanation.
     #
     # The array's shape is worked out here, before the workers exist, from
     # the same inputs the emulations are given.
-    vars_list = defs.attribution_output_vars(forc_subset, regress_vars)
-    n_per_model = defs.ensemble_members_per_model(
+    vars_list = attribution.attribution_output_vars(forc_subset, regress_vars)
+    n_per_model = attribution.ensemble_members_per_model(
         forc_subset, df_temp_Obs_subset, df_temp_PiC_subset)
-    temp_Att_Results = defs.shared_results_array(
+    temp_Att_Results = compute_resources.shared_results_array(
         shape=(end_trunc - start_trunc + 1,     # years, after truncation
                len(vars_list),                  # attributed warming variables
                n_per_model * len(models)),      # ensemble members
@@ -1195,13 +1200,13 @@ if __name__ == "__main__":
     emulation_models = models
     emulation_results = temp_Att_Results
 
-    defs.log_section('Timeseries')
+    run_log.log_section('Timeseries')
     print('Calculating GWI (parallelised)', end=' ')
     T1a = dt.datetime.now()
     # 'fork' is what lets the workers inherit the shared array. It is already
     # the default on Linux; naming it here means this keeps working if that
     # default ever changes.
-    with ProcessPoolExecutor(defs.n_workers(),
+    with ProcessPoolExecutor(compute_resources.n_workers(),
                              mp_context=mp.get_context('fork')) as p:
         # list() is what makes any failure in a worker surface here.
         list(p.map(emulate_one_model, range(len(models))))
@@ -1246,7 +1251,7 @@ if __name__ == "__main__":
     # Set new variable selection for priors calculation
     prior_vars = regress_vars.copy()
     # Add aggregate variables for prior calculation
-    prior_vars.extend(defs.extra_vars(regress_vars))
+    prior_vars.extend(variables.extra_vars(regress_vars))
     # Remove 'Res' from prior vars if present (it is added in extra_vars)
     if 'Res' in prior_vars:
         prior_vars.remove('Res')
@@ -1273,10 +1278,10 @@ if __name__ == "__main__":
         # scheduler's time limit. Executor.map returns a lazy iterator rather
         # than a list, so it is consumed into one here to keep
         # np.concatenate's input unchanged.
-        with ProcessPoolExecutor(defs.n_workers()) as p:
+        with ProcessPoolExecutor(compute_resources.n_workers()) as p:
             # print('Partialising Function')
             partial_priors = functools.partial(
-                defs.model_prior_warming,
+                attribution.model_prior_warming,
                 df_params=params_subset,
                 df_forc=df_forc_priors)
             results = list(p.map(partial_priors, models))
@@ -1336,7 +1341,7 @@ if __name__ == "__main__":
 
     # TIMESERIES RESULTS ######################################################
     print('Calculating percentiles for GWI', end=' ')
-    gwi_timeseries_array = defs.percentile_threaded(
+    gwi_timeseries_array = compute_resources.percentile_threaded(
         temp_Att_Results, sigmas_all, axis=2)
     dict_Results = {
         (var, sigma):
@@ -1355,7 +1360,7 @@ if __name__ == "__main__":
 
     if calculate_priors_output:
         print('Calculating percentiles for priors', end=' ')
-        priors_timeseries_array = defs.percentile_threaded(
+        priors_timeseries_array = compute_resources.percentile_threaded(
             temp_Priors, sigmas_all, axis=2)
         dict_Results_priors = {
             (var, sigma):
@@ -1415,9 +1420,9 @@ if __name__ == "__main__":
     # The preferred range dependes on usage context, and can be changed later.
 
     if headline_toggles:
-        defs.log_section(f'Headlines ({headline_years})')
+        run_log.log_section(f'Headlines ({headline_years})')
 
-        hl_years = defs.generate_headline_years(
+        hl_years = warming_definitions.generate_headline_years(
             headline_years, end_regress, end_trunc)
 
         dfs = []
@@ -1454,7 +1459,7 @@ if __name__ == "__main__":
                     'to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-            years_SR15 = defs.contiguous_slice(
+            years_SR15 = warming_definitions.contiguous_slice(
                 (year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
 
@@ -1467,11 +1472,12 @@ if __name__ == "__main__":
             # fits every trend in one weighted sum. It agrees with the
             # per-series fit to ~1e-7 (float32 rounding) rather than exactly
             # -- see final_value_of_trend_vectorised for why.
-            temp_Att_Results_SR15 = defs.final_value_of_trend_vectorised(
-                temp_Att_Results_SR15_recent)
+            temp_Att_Results_SR15 = (
+                warming_definitions.final_value_of_trend_vectorised(
+                    temp_Att_Results_SR15_recent))
 
             # Obtain statistics
-            gwi_headline_array = defs.percentile_threaded(
+            gwi_headline_array = compute_resources.percentile_threaded(
                 temp_Att_Results_SR15, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1509,13 +1515,13 @@ if __name__ == "__main__":
                     f'AR6 definition requires the years {year-9} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-            recent_years = defs.contiguous_slice(
+            recent_years = warming_definitions.contiguous_slice(
                 (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             temp_Att_Results_AR6 = \
                 temp_Att_Results[recent_years, :, :].mean(axis=0)
 
             # Obtain statistics
-            gwi_headline_array = defs.percentile_threaded(
+            gwi_headline_array = compute_resources.percentile_threaded(
                 temp_Att_Results_AR6, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1553,12 +1559,12 @@ if __name__ == "__main__":
             else:
                 print('Calculating CGWL-definition temps', end=' ')
 
-                recent_years = defs.contiguous_slice(
+                recent_years = warming_definitions.contiguous_slice(
                     (year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
                 temp_Att_Results_CGWL = \
                     temp_Att_Results[recent_years, :, :].mean(axis=0)
                 # Obtain statistics
-                gwi_headline_array = defs.percentile_threaded(
+                gwi_headline_array = compute_resources.percentile_threaded(
                     temp_Att_Results_CGWL, sigmas_all, axis=1)
                 dict_Results = {
                     (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
@@ -1582,7 +1588,7 @@ if __name__ == "__main__":
 
     # OBSERVATIONS HEADLINE RESULTS ###########################################
     if headline_toggles:
-        defs.log_section(f'Headlines for observations ({headline_years})')
+        run_log.log_section(f'Headlines for observations ({headline_years})')
 
         dfs_obs = []
 
@@ -1632,8 +1638,9 @@ if __name__ == "__main__":
                     # Vectorised for consistency with the attributed SR15
                     # temps above: both paths must use the same estimator, or
                     # they would disagree at the ~1e-7 rounding level.
-                    results = defs.final_value_of_trend_vectorised(
-                        temp_Obs_SR15_recent)
+                    results = (
+                        warming_definitions.final_value_of_trend_vectorised(
+                            temp_Obs_SR15_recent))
 
                     obs_headline_array = np.percentile(results, sigmas_all)
 
@@ -1710,11 +1717,11 @@ if __name__ == "__main__":
     # RATE: AR6 DEFINITION
     if rate_toggle:
         T7 = dt.datetime.now()
-        defs.log_section('Warming rates')
+        run_log.log_section('Warming rates')
         print('Calculating AR6-definition attributed warming rates', end=' ')
         dfs_rates = []
         for year in np.arange(1950, end_trunc+1):
-            recent_years = defs.contiguous_slice(
+            recent_years = warming_definitions.contiguous_slice(
                 (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
             ten_slice = temp_Att_Results[recent_years, :, :]
 
@@ -1726,10 +1733,11 @@ if __name__ == "__main__":
             # series. That is why enabling rates used to cost days. The
             # vectorised form fits every trend in one weighted sum, and agrees
             # with the per-series np.polyfit fit to ~1e-16.
-            temp_Rate_Results = defs.rate_func_vectorised(ten_slice)
+            temp_Rate_Results = warming_definitions.rate_func_vectorised(
+                ten_slice)
 
             # Obtain statistics
-            gwi_rate_array = defs.percentile_threaded(
+            gwi_rate_array = compute_resources.percentile_threaded(
                 temp_Rate_Results, sigmas_all, axis=1)
             dict_Results = {
                 (var, sigma):
@@ -1750,10 +1758,10 @@ if __name__ == "__main__":
 
     # What the run actually cost, to sit alongside the 'Memory usage
     # anticipated' block printed when the results array was made.
-    defs.log_section('Memory usage recorded')
-    defs.report_memory_used(temp_Att_Results.nbytes)
+    run_log.log_section('Memory usage recorded')
+    compute_resources.report_memory_used(temp_Att_Results.nbytes)
 
     time_omega = dt.datetime.now()
     total_time = time_omega - time_alpha
-    defs.log_section('Total')
+    run_log.log_section('Total')
     print(f'Total time taken: {total_time}')

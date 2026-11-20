@@ -12,7 +12,10 @@ import matplotlib.pyplot as plt
 from highlight_text import ax_text
 from PIL import Image
 import src.graphing as gr
-import src.definitions as defs
+import src.compute_resources as compute_resources
+import src.results_layout as results_layout
+import src.variables as variables
+import src.warming_definitions as warming_definitions
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 import functools
@@ -55,8 +58,8 @@ def set_output_folders(output_tag=None):
     global PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER
     global PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER, PICONTROL_FOLDER
 
-    results_root = defs.tagged_folder('results', output_tag)
-    PLOT_FOLDER = defs.tagged_folder('plots', output_tag) + '/'
+    results_root = results_layout.tagged_folder('results', output_tag)
+    PLOT_FOLDER = results_layout.tagged_folder('plots', output_tag) + '/'
     AGGREGATED_FOLDER = f'{results_root}/aggregated'
     ITERATIONS_FOLDER = f'{results_root}/iterations'
     PRIORS_FOLDER = f'{results_root}/priors'
@@ -201,7 +204,7 @@ def run_in_pool(func, tasks):
     this parent process the kernel kills, the shell prints 'Killed' and there
     is nothing left to report anything.)
     """
-    n_workers = defs.n_workers()
+    n_workers = compute_resources.n_workers()
     chunksize = max(1, int(np.ceil(len(tasks) / (4 * n_workers))))
     # Frozen, the objects already in this process -- all the loaded results
     # -- are left out of the garbage collections the workers make after each
@@ -333,10 +336,11 @@ def calculate_iteration_averages():
 
                 regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
 
-                if defs.check_steps(regressed_years_vars)['check_bool']:
+                steps = warming_definitions.check_steps(regressed_years_vars)
+                if steps['check_bool']:
                     print(f'  {ensemble_selection} {regressed_vars}: '
                           "all regressed years "
-                          f"{defs.check_steps(regressed_years_vars)['range']}")
+                          f"{steps['range']}")
 
                 for regressed_years in regressed_years_vars:
                     range_dirs.append(
@@ -1093,7 +1097,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
 
     # Define major variables (for plumes)
     major_vars = reg_vars.split('-')
-    major_vars.extend(defs.extra_vars(major_vars))
+    major_vars.extend(variables.extra_vars(major_vars))
     plume_vars = major_vars
 
     # Define linestyles for all variables
@@ -1342,7 +1346,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
     # Compare only the major variables, as including the sub-variables makes
     # the spread hard to read.
     major_vars = reg_vars.split('-')
-    major_vars.extend(defs.extra_vars(major_vars))
+    major_vars.extend(variables.extra_vars(major_vars))
     plot_vars = [v for v in major_vars
                  if v in df_avg.columns.get_level_values(0)]
 
@@ -1465,12 +1469,12 @@ def figure_spm2(
 
         # Panel 3: Components
         vars_panel3 = []
-        if defs.SUB_VAR_MAPPING:
+        if variables.SUB_VAR_MAPPING:
             for group in ['GHG', 'OHF', 'Nat']:
-                if group in defs.SUB_VAR_MAPPING:
+                if group in variables.SUB_VAR_MAPPING:
                     # Identify available variables in this group
                     group_vars = [
-                        sub_var for sub_var in defs.SUB_VAR_MAPPING[group]
+                        sub_var for sub_var in variables.SUB_VAR_MAPPING[group]
                         if headline_var_available(
                             df_headlines, period, sub_var, context)]
                     # Sort by median value (largest to smallest)
@@ -1521,19 +1525,19 @@ def figure_spm2(
         # Panel 1: Observed
         if df_obs_headlines is not None and period in df_obs_headlines.index:
             gr.plot_spm2_panel(axes[0], df_obs_headlines, period, ['Obs'],
-                               params['colours'], defs.VAR_NAMES,
+                               params['colours'], variables.VAR_NAMES,
                                ylim, show_ylabel=True, show_yticklabels=True,
                                xlim=(-1.5, 1.5))
 
         # Panel 2: Aggregated
         gr.plot_spm2_panel(axes[1], df_headlines, period, vars_panel2,
-                           params['colours'], defs.VAR_NAMES,
+                           params['colours'], variables.VAR_NAMES,
                            ylim, show_ylabel=False, show_yticklabels=False)
 
         # Panel 3: Components
         if vars_panel3 and len(axes) > 2:
             gr.plot_spm2_panel(axes[2], df_headlines, period, vars_panel3,
-                               params['colours'], defs.VAR_NAMES,
+                               params['colours'], variables.VAR_NAMES,
                                ylim, show_ylabel=False,
                                show_yticklabels=False)
 
@@ -1671,18 +1675,18 @@ def figure_waterfall(
 
         # Define the structure of the waterfall
         # GHG Group
-        add_components(defs.SUB_VAR_MAPPING['GHG'])
+        add_components(variables.SUB_VAR_MAPPING['GHG'])
         plot_items.append({'var': 'GHG', 'type': 'subtotal'})
 
         # OHF Group
-        add_components(defs.SUB_VAR_MAPPING['OHF'])
+        add_components(variables.SUB_VAR_MAPPING['OHF'])
         plot_items.append({'var': 'OHF', 'type': 'subtotal'})
 
         # Ant Total
         plot_items.append({'var': 'Ant', 'type': 'total'})
 
         # Nat Group
-        add_components(defs.SUB_VAR_MAPPING['Nat'])
+        add_components(variables.SUB_VAR_MAPPING['Nat'])
         plot_items.append({'var': 'Nat', 'type': 'subtotal'})
 
         # Tot Total
@@ -1731,7 +1735,7 @@ def figure_waterfall(
         # Iterate and Plot
         for item in plot_items:
             var = item['var']
-            label = defs.VAR_NAMES.get(var, var)
+            label = variables.VAR_NAMES.get(var, var)
             item_type = item['type']
 
             # Get Data
@@ -1805,8 +1809,8 @@ def figure_waterfall(
 
                 if var == 'Ant':
                     s = (
-                        f"Sum of <{defs.VAR_NAMES['GHG']}> and "
-                        f"<{defs.VAR_NAMES['OHF']}>"
+                        f"Sum of <{variables.VAR_NAMES['GHG']}> and "
+                        f"<{variables.VAR_NAMES['OHF']}>"
                     )
                     highlight_textprops = [
                         {"color": params['colours']['GHG'],
@@ -1816,8 +1820,8 @@ def figure_waterfall(
                     ]
                 elif var == 'Tot':
                     s = (
-                        f"Sum of <{defs.VAR_NAMES['Ant']}> and "
-                        f"<{defs.VAR_NAMES['Nat']}>"
+                        f"Sum of <{variables.VAR_NAMES['Ant']}> and "
+                        f"<{variables.VAR_NAMES['Nat']}>"
                     )
                     highlight_textprops = [
                         {"color": params['colours']['Ant'],
@@ -1827,8 +1831,8 @@ def figure_waterfall(
                     ]
                 elif var == 'Obs':
                     s = (
-                        f"Sum of <{defs.VAR_NAMES['Tot']}> and "
-                        f"<{defs.VAR_NAMES['Res']}>"
+                        f"Sum of <{variables.VAR_NAMES['Tot']}> and "
+                        f"<{variables.VAR_NAMES['Res']}>"
                     )
                     highlight_textprops = [
                         {"color": params['colours']['Tot'],
@@ -1987,7 +1991,7 @@ def figure_priors_timeseries(
 
     # Define major variables (for plumes)
     plume_vars = [v for v in plot_vars_priors
-                  if v in defs.SUB_VAR_MAPPING or v == 'Res']
+                  if v in variables.SUB_VAR_MAPPING or v == 'Res']
 
     # Define linestyles for all variables
     var_linestyles = gr.get_dynamic_linestyles(plot_vars_priors)
@@ -2064,7 +2068,7 @@ def figure_erf_timeseries(
 
     # Define major variables (for plumes)
     plume_vars = [v for v in plot_vars_erf
-                  if v in defs.SUB_VAR_MAPPING or v == 'Res']
+                  if v in variables.SUB_VAR_MAPPING or v == 'Res']
 
     # Define linestyles for all variables
     var_linestyles = gr.get_dynamic_linestyles(plot_vars_erf)
@@ -2155,7 +2159,7 @@ def figure_picontrol(scen, ens, obs_dfs):
     # the observations, minus its 30-year smoothed signal
     df_temp_Obs = obs_dfs[scen][ens]['timeseries']
     obs_median = df_temp_Obs.quantile(q=0.5, axis=1)
-    temp_Obs_IV = obs_median - defs.temp_signal(
+    temp_Obs_IV = obs_median - warming_definitions.temp_signal(
         obs_median.to_numpy(), 30, 'extrapolate')
 
     # Running-mean windows (years), and the likely and very likely ranges
@@ -2385,7 +2389,7 @@ def figure_historical_only_timeseries(
 
         # Define major variables (for plumes)
         plume_vars = [v for v in plot_vars
-                      if v in defs.SUB_VAR_MAPPING or v == 'Res']
+                      if v in variables.SUB_VAR_MAPPING or v == 'Res']
 
         # Define linestyles for all variables
         var_linestyles = gr.get_dynamic_linestyles(plot_vars)
@@ -3178,9 +3182,9 @@ def overarching_base_result_plotter(
                 reg_ranges_all = params['reg_ranges_all']
 
                 # Check if all years are available
-                if defs.check_steps(reg_ranges_all)['check_bool']:
-                    print('      All years available for: ',
-                          defs.check_steps(reg_ranges_all)['range'])
+                steps = warming_definitions.check_steps(reg_ranges_all)
+                if steps['check_bool']:
+                    print('      All years available for: ', steps['range'])
 
                 # The regressed ranges to draw the base figures below for,
                 # chosen once here for all of them (see ranges_to_plot).
@@ -3216,7 +3220,8 @@ def overarching_base_result_plotter(
                           '1 figure per regressed range, for '
                           f'{len(valid_ranges_ts)} regressed range/s '
                           f'ending {describe_ranges(valid_ranges_ts)}; '
-                          f'in parallel on {defs.n_workers()} worker/s')
+                          'in parallel on '
+                          f'{compute_resources.n_workers()} worker/s')
                     plot_names = run_in_pool(
                         functools.partial(
                             figure_timeseries,
@@ -3239,7 +3244,8 @@ def overarching_base_result_plotter(
                           '1 figure per regressed range, for '
                           f'{len(valid_ranges_rates)} regressed range/s '
                           f'ending {describe_ranges(valid_ranges_rates)}; '
-                          f'in parallel on {defs.n_workers()} worker/s')
+                          'in parallel on '
+                          f'{compute_resources.n_workers()} worker/s')
                     run_in_pool(
                         functools.partial(
                             figure_rates,
@@ -3278,7 +3284,8 @@ def overarching_base_result_plotter(
                           'than one iteration, for '
                           f'{len(valid_ranges_ts)} regressed range/s '
                           f'ending {describe_ranges(valid_ranges_ts)}; '
-                          f'in parallel on {defs.n_workers()} worker/s')
+                          'in parallel on '
+                          f'{compute_resources.n_workers()} worker/s')
                     run_in_pool(
                         functools.partial(
                             figure_iteration_comparison,
@@ -3341,7 +3348,7 @@ def overarching_base_result_plotter(
                           'ending '
                           f'{describe_ranges(valid_ranges_headlines)}; in '
                           'parallel over the ranges on '
-                          f'{defs.n_workers()} worker/s')
+                          f'{compute_resources.n_workers()} worker/s')
                     run_in_pool(
                         functools.partial(
                             figure_spm2,
@@ -3361,7 +3368,7 @@ def overarching_base_result_plotter(
                           'ending '
                           f'{describe_ranges(valid_ranges_headlines)}; in '
                           'parallel over the ranges on '
-                          f'{defs.n_workers()} worker/s')
+                          f'{compute_resources.n_workers()} worker/s')
                     run_in_pool(
                         functools.partial(
                             figure_waterfall,

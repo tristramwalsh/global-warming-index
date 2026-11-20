@@ -13,7 +13,9 @@ import pandas as pd
 import pymagicc
 import xarray as xr
 
-from src.definitions import SUB_VAR_MAPPING, moving_average, note
+import src.run_log as run_log
+import src.variables as variables
+import src.warming_definitions as warming_definitions
 
 
 # INPUT DATASETS ##############################################################
@@ -194,7 +196,7 @@ def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
     regress_vars: e.g. ['GHG', 'Nat', 'OHF']
     member: 'all', or one member's label, e.g. 'ens100' (IGCC) or '7'
     include_sub_vars: also keep the variables' sub-variables, e.g. co2 for
-        GHG (see SUB_VAR_MAPPING)
+        GHG (see variables.SUB_VAR_MAPPING)
 
     Returns a DataFrame indexed by year, with columns (variable, ensemble).
     """
@@ -227,7 +229,8 @@ def extract_ERF_variables(df_ERF, regress_vars, include_sub_vars=False):
 
     df_ERF: columns (variable, ensemble), as from the load_ERF_* loaders
     regress_vars: e.g. ['GHG', 'Nat', 'OHF']
-    include_sub_vars: also keep their sub-variables (see SUB_VAR_MAPPING)
+    include_sub_vars: also keep their sub-variables (see
+        variables.SUB_VAR_MAPPING)
     """
     # Check that the regress_vars are present in the dataframe
     available_vars = df_ERF.columns.get_level_values('variable').unique()
@@ -245,8 +248,8 @@ def extract_ERF_variables(df_ERF, regress_vars, include_sub_vars=False):
         # Helper to recursively find all sub-variables
         def get_all_sub_vars(var):
             sub_vars = []
-            if var in SUB_VAR_MAPPING:
-                direct_subs = SUB_VAR_MAPPING[var]
+            if var in variables.SUB_VAR_MAPPING:
+                direct_subs = variables.SUB_VAR_MAPPING[var]
                 sub_vars.extend(direct_subs)
                 for sv in direct_subs:
                     sub_vars.extend(get_all_sub_vars(sv))
@@ -326,7 +329,8 @@ def extend_ERF_to_committed_year(df_ERF, year_committed_to,
     return df_ERF
 
 
-def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
+def aggregate_missing_forcings(df_ERF,
+                               SUB_VAR_MAPPING=variables.SUB_VAR_MAPPING):
     """Add any aggregate variable that is missing but whose sub-variables
     are all present, e.g. GHG from co2, ch4, n2o and halogen.
 
@@ -356,9 +360,9 @@ def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
                 missing_sub_vars = set(sub_vars) - set(present_sub_vars)
 
                 if missing_sub_vars:
-                    note(f'Missing sub-variables for {agg_var}: '
-                         f'{missing_sub_vars}. Aggregating only the '
-                         f'variables present: {present_sub_vars}.')
+                    run_log.note(f'Missing sub-variables for {agg_var}: '
+                                 f'{missing_sub_vars}. Aggregating only the '
+                                 f'variables present: {present_sub_vars}.')
                 else:
                     # Sum across the columns (variables) for each row.
                     df_ERF[agg_var] = df_ERF[present_sub_vars].sum(axis=1)
@@ -426,7 +430,7 @@ def load_ERF_IGCC(metadata, include_sub_vars=False):
     df_ERF = df_ERF.rename(columns=RENAME_MAP)
 
     # Calculate aggregates if missing (works both with/without sub-var toggle)
-    df_ERF = aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING)
+    df_ERF = aggregate_missing_forcings(df_ERF, variables.SUB_VAR_MAPPING)
 
     # move the multi-index 'ensemble' level to a column,
     # and then set the 'ensemble' column to second column level
@@ -948,8 +952,8 @@ def filter_PiControl(df, timeframes):
         # allow the ensemble to be slightly broader, to reasonably allow for a
         # wider range of behaviours than we have so far seen in the real world.
         temp = df[ens].to_numpy()
-        temp_ma_3 = moving_average(temp, 3)
-        temp_ma_30 = moving_average(temp, 30)
+        temp_ma_3 = warming_definitions.moving_average(temp, 3)
+        temp_ma_30 = warming_definitions.moving_average(temp, 30)
         _cond = (
                  (max(temp_ma_3) < 0.3 and min(temp_ma_3) > -0.3)
                  and ((max(temp_ma_3) - min(temp_ma_3)) > 0.06)

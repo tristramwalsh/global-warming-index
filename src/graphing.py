@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import scipy.stats as ss
-import src.definitions as defs
+import src.variables as variables
 
 # font_family = 'Roboto'
 font_family = 'Lato'
@@ -122,7 +122,7 @@ def get_dynamic_colours(reg_vars, plot_vars, base_colours):
         tuple: (current_var_colours, scaling_map)
     """
     regress_vars_list = reg_vars.split('-')
-    scaling_map = defs.map_var_to_regression_aggregate(
+    scaling_map = variables.map_var_to_regression_aggregate(
         plot_vars, regress_vars_list)
 
     current_var_colours = base_colours.copy()
@@ -140,7 +140,7 @@ def get_variable_linestyle(var):
     Sub-variables get a unique linestyle based on their index among siblings.
     """
     # Aggregate variables are always solid
-    if var in defs.SUB_VAR_MAPPING:
+    if var in variables.SUB_VAR_MAPPING:
         return 'solid'
 
     # Define a list of linestyles to cycle through
@@ -158,7 +158,7 @@ def get_variable_linestyle(var):
         (0, (3, 1, 1, 1, 1, 1))        # Dash-dot-dot
     ]
 
-    for parent, children in defs.SUB_VAR_MAPPING.items():
+    for parent, children in variables.SUB_VAR_MAPPING.items():
         if var in children:
             idx = children.index(var)
             return linestyles[idx % len(linestyles)]
@@ -199,8 +199,8 @@ def get_legend_reorder_indices(fig):
     hierarchy = ['Reference Temp', 'Tot', 'Res']
 
     def add_subs(var):
-        if var in defs.SUB_VAR_MAPPING:
-            for sub in defs.SUB_VAR_MAPPING[var]:
+        if var in variables.SUB_VAR_MAPPING:
+            for sub in variables.SUB_VAR_MAPPING[var]:
                 if sub not in hierarchy:
                     hierarchy.append(sub)
                 add_subs(sub)
@@ -548,3 +548,28 @@ def draw_grouping_arrow(ax, vars_list, target, sources, y_offsets=None, line_y_o
                                     color='gainsboro',
                                     lw=1)
                     )
+
+
+def en_dash_ify(df):
+    r"""Replace - with \N{EN DASH} in date danges in dataframes."""
+    """This is required by ESSD formatting"""
+    # List the rows with a - character in them
+    rows_to_rename = [r for r in df.index if '-' in r]
+    # Rename those rows, replacing the - with a \N{EN DASH}
+    df.rename(
+        index={r: r.replace('-', '\N{EN DASH}') for r in rows_to_rename},
+        inplace=True)
+    return df
+
+
+def un_en_dash_ify(df):
+    r"""Replace \N{EN DASH} with - in date danges in dataframes."""
+    """For the purposes of saving to csv, where a normal '-' is likely safest
+    for people to use, and most consistent with files from collaborators."""
+    # List the rows with a - character in them
+    rows_to_rename = [r for r in df.index if '\N{EN DASH}' in r]
+    # Rename those rows, replacing the - with a \N{EN DASH}
+    df.rename(
+        index={r: r.replace('\N{EN DASH}', '-') for r in rows_to_rename},
+        inplace=True)
+    return df
