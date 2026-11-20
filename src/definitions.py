@@ -12,6 +12,8 @@ import functools
 import xarray as xr
 import glob
 from pathlib import Path
+from typing import Optional
+from dataclasses import dataclass
 import pymagicc
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
@@ -131,43 +133,219 @@ VAR_NAMES = {
     'contrails': 'Aviation contrails'
 }
 
-def load_ERF(scenario, regress_vars, ensemble_members, include_sub_vars=False):
-    """Load the ERFs for the specified scenario and variables."""
+# INPUT DATASETS ##############################################################
+#
+# Each run attributes one ERF dataset against one GMT (reference temperature)
+# dataset, with internal variability sampled from one piControl dataset.
+#
+# Every input is filed as data/<collection>/<kind>/<name>/, with a SOURCE.md
+# on where it came from:
+#     observed:   data/observed-<year>/<ERF or GMT>/<product>/
+#                 e.g. data/observed-2025/GMT/HadCRUT/
+#     simulated:  data/<experiment>/<ERF or GMT>/<model>/
+#                 e.g. data/SMILE_ESM/ERF/MPI-ESM1.2-LR/
+#     piControl:  data/piControl/GMT/<archive>/
+#                 e.g. data/piControl/GMT/CMIP6/
+#
+# ERF and GMT datasets are chosen by ID:
+#
+#     <product or experiment>[-<year>][-<variant>]
+#
+# - product (observed) or experiment (simulated): uses '_', never '-'. A
+#   simulated ID names the experiment, not the model (model names contain
+#   dashes); its loader knows the model's folder, as each experiment has one
+#   model for now.
+# - year: for observed datasets only, the year their history ends.
+# - variant: a version within the product, e.g. the scenario it follows.
+#
+# e.g. IGCC-2025, SSP_extension-2022-SSP245, SMILE_ESM-SSP245,
+#      FutureVolc_ESM-rcp45-Volc
+#
+# A simulated dataset's ERF and GMT pair only with each other.
+#
+# To add a new year of an existing observed product (e.g. HadCRUT-2026), put
+# its files in data/observed-2026/GMT/HadCRUT/, named as before (the version
+# number in a HadCRUT file name may change): no code changes are needed.
+# To add a new product, write its loader (load_ERF_<product> or
+# load_GMT_<product>), and call that loader from load_ERF or load_GMT.
 
-    # 'observed-<YYYY>-SSP<NNN>': the SSP suffix selects the ERFs.
-    if 'observed-20' in scenario and 'SSP' in scenario:
-        df_ERF = load_ERF_SSP(scenario, regress_vars)
-    # 'observed-<YYYY>': no SSP suffix, so use the historical ERFs.
-    elif 'observed-20' in scenario:
-        df_ERF = load_ERF_IGCC(scenario, include_sub_vars=include_sub_vars)
-    # 'observed_JK-<YYYY>-SSP<NNN>': the SSP suffix selects the ERFs.
-    elif 'observed_JK' in scenario and 'SSP' in scenario:
-        df_ERF = load_ERF_SSP(scenario, regress_vars)
-    # 'observed_JK-<YYYY>': no SSP suffix, so use observed-<YYYY>'s
-    # historical ERFs; the JK data provides only the temperatures.
-    elif 'observed_JK' in scenario:
-        df_ERF = load_ERF_IGCC(scenario.replace('observed_JK', 'observed'),
-                               include_sub_vars=include_sub_vars)
-    elif 'SMILE_ESM' in scenario:
-        df_ERF = load_ERF_SMILE(scenario, regress_vars)
-    elif 'NorESM' in scenario:
-        df_ERF = load_ERF_NorESM(scenario, regress_vars)
+# Simulated datasets with one ERF member for each GMT member (with the same
+# labels), which must be attributed one-to-one
+DATASETS_WITH_PAIRED_MEMBERS = ['FutureVolc_ESM-rcp45-Volc']
+
+# The data folder, next to src/
+DATA_DIR = Path(__file__).parent / '../data'
+
+
+@dataclass(frozen=True)
+class DatasetMetadata:
+    """What a dataset ID says about the dataset, and where its files are
+    (see INPUT DATASETS). Not the data itself."""
+    id: str                 # e.g. 'SSP_extension-2022-SSP245'
+    kind: str               # 'ERF' or 'GMT'
+    product: str            # e.g. 'SSP_extension'; for simulated datasets,
+                            # the experiment, e.g. 'SMILE_ESM'
+    year: Optional[int]     # e.g. 2022; None for simulated datasets
+    variant: str            # e.g. 'SSP245'; '' if the product has none
+
+    @property
+    def is_observed(self):
+        """True for observed datasets, which are filed by year."""
+        return self.year is not None
+
+    @property
+    def folder(self):
+        """e.g. data/observed-2022/ERF/SSP_extension/, or data/SMILE_ESM/ERF/
+        (whose loader adds the model folder, MPI-ESM1.2-LR/)"""
+        # Observed: filed by year, then kind, then product
+        if self.is_observed:
+            return (DATA_DIR / f'observed-{self.year}' / self.kind
+                    / self.product)
+        # Simulated: filed by experiment, then kind (then model)
+        else:
+            return DATA_DIR / self.product / self.kind
+
+
+def dataset_metadata(dataset_id, kind):
+    """The DatasetMetadata for a dataset ID, read from its parts:
+        'SSP_extension-2022-SSP245' -> product 'SSP_extension', year 2022,
+                                       variant 'SSP245'
+        'IGCC-2025'                 -> product 'IGCC', year 2025
+        'FutureVolc_ESM-rcp45-Volc' -> product 'FutureVolc_ESM',
+                                       variant 'rcp45-Volc'
+
+    kind: 'ERF' or 'GMT'
+    """
+    # Split the ID at each dash
+    parts = dataset_id.split('-')
+
+    # The product is the first part
+    product = parts[0]
+    rest = parts[1:]
+
+    # The year, if there is one, is the next part: a four-digit number
+    year = None
+    if rest and len(rest[0]) == 4 and rest[0].isdigit():
+        year = int(rest[0])
+        rest = rest[1:]
+
+    # Whatever is left is the variant, which may itself contain dashes ('' if
+    # nothing is left)
+    variant = '-'.join(rest)
+
+    return DatasetMetadata(dataset_id, kind, product, year, variant)
+
+
+def check_dataset_pairing(erf_id, gmt_id, erf_member, gmt_member):
+    """Check, before loading anything, that the ERF and GMT datasets, and
+    their members, can be attributed against each other.
+
+    erf_id, gmt_id: e.g. 'IGCC-2025' and 'HadCRUT-2025'
+    erf_member, gmt_member: 'all', or one member's label, e.g. '7'
+    """
+    erf = dataset_metadata(erf_id, 'ERF')
+    gmt = dataset_metadata(gmt_id, 'GMT')
+
+    # A simulated dataset (one whose ID has no year) pairs only with itself
+    if (not erf.is_observed or not gmt.is_observed) and erf_id != gmt_id:
+        raise ValueError(
+            f'ERF dataset {erf_id!r} cannot be paired with GMT dataset '
+            f'{gmt_id!r}: a simulated dataset (one whose ID has no year) '
+            'pairs only with itself.')
+
+    # Some simulated datasets need their members paired one-to-one
+    if erf_id in DATASETS_WITH_PAIRED_MEMBERS and (
+            erf_member == 'all' or erf_member != gmt_member):
+        raise ValueError(
+            f'{erf_id} has one ERF member for each GMT member, so they must '
+            'be attributed one-to-one: give the same single member for both '
+            f'(got ERF member {erf_member!r}, GMT member {gmt_member!r}). In '
+            'run-gwi.sh, set ERF_MEMBERS=paired_with_GMT_member.')
+
+
+def find_dataset_file(metadata, pattern):
+    """The one file in the dataset's folder matching pattern.
+
+    metadata: the DatasetMetadata, from dataset_metadata
+    pattern: a file name, with * for any part that changes between versions,
+        and any subfolder in front, e.g. 'sst_pseudo.csv',
+        'HadCRUT.*.analysis.ensemble_series.global.annual.csv', or
+        'MPI-ESM1.2-LR/ts_ESM1-2-LR_ssp245.csv'
+    Stops if there is no such file (e.g. for an unknown product, or a year
+    with no data), or more than one.
+    """
+    folder = metadata.folder
+    matches = sorted(folder.glob(pattern))
+
+    # Exactly one match: the file to read
+    if len(matches) == 1:
+        return matches[0]
+
+    # Otherwise stop, saying what the folder holds
+    if folder.is_dir():
+        present = sorted(str(f.relative_to(folder)) for f in folder.rglob('*')
+                         if f.is_file() and f.name != 'SOURCE.md')
     else:
-        raise ValueError('Invalid scenario for ERF data.')
+        present = 'nothing: there is no such folder'
+    raise FileNotFoundError(
+        f'{metadata.kind} dataset {metadata.id!r}: expected one file matching '
+        f'{pattern!r} in {folder.resolve()}, but found {len(matches)}. The '
+        f'folder holds {present}.')
+
+
+def describe_members(labels):
+    """A short description of a list of member labels, for error messages:
+    all of them if there are up to ten, otherwise the first and last few."""
+    labels = list(labels)
+    if len(labels) <= 10:
+        return f'{labels}'
+    first = ', '.join(map(str, labels[:5]))
+    last = ', '.join(map(str, labels[-2:]))
+    return f'{len(labels)} members: {first}, ..., {last}'
+
+
+def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
+    """Load an ERF metadata, keeping only the variables and member asked for.
+
+    erf_id: e.g. 'IGCC-2025' or 'SMILE_ESM-SSP245' (see INPUT DATASETS)
+    regress_vars: e.g. ['GHG', 'Nat', 'OHF']
+    member: 'all', or one member's label, e.g. 'ens100' (IGCC) or '7'
+    include_sub_vars: also keep the variables' sub-variables, e.g. co2 for
+        GHG (see SUB_VAR_MAPPING)
+
+    Returns a DataFrame indexed by year, with columns (variable, ensemble).
+    """
+    metadata = dataset_metadata(erf_id, 'ERF')
+
+    # Load the whole dataset with its product's loader
+    if metadata.product == 'IGCC':
+        df_ERF = load_ERF_IGCC(metadata, include_sub_vars=include_sub_vars)
+    elif metadata.product == 'SSP_extension':
+        df_ERF = load_ERF_SSP_extension(metadata)
+    elif metadata.product == 'SMILE_ESM':
+        df_ERF = load_ERF_SMILE_ESM(metadata)
+    elif metadata.product == 'FutureVolc_ESM':
+        df_ERF = load_ERF_FutureVolc_ESM(metadata)
+    else:
+        raise ValueError(f'No ERF loader for {erf_id!r}.')
 
     # Extract just the required variables
-    df_ERF = extract_variables(df_ERF,
-                               regress_vars,
-                               include_sub_vars=include_sub_vars)
-    # Extract just the required ensemble members
-    df_ERF = extract_ensembles(df_ERF, ensemble_members)
+    df_ERF = extract_ERF_variables(df_ERF,
+                                   regress_vars,
+                                   include_sub_vars=include_sub_vars)
+    # Extract just the required ensemble member(s)
+    df_ERF = extract_ERF_members(df_ERF, member, erf_id)
 
     return df_ERF
 
 
-def extract_variables(df_ERF, regress_vars, include_sub_vars=False):
-    """Extract specific variables from the ERF dataframe."""
+def extract_ERF_variables(df_ERF, regress_vars, include_sub_vars=False):
+    """Keep only some variables of an ERF DataFrame.
 
+    df_ERF: columns (variable, ensemble), as from the load_ERF_* loaders
+    regress_vars: e.g. ['GHG', 'Nat', 'OHF']
+    include_sub_vars: also keep their sub-variables (see SUB_VAR_MAPPING)
+    """
     # Check that the regress_vars are present in the dataframe
     available_vars = df_ERF.columns.get_level_values('variable').unique()
     missing_vars = set(regress_vars) - set(available_vars)
@@ -212,36 +390,42 @@ def extract_variables(df_ERF, regress_vars, include_sub_vars=False):
     return df_ERF
 
 
-def extract_ensembles(df_ERF, ensemble_members):
-    """Extract specific ensemble members from the ERF dataframe."""
+def extract_ERF_members(df_ERF, member, erf_id):
+    """Keep all members of an ERF DataFrame, or just one.
+    (For GMT members, see extract_GMT_members.)
 
-    available_ens = df_ERF.columns.get_level_values('ensemble').unique()
+    df_ERF: columns (variable, ensemble), as from the load_ERF_* loaders
+    member: 'all', or one member's label, e.g. 'ens100' (IGCC) or '7'.
+        Datasets with a single ERF timeseries (SMILE_ESM,
+        FutureVolc_ESM-rcp45-VolcConst) label it 'single'.
+    erf_id: e.g. 'IGCC-2025', for error messages
+    """
+    # Keep everything
+    if member == 'all':
+        return df_ERF
 
-    # Select ensemble members:
-    if ensemble_members == 'all':
-        ens_mems = slice(None)
-    elif ((len(available_ens) == 1) and (ensemble_members != 'all')):
-        # This is for SMILE_ESM scenarios that have multiple temperatures for
-        # a single input forcing
-        ens_mems = available_ens[0]
-    elif ((len(available_ens) > 1) and (ensemble_members in available_ens)):
-        # This is for NorESM scenarios that have multiple temperature
-        # timeseries and multiple forcing timeseries, but a 1-1 correspondance
-        # between the single ensemble number in the forcing and temperature.
-        ens_mems = ensemble_members
-    else:
+    # Find the member, matched as text, because the member comes from the
+    # command line but some labels are numbers (SSP_extension)
+    available = df_ERF.columns.get_level_values('ensemble').unique()
+    matches = [ens for ens in available if str(ens) == member]
+
+    # Stop if it isn't there
+    if not matches:
         raise ValueError(
-            f'Invalid ensemble member {ensemble_members} for this data. '
-            f'Available: '
-            f'{df_ERF.columns.get_level_values("ensemble").unique().tolist()}')
+            f'ERF member {member!r} is not in {erf_id}, which has '
+            f'{describe_members(available)}.')
 
-    return df_ERF.loc[:, (slice(None), ens_mems)]
+    # Keep that member, for every variable
+    return df_ERF.loc[:, (slice(None), matches[0])]
 
 
 def extend_ERF_to_committed_year(df_ERF, year_committed_to,
                                  year_committed_from=None):
-    """Extend the ERF dataframe to the committed year by holding
-    the ERF constant from the specified year."""
+    """Extend an ERF DataFrame to year_committed_to by holding the ERF
+    constant from year_committed_from (or from its last year, if None).
+
+    e.g. year_committed_from=2025, year_committed_to=2300
+    """
 
     if year_committed_from is not None:
         df_ERF = df_ERF.loc[:year_committed_from]
@@ -260,7 +444,12 @@ def extend_ERF_to_committed_year(df_ERF, year_committed_to,
 
 
 def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
-    """Calculate aggregate forcings from sub-variables."""
+    """Add any aggregate variable that is missing but whose sub-variables
+    are all present, e.g. GHG from co2, ch4, n2o and halogen.
+
+    df_ERF: one column per variable (the loaders call this before adding the
+        ensemble column level)
+    """
 
     # Iterate over SUB_VAR_MAPPING to calculate any possible aggregates
     # This works because the mapping is ordered (GHG/OHF/Nat -> Ant -> Tot)
@@ -302,7 +491,7 @@ def aggregate_missing_forcings(df_ERF, SUB_VAR_MAPPING=SUB_VAR_MAPPING):
 
 
 def check_ensemble_matching(df_ERF):
-    """Check that all variables have the same ensemble sets."""
+    """Check that every variable of an ERF DataFrame has the same members."""
 
     forc_var_names = sorted(df_ERF.columns.get_level_values(
         'variable').unique().to_list())
@@ -328,17 +517,17 @@ def check_ensemble_matching(df_ERF):
     return check_ens
 
 
-def load_ERF_IGCC(scenario, include_sub_vars=False):
-    """Load the IGCC historical ERFs (supplied by Chris Smith)."""
+def load_ERF_IGCC(metadata, include_sub_vars=False):
+    """Load IGCC historical ERFs (supplied by Chris Smith).
 
-    # ERF location
-    here = Path(__file__).parent
-    end = scenario.split('-')[-1]
-
-    if include_sub_vars:
-        file_ERF = here / f'../data/{scenario}/ERF/IGCC/ERF_DAMIP_1000_1750-{end}_full.nc'
-    else:
-        file_ERF = here / f'../data/{scenario}/ERF/IGCC/ERF_DAMIP_1000_1750-{end}.nc'
+    metadata: e.g. the DatasetMetadata for 'IGCC-2025'
+    include_sub_vars: read the _full file, which also holds the
+        sub-variables (only some years have one)
+    """
+    # Find the file: the _full file also holds the sub-variables
+    full = '_full' if include_sub_vars else ''
+    file_ERF = find_dataset_file(
+        metadata, f'ERF_DAMIP_1000_1750-{metadata.year}{full}.nc')
 
     # import ERF_file to xarray dataset and convert to pandas dataframe
     df_ERF = xr.open_dataset(file_ERF).to_dataframe()
@@ -368,13 +557,17 @@ def load_ERF_IGCC(scenario, include_sub_vars=False):
     return df_ERF
 
 
-def load_ERF_SMILE(scenario, regress_vars=None):
-    """Load the data from John Nicklas for Thorne et al., analyis."""
+def load_ERF_SMILE_ESM(metadata):
+    """Load SMILE_ESM ERFs: the MPI-ESM1.2-LR large ensemble (supplied by
+    John Nicklas, for Thorne et al.); a single timeseries per SSP, labelled
+    'single'.
 
-    # ERF location
-    here = Path(__file__).parent
-    lower_scen = scenario.split('-')[-1].lower()
-    file_ERF = here / f'../data/{scenario}/ERF_ESM1-2-LR_{lower_scen}.csv'
+    metadata: e.g. the DatasetMetadata for 'SMILE_ESM-SSP245'
+    """
+    # Find the file for this SSP (named in lower case), in the model's folder
+    file_ERF = find_dataset_file(
+        metadata,
+        f'MPI-ESM1.2-LR/ERF_ESM1-2-LR_{metadata.variant.lower()}.csv')
 
     df_ERF = pd.read_csv(file_ERF
                          ).rename(columns={'year': 'Year',
@@ -403,20 +596,21 @@ def load_ERF_SMILE(scenario, regress_vars=None):
     return df_ERF
 
 
-def load_ERF_NorESM(scenario, regress_vars=None):
-    """Load the data from John Nicklas for Thorne et al., analyis."""
+def load_ERF_FutureVolc_ESM(metadata):
+    """Load FutureVolc_ESM ERFs: the NorESM1-M RCP4.5 large ensemble with
+    future volcanic eruptions (Bethke et al., 2017; supplied by John Nicklas,
+    for Thorne et al.).
 
-    here = Path(__file__).parent
-    volc_scen = scenario.split('-')[-1]
-
-    if volc_scen == 'VolcConst':
+    metadata: the DatasetMetadata for 'FutureVolc_ESM-rcp45-Volc' (a natural
+        ERF member for each temperature member, labelled '1' to '60') or
+        'FutureVolc_ESM-rcp45-VolcConst' (a single timeseries, labelled
+        'single')
+    """
+    if metadata.variant == 'rcp45-VolcConst':
         # In this case, the ERF components are all in one file, and there is
         # only one ensemble member.
-
-        # ERF location
-        here = Path(__file__).parent
-        volc_scen = scenario.split('-')[-1]
-        file_ERF = here / f'../data/{scenario}/ERF_NorESM_rcp45-{volc_scen}.csv'
+        file_ERF = find_dataset_file(
+            metadata, f'NorESM1-M/ERF_NorESM_{metadata.variant}.csv')
 
         df_ERF = pd.read_csv(file_ERF
                              ).rename(columns={'year': 'Year',
@@ -439,12 +633,13 @@ def load_ERF_NorESM(scenario, regress_vars=None):
             [(col, 'single') for col in df_ERF.columns],
             names=['variable', 'ensemble'])
 
-    elif volc_scen == 'Volc':
+    elif metadata.variant == 'rcp45-Volc':
         # In this case, there is a single timeseries for the various anthro
         # components, and a whole ensemble of natural components.
 
         # ERF location for NATURAL
-        file_ERF_natural = here / f'../data/{scenario}/ERF_natural_NorESM_rcp45-{volc_scen}.csv'
+        file_ERF_natural = find_dataset_file(
+            metadata, f'NorESM1-M/ERF_natural_NorESM_{metadata.variant}.csv')
         df_ERF_natural = pd.read_csv(file_ERF_natural, index_col=0)
         # Rename index to 'Year'
         df_ERF_natural.index.name = 'Year'
@@ -463,7 +658,8 @@ def load_ERF_NorESM(scenario, regress_vars=None):
         # first level the variable name]
 
         # ERF location for ANTHRO
-        file_ERF_anthro = here / f'../data/{scenario}/ERF_anthro_NorESM_rcp45-{volc_scen}.csv'
+        file_ERF_anthro = find_dataset_file(
+            metadata, f'NorESM1-M/ERF_anthro_NorESM_{metadata.variant}.csv')
         df_ERF_anthro = pd.read_csv(file_ERF_anthro
                              ).rename(columns={'year': 'Year',
                                                'ERF_anthro': 'Ant',
@@ -515,18 +711,25 @@ def load_ERF_NorESM(scenario, regress_vars=None):
         df_ERF = aggregate_missing_forcings(df_ERF)
         df_ERF = df_ERF.unstack(level='ensemble')
 
+    # Any other variant
+    else:
+        raise ValueError(
+            f'Unknown FutureVolc_ESM variant {metadata.variant!r}: use '
+            'rcp45-Volc or rcp45-VolcConst.')
+
     return df_ERF
 
 
-def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
-    """Load observed ERF with SSP extensions from Chris Smith."""
-    # ERF location
-    here = Path(__file__).parent
-    scen = scenario.split('-')[-1]
-    # The SSPs share their history to 2022 and diverge from 2023, so the
-    # dataset is filed with the 2022 data.
-    file_ERF = (here / '../data/observed-2022/ERF/SSP_extension/'
-                'ssp_forcing_fair2.1.3_cal1.4.5.nc')
+def load_ERF_SSP_extension(metadata):
+    """Load observed ERFs extended along an SSP (supplied by Chris Smith).
+
+    metadata: e.g. the DatasetMetadata for 'SSP_extension-2022-SSP245'.
+        The SSPs share their history to 2022 and diverge from 2023, so the
+        data is filed with the 2022 data.
+    """
+    # Find the file, whose name holds the FaIR and calibration versions
+    file_ERF = find_dataset_file(metadata, 'ssp_forcing_*.nc')
+
     # import ERF_file to xarray dataset and convert to pandas dataframe
     df_ERF = xr.open_dataset(file_ERF).to_dataframe()
     # Rename the 'config' column in the index to be 'ensemble'
@@ -539,8 +742,15 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     df_ERF.index = df_ERF.index.set_levels(
         df_ERF.index.levels[0].astype(int), level=0)
 
-    # Select the scenario
-    df_ERF = df_ERF.loc[(slice(None), scen.lower()), :]
+    # Select the SSP (named in lower case in the file), stopping if it isn't
+    # there
+    ssp = metadata.variant.lower()
+    available = df_ERF.index.get_level_values('scenario').unique().tolist()
+    if ssp not in available:
+        raise ValueError(
+            f'{metadata.variant!r} is not in {file_ERF.name}, which has '
+            f"{[a.replace('ssp', 'SSP') for a in available]}.")
+    df_ERF = df_ERF.loc[(slice(None), ssp), :]
     # Drop the scenario level from the index
     df_ERF.index = df_ERF.index.droplevel(1)
 
@@ -564,35 +774,33 @@ def load_ERF_SSP(scenario, regress_vars=['GHG', 'OHF', 'Nat']):
     return df_ERF
 
 
-def load_Temp(scenario, ensemble_members, start_pi, end_pi):
-    """Load temperature scenario data, and remove pre-industrial baseline."""
+def load_GMT(gmt_id, member, start_pi, end_pi):
+    """Load a GMT metadata, keep the member asked for, and remove the
+    pre-industrial baseline.
 
-    # 'observed-<YYYY>' or 'observed-<YYYY>-SSP<NNN>': the year selects the
-    # observations, so drop any SSP suffix (which only selects the ERFs).
-    if 'observed-20' in scenario:
-        df_temp = load_Temp_HadCRUT(
-            scenario.split('-SSP')[0], start_pi, end_pi)
-    # 'observed_JK-<YYYY>-SSP<NNN>': likewise, the year selects the
-    # observations and the SSP suffix only selects the ERFs.
-    elif 'observed_JK' in scenario:
-        df_temp = load_Temp_JK(
-            scenario.split('-SSP')[0], start_pi, end_pi)
-    elif 'SMILE_ESM' in scenario:
-        df_temp = load_Temp_SMILE(scenario, start_pi, end_pi)
-    elif 'NorESM' in scenario:
-        df_temp = load_Temp_NorESM(scenario, start_pi, end_pi)
-    else:
-        raise ValueError('Invalid scenario for temperature data.')
+    gmt_id: e.g. 'HadCRUT-2025' or 'SMILE_ESM-SSP245' (see INPUT DATASETS)
+    member: 'all', or one member's label, e.g. '7'
+    start_pi, end_pi: the pre-industrial period, e.g. 1850, 1900; None for
+        no offset
 
-    # Select ensemble members:
-    if ensemble_members == 'all':
-        df_temp = df_temp
-    elif ensemble_members in df_temp.columns.to_list():
-        df_temp = df_temp[[ensemble_members]]
+    Returns a DataFrame indexed by year, with one column per member.
+    """
+    metadata = dataset_metadata(gmt_id, 'GMT')
+
+    # Load the whole dataset with its product's loader
+    if metadata.product == 'HadCRUT':
+        df_temp = load_GMT_HadCRUT(metadata)
+    elif metadata.product == 'JK_multi':
+        df_temp = load_GMT_JK_multi(metadata)
+    elif metadata.product == 'SMILE_ESM':
+        df_temp = load_GMT_SMILE_ESM(metadata)
+    elif metadata.product == 'FutureVolc_ESM':
+        df_temp = load_GMT_FutureVolc_ESM(metadata)
     else:
-        raise ValueError(
-            f'Invalid ensemble member {ensemble_members} for this data. '
-            f'Available: {df_temp.columns.to_list()}')
+        raise ValueError(f'No GMT loader for {gmt_id!r}.')
+
+    # Extract just the required ensemble member(s)
+    df_temp = extract_GMT_members(df_temp, member, gmt_id)
 
     # Remove pre-industrial baseline from temperature data
     df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
@@ -600,25 +808,36 @@ def load_Temp(scenario, ensemble_members, start_pi, end_pi):
     return df_temp
 
 
-def load_Temp_HadCRUT(scenario, start_pi, end_pi):
-    """Load HadCRUT5 observations and remove PI baseline."""
+def extract_GMT_members(df_temp, member, gmt_id):
+    """Keep all members of a GMT DataFrame, or just one.
+    (For ERF members, see extract_ERF_members.)
 
-    here = Path(__file__).parent
-    temp_dir = here / f'../data/{scenario}/Temp/HadCRUT/'
-    matches = sorted(
-        temp_dir.glob('HadCRUT.*.analysis.ensemble_series.global.annual.csv')
-    )
-    if not matches:
-        raise FileNotFoundError(
-            f'No HadCRUT file found in {temp_dir} matching pattern '
-            "'HadCRUT.*.analysis.ensemble_series.global.annual.csv'."
-        )
-    if len(matches) > 1:
+    df_temp: one column per member, as from the load_GMT_* loaders
+    member: 'all', or one member's label, e.g. '7'
+    gmt_id: e.g. 'HadCRUT-2025', for error messages
+    """
+    # Keep everything
+    if member == 'all':
+        return df_temp
+
+    # Stop if the member isn't there
+    if member not in df_temp.columns:
         raise ValueError(
-            f'Multiple HadCRUT files found in {temp_dir}; expected one match: '
-            f'{[m.name for m in matches]}'
-        )
-    temp_ens_Path = matches[0]
+            f'GMT member {member!r} is not in {gmt_id}, which has '
+            f'{describe_members(df_temp.columns)}.')
+
+    # Keep that member
+    return df_temp[[member]]
+
+
+def load_GMT_HadCRUT(metadata):
+    """Load the HadCRUT5 ensemble, members labelled '1' to '200'.
+
+    metadata: e.g. the DatasetMetadata for 'HadCRUT-2025'
+    """
+    # Find the ensemble file, whose name holds the HadCRUT version
+    temp_ens_Path = find_dataset_file(
+        metadata, 'HadCRUT.*.analysis.ensemble_series.global.annual.csv')
     # read temp_Path into pandas dataframe, rename column 'Time' to 'Year'
     # and set the index to 'Year', keeping only columns with 'Realization' in
     # the column name, since these are the ensembles
@@ -631,45 +850,51 @@ def load_Temp_HadCRUT(scenario, start_pi, end_pi):
     # Rename the columns called "Realization_x" to just "x"
     df_temp_Obs.columns = [col.split(' ')[-1] for col in df_temp_Obs.columns]
 
-    # Truncate to the final year declared by the scenario name (the "vintage"
-    # of the dataset, eg 'observed-2025' means observations through 2025).
+    # Truncate to the final year in the dataset ID (the "vintage" of the
+    # metadata, eg 'HadCRUT-2025' means observations through 2025).
     #
     # HadCRUT ships a row for the year currently in progress, which is a mean
     # over an incomplete set of months and is therefore not a meaningful annual
     # value for us (eg HadCRUT 5.1.0.0 in data/observed-2025/ carries a 2026 row
     # whose coverage uncertainty is ~30x that of the complete years).
 
-    return truncate_to_end_year(df_temp_Obs, scenario, temp_ens_Path.name)
+    return truncate_to_end_year(df_temp_Obs, metadata, temp_ens_Path.name)
 
 
-def truncate_to_end_year(df_temp_Obs, scenario, file_name):
-    """Cut observations off at the final year in the scenario name, eg 2025
-    for 'observed-2025' or 'observed_JK-2025'."""
-    end_obs = int(scenario.split('-')[1])
+def truncate_to_end_year(df_temp_Obs, metadata, file_name):
+    """Cut observations off at the year in their dataset ID, e.g. at 2025
+    for 'HadCRUT-2025'.
+
+    metadata: the DatasetMetadata of an observed dataset
+    file_name: its file, for error messages
+    """
+    # Stop if the file ends before the year in the ID
+    end_obs = metadata.year
     if end_obs not in df_temp_Obs.index:
-        # The file is short of what the scenario name claims: fail loudly
+        # The file is short of what the dataset ID claims: fail loudly
         # rather than silently analysing a shorter record than intended.
         raise ValueError(
-            f"Scenario '{scenario}' declares observations through {end_obs}, "
-            f"but {file_name} only covers "
+            f"Dataset '{metadata.id}' declares observations through "
+            f"{end_obs}, but {file_name} only covers "
             f"{df_temp_Obs.index.min()}-{df_temp_Obs.index.max()}.")
+
+    # Drop any later rows
     return df_temp_Obs.loc[:end_obs]
 
 
-def load_Temp_JK(scenario, start_pi, end_pi):
-    """Load multi-dataset observations from John Kennedy and
-    remove PI baseline."""
+def load_GMT_JK_multi(metadata):
+    """Load John Kennedy's multi-dataset observational ensemble, members
+    labelled '1' to '100'.
 
-    here = Path(__file__).parent
-    # 'observed_JK-<YYYY>' reads data/observed-<YYYY>/Temp/JK_multi/.
-    year = scenario.split('-')[1]
-    temp_ens_Path = f'../data/observed-{year}/Temp/JK_multi/sst_pseudo.csv'
+    metadata: e.g. the DatasetMetadata for 'JK_multi-2025'
+    """
+    # Find the file
+    temp_ens_Path = find_dataset_file(metadata, 'sst_pseudo.csv')
 
     # Read the csv file into a pandas dataframe. But note that, unlike the
-    # HadCRUT dataset, there are no column names in this csv; we need the
+    # HadCRUT metadata, there are no column names in this csv; we need the
     # first column to be named 'Year', and the rest to be named 'Realization_x'
     # for x=1,2,...,N where N is the number of columns that are not 'Year'.
-    temp_ens_Path = here / temp_ens_Path
     df_temp_Obs = pd.read_csv(temp_ens_Path, header=None)
     n_ens = df_temp_Obs.shape[1] - 1
     col_names = ['Year'] + [str(realisation + 1)
@@ -677,8 +902,9 @@ def load_Temp_JK(scenario, start_pi, end_pi):
     df_temp_Obs.columns = col_names
     df_temp_Obs = df_temp_Obs.set_index('Year')
 
-    # Same cut-off as HadCRUT (see load_Temp_HadCRUT).
-    return truncate_to_end_year(df_temp_Obs, scenario, temp_ens_Path.name)
+    # Same cut-off as HadCRUT (see load_GMT_HadCRUT)
+    return truncate_to_end_year(df_temp_Obs, metadata, temp_ens_Path.name)
+
 
 # def load_PiC_Old(n_yrs):
 #     """Load piControl data from Stuart's ERF datasets."""
@@ -715,12 +941,16 @@ def load_Temp_JK(scenario, start_pi, end_pi):
 #     return pd.DataFrame(temp_IV_Group)
 
 
-def load_Temp_SMILE(scenario, start_pi, end_pi):
-    """Load the temperature data from John Nicklas for Thorne et al., analyis."""
-    # Temp location
-    here = Path(__file__).parent
-    lower_scen = scenario.split('-')[-1].lower()
-    file_temp = here / f'../data/{scenario}/ts_ESM1-2-LR_{lower_scen}.csv'
+def load_GMT_SMILE_ESM(metadata):
+    """Load SMILE_ESM temperatures: the MPI-ESM1.2-LR large ensemble
+    (supplied by John Nicklas, for Thorne et al.), members labelled '0' to
+    '49'.
+
+    metadata: e.g. the DatasetMetadata for 'SMILE_ESM-SSP245'
+    """
+    # Find the file for this SSP (named in lower case), in the model's folder
+    file_temp = find_dataset_file(
+        metadata, f'MPI-ESM1.2-LR/ts_ESM1-2-LR_{metadata.variant.lower()}.csv')
 
     df_temp = pd.read_csv(file_temp, index_col=0)
 
@@ -730,12 +960,16 @@ def load_Temp_SMILE(scenario, start_pi, end_pi):
     return df_temp
 
 
-def load_Temp_NorESM(scenario, start_pi, end_pi):
-    """Load the temperature data from John Nicklas for Thorne et al., analyis."""
-    # Temp location
-    here = Path(__file__).parent
-    volc_scen = scenario.split('-')[-1]
-    file_temp = here / f'../data/{scenario}/ts_NorESM_rcp45-{volc_scen}.csv'
+def load_GMT_FutureVolc_ESM(metadata):
+    """Load FutureVolc_ESM temperatures: the NorESM1-M RCP4.5 large ensemble
+    with future volcanic eruptions (Bethke et al., 2017; supplied by John
+    Nicklas, for Thorne et al.), members labelled '1' to '60'.
+
+    metadata: e.g. the DatasetMetadata for 'FutureVolc_ESM-rcp45-Volc'
+    """
+    # Find the file for this variant, in the model's folder
+    file_temp = find_dataset_file(
+        metadata, f'NorESM1-M/ts_NorESM_{metadata.variant}.csv')
 
     df_temp = pd.read_csv(file_temp, index_col=0)
     # Rename index to 'Year'
@@ -745,7 +979,11 @@ def load_Temp_NorESM(scenario, start_pi, end_pi):
 
 
 def preindustrial_baseline(df_temp, start_pi, end_pi):
-    """Remove PI baseline from temperature data."""
+    """Remove the pre-industrial baseline from temperatures.
+
+    df_temp: one column per member, indexed by year
+    start_pi, end_pi: e.g. 1850, 1900; None to leave the data unchanged
+    """
     # Check if offsets are explicitly bypassed.
     if start_pi is None or end_pi is None:
         return df_temp
@@ -772,32 +1010,37 @@ def preindustrial_baseline(df_temp, start_pi, end_pi):
     return df_temp
 
 
-def load_PiC(scenario, n_yrs, start_pi, end_pi):
-    if 'observed' in scenario:
-        return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
-    elif 'SMILE_ESM' in scenario:
-        return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
-    elif 'NorESM' in scenario:
+def load_PiC(picontrol_id, n_yrs, start_pi, end_pi):
+    """Load piControl temperatures, in n_yrs-long slices.
+
+    picontrol_id: e.g. 'CMIP6' (the only one for now)
+    n_yrs: slice length, the number of years of GMT data, e.g. 176
+    start_pi, end_pi: e.g. 1850, 1900; None for no offset
+    """
+    # Load with the dataset's loader
+    if picontrol_id == 'CMIP6':
         return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
     else:
-        raise ValueError('Invalid scenario for piControl data.')
+        raise ValueError(
+            f'No piControl loader for {picontrol_id!r}.')
 
 
 def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
-    """Create DataFrame of piControl data from .MAG files."""
+    """Slice the CMIP6 piControl simulations (.MAG files) into n_yrs-long
+    segments, overlapping by half, one column per segment."""
     # Create list of all .MAG files recursively inside the directory
-    # data/piControl/CMIP6. These files are simply as extracted from zip
+    # data/piControl/GMT/CMIP6. These files are simply as
+    # extracted from zip
     # downloaded from https://cmip6.science.unimelb.edu.au/results?experiment_id=piControl&normalised=&mip_era=CMIP6&timeseriestype=average-year-mid-year&variable_id=tas&region=World#download
     # (ie a CMIP6 archive for pre-meaned data, saving data/time.)
-    here = Path(__file__).parent
-    dir_PiC = (here / '../data/piControl/CMIP6').resolve()
+    dir_PiC = (DATA_DIR / 'piControl/GMT/CMIP6').resolve()
     path_PiC = str(dir_PiC / '**/*.MAG')
     mag_files = sorted(glob.glob(path_PiC, recursive=True))
     dict_temp = {}
     for file in mag_files:
         # Adopt nomenclature format that matches earlier csv from Stuart.
         # The group is the institution, read from the path inside
-        # data/piControl/CMIP6/, which is laid out as
+        # data/piControl/GMT/CMIP6/, which is laid out as
         # average-year-mid-year/CMIP6/<activity>/<institution>/<model>/...
         group = Path(file).relative_to(dir_PiC).parts[3]
         model = file.split('/')[-1].split('_')[3]
@@ -831,7 +1074,12 @@ def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
 
 
 def filter_PiControl(df, timeframes):
-    """Remove simulations that correspond poorly with observations."""
+    """Remove piControl segments whose variability is implausible next to
+    the observations.
+
+    df: one column per segment, as from load_PiC
+    timeframes: e.g. [1, 3, 30] (not used at present)
+    """
     dict_temp_PiC = {}
     for ens in list(df):
         # Establish inclusion condition, which is that the smoothed internal

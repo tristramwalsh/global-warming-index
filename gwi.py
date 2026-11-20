@@ -569,6 +569,12 @@ if __name__ == "__main__":
     # --regress-range=<start-end> (default 1850-2023)
     # --truncate=<start-end> (default 1850-2023)
     # --include-rate=<y/n> (default interactive)
+    # --erf-dataset=<id> (required, e.g. IGCC-2025)
+    # --gmt-dataset=<id> (required, e.g. HadCRUT-2025)
+    # --picontrol-dataset=<id> (required, e.g. CMIP6)
+    # --erf-member=<member or all> (default all)
+    # --gmt-member=<member or all> (default all)
+    # (run-gwi.sh passes every option; see it for the full list)
 
     if len(sys.argv) > 1:
         # Separate out the names and values for each argv, and place them in
@@ -600,6 +606,10 @@ if __name__ == "__main__":
         # Defaults to the standard in IPCC AR6 Ch.3
         inc_pi_offset = True
         start_pi, end_pi = 1850, 1900  
+
+    # Generate a string to identify the pre-industrial period ('none' if
+    # there is no offset).
+    preindustrial_str = f'{start_pi}-{end_pi}' if inc_pi_offset else 'none'
 
     # Determine whether to include a constant term in the regression.
     if '--include-reg-const' in argv_dict:
@@ -673,9 +683,10 @@ if __name__ == "__main__":
                 f'Invalid committed warming argument provided: {committed_arg}'
                 )
 
-    # Generate a string to identify the committed warming settings.
+    # Generate a string to identify the committed warming settings (empty if
+    # there is no committed warming).
     committed_str = (
-        f'const-ERF_{year_committed_from}-{year_committed_to}'
+        f'_COMMITTED--{year_committed_from}-{year_committed_to}'
         if year_committed_to
         else '')
 
@@ -779,86 +790,78 @@ if __name__ == "__main__":
     else:
         regress_vars = sorted(['GHG', 'Nat', 'OHF'])
 
-    # Specify the scenario
-    if '--scenario' in argv_dict:
-        scenario = argv_dict['--scenario']
-    else:
-        # available scenarios:
-        available = os.listdir('data/')
-        scenario = input(f'Scenario (e.g. {available}: ')
+    # Specify the input datasets, by ID (see DATASET SELECTION in
+    # src/definitions.py): the ERFs, the reference temperatures (GMT), and the
+    # piControl simulations that sample internal variability.
+    #   e.g. --erf-dataset=IGCC-2025 --gmt-dataset=HadCRUT-2025
+    #   e.g. --erf-dataset=SSP_extension-2022-SSP245 --gmt-dataset=JK_multi-2025
+    #   e.g. --erf-dataset=SMILE_ESM-SSP245 --gmt-dataset=SMILE_ESM-SSP245
+    #   --picontrol-dataset=CMIP6 (the only one for now)
 
-    # Add the committed_str to the scenario name for committed runs.
-    if year_committed_to:
-        scenario_out = f'{scenario}_{committed_str}'
-    else:
-        scenario_out = scenario
+    # Stop if any of the three is missing
+    for flag in ['--erf-dataset', '--gmt-dataset', '--picontrol-dataset']:
+        if not argv_dict.get(flag):
+            raise ValueError(
+                f'{flag} is required, e.g. --erf-dataset=IGCC-2025 '
+                '--gmt-dataset=HadCRUT-2025 --picontrol-dataset=CMIP6.')
 
-    # Specify whether you want to specify individual ensemble members for
-    # specific sources of uncertainty.
-    # Specify the subset of the scenario's ensemble.
-    # By default, use the entire ensemble of forcings and temperatures.
-    # Optionally specify a specific member, e.g. as required for NorESM Volc
-    # scenarios for Thorne et al., 2025
-    if (('--specify-ensemble-member-sources-for' in argv_dict) and
-        ('--specify-ensemble-member' in argv_dict)):
+    # Read the three dataset IDs
+    erf_id = argv_dict['--erf-dataset']
+    gmt_id = argv_dict['--gmt-dataset']
+    picontrol_id = argv_dict['--picontrol-dataset']
 
-        all_sources = ['GMT', 'ERF']
-        specified_member_sources = argv_dict['--specify-ensemble-member-sources-for'
-                                      ].split(',')
-        specified_member = argv_dict['--specify-ensemble-member']
+    # Specify which ensemble members to use from each dataset: 'all' (the
+    # default), or a single member, by its label in the dataset. One gwi.py
+    # call takes one value for each; run-gwi.sh loops over member lists and
+    # pairs members. An empty value means 'all'.
+    ensemble_members = {
+        'ERF': argv_dict.get('--erf-member', 'all') or 'all',
+        'GMT': argv_dict.get('--gmt-member', 'all') or 'all',
+    }
 
-        # If specified sources are not in all_sources, raise error.
-        for source in specified_member_sources:
-            if source not in all_sources:
-                raise ValueError(f'Invalid source specified: {source}')
+    # Stop now, before loading anything, if the datasets or members cannot
+    # be attributed against each other (e.g. a model's ERF with observations).
+    defs.check_dataset_pairing(
+        erf_id, gmt_id, ensemble_members['ERF'], ensemble_members['GMT'])
 
-        unspecified_sources = (list(set(all_sources) -
-                               set(specified_member_sources)))
-        
-        # Create a dictionary mapping source to specified ensemble members.
-        spec_ensemble_members = {
-            source: specified_member
-            for source in specified_member_sources
-        }
-        # Default behaviour for unspecified sources is to use the entire
-        # ensemble.
-        unspec_ensemble_members = {
-            source: 'all'
-            for source in unspecified_sources
-        }
-        # Join the two dictionaries.
-        ensemble_members = spec_ensemble_members | unspec_ensemble_members
-
-    else:
-        # Default: use all ensemble members for all sources.
-        ensemble_members = {'GMT': 'all', 'ERF': 'all'}
-
-    # Currently this gives a dict of the form:
-    # {'GMT': 'GMTmems', 'ERF': 'ERFmems'}
-    # Turn that into a string of this form": ""ERF-ERFmems_GMT-GMTmems"
-    ensemble_members_str = '_'.join(
-        f'{source}-{member}' for source, member in ensemble_members.items()
-    )
+    # e.g. ERF-all_GMT-7 (always ERF first, as in ERF--<id>_GMT--<id>)
+    ensemble_members_str = (
+        f'ERF-{ensemble_members["ERF"]}_GMT-{ensemble_members["GMT"]}')
 
     # Create directory structure based on the input parameters.
+
+    # GWI timeseries, headlines and rates
     output_path = (
-        f'SCENARIO--{scenario_out}/' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
+    # Prior (unconstrained) warming
     output_path_priors = (
-        f'SCENARIO--{scenario_out}/' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
+    # ERF percentiles
     output_path_erfs = (
-        f'SCENARIO--{scenario_out}/' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
+    # Observation headlines, for the headline years of this regression
     out_path_obs = (
-        f'SCENARIO--{scenario_out}/' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
         f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
+    )
+    # Observations themselves, which don't depend on the regression range
+    out_path_obs_timeseries = (
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
     )
 
     # Create a folder to store the plots
@@ -892,7 +895,7 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF(scenario, regress_vars, ensemble_members['ERF'],
+    df_forc = defs.load_ERF(erf_id, regress_vars, ensemble_members['ERF'],
                             include_sub_vars=include_sub_vars)
 
     if year_committed_to and year_committed_from:
@@ -928,33 +931,24 @@ if __name__ == "__main__":
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
     # TEMPERATURE
-    df_temp_Obs = defs.load_Temp(
-        scenario, ensemble_members['GMT'], start_pi, end_pi)
+    df_temp_Obs = defs.load_GMT(
+        gmt_id, ensemble_members['GMT'], start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
 
-    # Check that the regression years are within the temperature data range.
-    if start_regress < temp_Yrs.min():
-        start_regress = temp_Yrs.min()
-        defs.note('Regression start year was before the reference '
-                  'temperature data range, so it was moved to the '
-                  f'temperature minimum: {start_regress}.')
-    if end_regress > temp_Yrs.max():
-        end_regress = temp_Yrs.max()
-        defs.note('Regression end year was after the reference temperature '
-                  'data range, so it was moved to the temperature maximum: '
-                  f'{end_regress}.')
-
-    # Check that the regression years are within the forcing data range
-    if start_regress < forc_Yrs_min:
-        start_regress = forc_Yrs_min
-        defs.note('Regression start year was before the forcing data range, '
-                  f'so it was moved to the forcing minimum: {start_regress}.')
-    if end_regress > forc_Yrs_max:
-        end_regress = forc_Yrs_max
-        defs.note('Regression end year was after the forcing data range, so '
-                  f'it was moved to the forcing maximum: {end_regress}.')
+    # Check that the regression years are within both the temperature and
+    # the forcing data. Stop rather than shorten the range, which would
+    # silently run a different regression from the one asked for (and,
+    # before, filed it under the range asked for).
+    for name, yrs_min, yrs_max in [
+            (f'GMT dataset {gmt_id}', temp_Yrs.min(), temp_Yrs.max()),
+            (f'ERF dataset {erf_id}', forc_Yrs_min, forc_Yrs_max)]:
+        # Stop if the regression starts before, or ends after, this dataset
+        if start_regress < yrs_min or end_regress > yrs_max:
+            raise ValueError(
+                f'Regression range {start_regress}-{end_regress} is not '
+                f'within the {name}, which covers {yrs_min}-{yrs_max}.')
 
     # Check that the regression end year is not after the start of the
     # committed warming period.
@@ -967,11 +961,24 @@ if __name__ == "__main__":
             'constant ERF assumption begins, the scenario for forcing and'
             'reference warming are no longer aligned.')
 
+    # Save the reference temperatures as used: the selected members, cut off
+    # at the dataset's year, with the pre-industrial offset removed. The
+    # combination script plots these, so it need not reload them from data/.
+    # Identical for every iteration of a configuration, so (like the priors)
+    # the file has no date and is simply overwritten.
+    df_temp_Obs.to_csv(
+        f'{results_folder_obs}{out_path_obs_timeseries}' +
+        f'Obs_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
+        f'ENSEMBLE-SIZE--{df_temp_Obs.shape[1]}.csv')
+
     defs.log_slurm_configuration()
 
     defs.log_section('Run configuration')
     print(f'Regressed variables: {regress_vars}')
-    print(f'Scenario: {scenario_out}')
+    print(f'ERF dataset: {erf_id}')
+    print(f'GMT dataset: {gmt_id}')
+    print(f'piControl dataset: {picontrol_id}')
     if year_committed_to:
         print(f'Committed warming: forcing constant from:'
               f'{year_committed_to} to {year_committed_from}')
@@ -996,7 +1003,7 @@ if __name__ == "__main__":
 
     # CMIP6 PI-CONTROL
     timeframes = [1, 3, 30]
-    df_temp_PiC = defs.load_PiC(scenario, n_yrs, start_pi, end_pi)
+    df_temp_PiC = defs.load_PiC(picontrol_id, n_yrs, start_pi, end_pi)
     df_temp_PiC = defs.filter_PiControl(df_temp_PiC, timeframes)
     df_temp_PiC.set_index(np.arange(n_yrs)+start_trunc, inplace=True)
     # NOTE: For 1850-2022, we get 183 realisations for piControl
@@ -1277,7 +1284,7 @@ if __name__ == "__main__":
 
     # Load in the forcings for the prior calculation, specifying sub-variables
     df_forc_priors = defs.load_ERF(
-        scenario, prior_vars, ensemble_members['ERF'],
+        erf_id, prior_vars, ensemble_members['ERF'],
         include_sub_vars=include_sub_vars)
     # This is a two level column MultiIndex dataframe, with levels
     # 'variable' and 'ensemble'.
@@ -1323,7 +1330,8 @@ if __name__ == "__main__":
     iteration_id = current_time
 
     variation = (
-        f'SCENARIO--{scenario_out}_' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
         f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{n}_' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
@@ -1334,19 +1342,22 @@ if __name__ == "__main__":
         len(models) *
         len(df_forc.columns.get_level_values("ensemble").unique()))
     variation_priors = (
-        f'SCENARIO--{scenario_out}_' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
     full_erf_size = (
         len(df_forc.columns.get_level_values("ensemble").unique())
     )
     variation_erfs = (
-        f'SCENARIO--{scenario_out}_' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
         f'ENSEMBLE-SIZE--{full_erf_size}_'
     )
     full_obs_size = (df_temp_Obs.shape[1])
     variation_obs = (
-        f'SCENARIO--{scenario}_' +
+        f'ERF--{erf_id}_GMT--{gmt_id}_' +
+        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
         f'ENSEMBLE-SIZE--{full_obs_size}'
     )
 

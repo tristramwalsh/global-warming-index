@@ -394,7 +394,7 @@ Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showin
 
 ##### 2.4.5. Data Inputs
 
-Input data are in `data/`. Observations and the ERFs that go with them are filed by the year their history ends, then by product: `data/observed-<YYYY>/ERF/<product>/` (`IGCC`, `SSP_extension`) and `data/observed-<YYYY>/Temp/<product>/` (`HadCRUT`, `JK_multi`). Each climate model test case has its own folder (e.g. `data/SMILE_ESM-SSP245/`), and the CMIP6 piControl simulations are in `data/piControl/CMIP6/`. Each data folder has a `SOURCE.md` giving the dataset, how to cite it, its licence and where it came from.
+Input data are in `data/`, each in a folder `data/<collection>/<kind>/<name>/`. Observations, and the ERFs that go with them, are filed by the year their history ends: `data/observed-<YYYY>/ERF/<product>/` (`IGCC`, `SSP_extension`) and `data/observed-<YYYY>/GMT/<product>/` (`HadCRUT`, `JK_multi`). Climate model test cases are filed by experiment, then model: `data/SMILE_ESM/{ERF,GMT}/MPI-ESM1.2-LR/` and `data/FutureVolc_ESM/{ERF,GMT}/NorESM1-M/`. The CMIP6 piControl simulations are in `data/piControl/GMT/CMIP6/`. Each data folder has a `SOURCE.md` giving the dataset, how to cite it, its licence and where it came from.
 
 Each climate model's source file is in its folder in `models/` (see [Climate Models](#246-climate-models)).
 

@@ -99,21 +99,98 @@ VARS=GHG,OHF,Nat
 # e.g. n
 INCLUDE_SUB_VARS=n
 
-# Select which scenario to analyse
-# e.g. observed
-# e.g. SMILE_ESM-SSP370
-# e.g. SMILE_ESM-SSP245
-# e.g. SMILE_ESM-SSP126
-# e.g. observed-2023
-# e.g. observed-2024
-# e.g. observed-2025
-# e.g. observed-2024-SSP119  (2024 observations, SSP119-extended ERFs)
-# e.g. observed-2025-SSP245  (2025 observations, SSP245-extended ERFs)
-# e.g. NorESM_rcp45-Volc
-# e.g. NorESM_rcp45-VolcConst
-# e.g. observed_JK-2024-SSP245
-# e.g. observed_JK-2025-SSP245
-SCENARIO=observed-2025
+# Select the input datasets. The ERFs and the reference temperatures (GMT) are
+# chosen separately: one of each per gwi.py run.
+# - Observed datasets (filed in data/observed-<YYYY>/) carry the year their
+#   history ends. Any observed ERF can be paired with any observed GMT, as
+#   long as both cover the regressed years.
+# - Simulated datasets (climate model large ensembles, filed in
+#   data/<experiment>/<ERF or GMT>/<model>/) pair only with themselves: set
+#   ERF_DATASET and GMT_DATASET to the same simulated dataset.
+# In the lists below, the parts in <angle brackets> are chosen from the values
+# listed under them; the rest of each name is fixed.
+
+# Select the ERF dataset, from:
+#   IGCC-<YYYY>
+#     <YYYY> = 2022, 2023, 2024, 2025
+#     IGCC historical ERFs, 1000 members
+#     (INCLUDE_SUB_VARS=y needs 2024 or 2025)
+#   SSP_extension-2022-<SSP>
+#     <SSP> = SSP119, SSP126, SSP245, SSP370, SSP434, SSP460, SSP534-over, SSP585
+#     observed history to 2022, then <SSP> to 2100; 841 members. Its historical
+#     ERFs are not the IGCC ERFs: they are generated differently, and differ
+#     before 2022 too.
+#   SMILE_ESM-<SSP>
+#     <SSP> = SSP126, SSP245, SSP370
+#     MPI-ESM1.2-LR large ensemble: historical to 2014, then <SSP>; a single
+#     ERF timeseries
+#   FutureVolc_ESM-rcp45-<Volcanism>
+#     <Volcanism> = Volc, VolcConst
+#     NorESM1-M large ensemble: historical to 2005, then RCP4.5 with
+#     stochastic future volcanic eruptions (Volc: one natural ERF member for
+#     each GMT member, 1 to 60) or constant background volcanic forcing
+#     (VolcConst: a single ERF timeseries)
+# e.g. IGCC-2025
+ERF_DATASET=IGCC-2025
+
+# Select which ERF ensemble members to use
+# e.g. all                     (sample from the whole ensemble; the usual)
+# e.g. 7                       (a single member)
+# e.g. {1..60}                 (each member in turn, one gwi.py run each)
+# e.g. paired_with_GMT_member  (each member listed in GMT_MEMBERS in turn,
+#                               with the ERF member of the same label)
+# NOTE: IGCC and SSP_extension members are labelled by configuration number
+# (ens<number> for IGCC), so use all for them; likewise for the datasets with
+# a single ERF timeseries.
+ERF_MEMBERS=all
+
+# Select the GMT (reference temperature) dataset, from:
+#   HadCRUT-<YYYY>
+#     <YYYY> = 2022, 2023, 2024, 2025
+#     HadCRUT5 ensemble, members 1 to 200
+#   JK_multi-<YYYY>
+#     <YYYY> = 2024, 2025
+#     John Kennedy's multi-dataset ensemble, members 1 to 100
+#   SMILE_ESM-<SSP>
+#     <SSP> = SSP126, SSP245, SSP370
+#     MPI-ESM1.2-LR large ensemble: historical to 2014, then <SSP>; members
+#     0 to 49
+#   FutureVolc_ESM-rcp45-<Volcanism>
+#     <Volcanism> = Volc, VolcConst
+#     NorESM1-M large ensemble: historical to 2005, then RCP4.5 with
+#     stochastic future volcanic eruptions (Volc) or constant background
+#     volcanic forcing (VolcConst); members 1 to 60
+# e.g. HadCRUT-2025
+GMT_DATASET=HadCRUT-2025
+
+# Select which GMT ensemble members to use
+# e.g. all                     (sample from the whole ensemble; the usual)
+# e.g. 7                       (a single member)
+# e.g. {1..200}                (each member in turn, one gwi.py run each)
+# e.g. paired_with_ERF_member  (each member listed in ERF_MEMBERS in turn,
+#                               with the GMT member of the same label)
+GMT_MEMBERS=all
+
+# How ERF_MEMBERS and GMT_MEMBERS combine (the CASEs in
+# src/prepare_ensemble_selections.sh):
+# - CASE 1: all and all: one run, sampling from both whole ensembles.
+# - CASE 2: members listed on one side, all on the other (e.g.
+#   ERF_MEMBERS=all, GMT_MEMBERS={1..200}): one run per listed member, each
+#   sampling from the other dataset's whole ensemble.
+# - CASE 3: members listed on one side, the pairing keyword on the other
+#   (e.g. ERF_MEMBERS=paired_with_GMT_member, GMT_MEMBERS={1..60}): one run
+#   per listed member, with ERF and GMT members of the same label. Required
+#   for FutureVolc_ESM-rcp45-Volc.
+# Anything else stops with an error before any run starts:
+# - members listed on both sides, without a pairing keyword (it is unclear
+#   whether to pair them or to run every combination);
+# - pairing keywords on both sides (there would be no members to pair);
+# - a pairing keyword with all on the other side (all can't be paired);
+# - a pairing keyword on the wrong side (e.g. ERF_MEMBERS=paired_with_ERF_member).
+
+# Select the piControl dataset that samples internal variability
+# e.g. CMIP6  (the only one for now)
+PICONTROL_DATASET=CMIP6
 
 # Select whether to consider committed warming at constant ERF.
 # This amends/extends the scenario to hold ERF constant from a start year
@@ -160,32 +237,6 @@ HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
 # e.g. 'end_regress,2050,2100,2300' to combine end_regress and manual years
 # e.g. $(seq -s, 1950 2025) will create a comma-separated list of years
 HEADLINE_YEARS='end_regress'
-
-
-# Select which ensemble members use from the scenario ERF/GMT files
-# e.g. 'all'  # (Use all members for all sources).
-# e.g. 1.  # (Use single member only)
-# e.g. {0..49}  # (Use single member only, and apply separately to each member
-# in the range)
-# NOTE: member labels are the dataset's own column names, and are 1-indexed:
-# HadCRUT ships 200 realisations ({1..200}), the John Kennedy ensemble 100
-# ({1..100}).
-SPECIFY_ENSEMBLE_MEMBERS=all
-
-
-# Select which uncertainty sources this single-member selection should apply
-# to.
-# NOTE: For now, we just consider ERF and GMT specification.
-# By default, all ensemble members will be used for an uncertainty source;
-# If SPECIFY_ENSEMBLE_MEMBERS is not set to 'all', then only the specified
-# members will be used for the sources listed here; sources not listed here
-# will use all ensemble members.
-# e.g. 'ERF'  # (Apply above selection to ERF only)
-# e.g. 'GMT'  # (Apply above selection to GMT only)
-# e.g. 'ERF,GMT'  # (Apply above selection to both ERF and GMT; in this case,
-# the same ensemble members will be paired for both sources;
-# i.e. ensemble member 0 for ERF is paired with ensemble member 0 for GMT)
-SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR='GMT'
 
 # Quick test ##################################################################
 # A small, fast configuration for checking that everything runs, e.g. on a
@@ -264,16 +315,13 @@ fi
 # that gwi.py writes into the results paths. This means a job in squeue can be
 # matched to the results it produces by eye.
 
-# Member range as a filename-safe tag. Brace expansion does NOT occur at
-# assignment, so SPECIFY_ENSEMBLE_MEMBERS holds the literal string "{1..50}"
-# and this operates on that text:
-#   {1..50} -> 1-50 ;  {51..100} -> 51-100 ;  all -> all
-MEMBER_TAG=$(echo "${SPECIFY_ENSEMBLE_MEMBERS}" | tr -d '{}' | sed 's/\.\./-/')
-
-# The members to run, one gwi.py call each. eval applies the brace expansion
-# that assignment skipped: {1..3} -> 1 2 3 ; all -> all (a single call that
-# samples every member).
-MEMBER_LIST=$(eval echo "${SPECIFY_ENSEMBLE_MEMBERS}")
+# Ensemble members ###########################################################
+# Turn ERF_MEMBERS and GMT_MEMBERS into the runs to make: run n uses ERF
+# member ERF_LIST[n] with GMT member GMT_LIST[n]. Also sets MEMBER_TAG for the
+# job and log names. Stops if the combination isn't allowed. The logic is in
+# src/prepare_ensemble_selections.sh.
+source "$(dirname "$0")/src/prepare_ensemble_selections.sh"
+build_member_runs "${ERF_MEMBERS}" "${GMT_MEMBERS}" || exit 1
 
 # Regression variables, sorted and dash-joined to match the results naming.
 # gwi.py sorts its --regress-variables, so VARS=GHG,OHF,Nat becomes the
@@ -283,7 +331,7 @@ MEMBER_LIST=$(eval echo "${SPECIFY_ENSEMBLE_MEMBERS}")
 VARS_TAG=$(echo "${VARS}" | tr ',' '\n' | sort | paste -sd- -)
 
 # The gwi.py call for one calculation, built here once for every mode.
-# Arguments: sample size, regression end year, ensemble member selection.
+# Arguments: sample size, regression end year, ERF member, GMT member.
 # Sets the array GWI_COMMAND.
 gwi_command() {
   GWI_COMMAND=(
@@ -296,12 +344,14 @@ gwi_command() {
     --headline-toggles="${HEADLINE_TOGGLES}"
     --headline-years="${HEADLINE_YEARS}"
     --regress-variables="${VARS}"
-    --scenario="${SCENARIO}"
+    --erf-dataset="${ERF_DATASET}"
+    --gmt-dataset="${GMT_DATASET}"
+    --picontrol-dataset="${PICONTROL_DATASET}"
     --committed="${COMMITTED}"
     --preindustrial-era="${PREINDUSTRIAL_ERA}"
     --include-reg-const="${INCLUDE_REG_CONST}"
-    --specify-ensemble-member-sources-for="${SPECIFY_ENSEMBLE_MEMBER_SOURCE_FOR}"
-    --specify-ensemble-member="$3"
+    --erf-member="$3"
+    --gmt-member="$4"
     --include-sub-vars="${INCLUDE_SUB_VARS}"
     --calculate-priors-output="${CALCULATE_PRIORS_OUTPUT}"
     --output-tag="${OUTPUT_TAG}"
@@ -337,13 +387,16 @@ echo "Iteration ${count}: ${j} samples, regressed years ${START_REGRESS}-${i}"
 # Compose the identifier for this job. Core fields are always present; the
 # remaining flags are appended only when set away from their usual value, so
 # that ordinary runs keep shorter names.
-RUN_TAG="SCENARIO--${SCENARIO}"
+RUN_TAG="ERF--${ERF_DATASET}_GMT--${GMT_DATASET}"
 RUN_TAG="${RUN_TAG}_VARIABLES--${VARS_TAG}"
 RUN_TAG="${RUN_TAG}_REGRESSED-YEARS--${START_REGRESS}-${i}"
 RUN_TAG="${RUN_TAG}_TRUNCATED-YEARS--${TRUNCATION}"
 RUN_TAG="${RUN_TAG}_SAMPLES--${j}"
 RUN_TAG="${RUN_TAG}_MEMBERS--${MEMBER_TAG}"
 RUN_TAG="${RUN_TAG}_ITER--${count}"
+if [ "${PREINDUSTRIAL_ERA}" != "1850-1900" ]; then
+  RUN_TAG="${RUN_TAG}_PREINDUSTRIAL--${PREINDUSTRIAL_ERA}"
+fi
 if [ "${COMMITTED}" != "n" ]; then
   RUN_TAG="${RUN_TAG}_COMMITTED--${COMMITTED}"
 fi
@@ -361,8 +414,9 @@ if [ -n "${SEED}" ]; then
 fi
 
 if [ "${MODE}" = "dry" ]; then
-  for k in ${MEMBER_LIST}; do
-    gwi_command "${j}" "${i}" "${k}"
+  # One gwi.py run per (ERF member, GMT member) pair: the lists line up by n
+  for n in "${!ERF_LIST[@]}"; do
+    gwi_command "${j}" "${i}" "${ERF_LIST[n]}" "${GMT_LIST[n]}"
     print_gwi_command
   done
 
@@ -371,8 +425,9 @@ elif [ "${MODE}" = "direct" ]; then
   # job. The timestamp keeps repeat runs of the same configuration apart, as
   # the job ID does in slurm mode.
   LOG_FILE=${LOG_DIR}/${SIM_NAME}_${RUN_TAG}_DIRECT--$(date +%Y-%m-%d-%H-%M-%S).out
-  for k in ${MEMBER_LIST}; do
-    gwi_command "${j}" "${i}" "${k}"
+  # One gwi.py run per (ERF member, GMT member) pair: the lists line up by n
+  for n in "${!ERF_LIST[@]}"; do
+    gwi_command "${j}" "${i}" "${ERF_LIST[n]}" "${GMT_LIST[n]}"
     print_gwi_command | tee -a "${LOG_FILE}"
     if ! "${GWI_COMMAND[@]}" 2>&1 | tee -a "${LOG_FILE}"; then
       echo "gwi.py failed; stopping. Log: ${LOG_FILE}" >&2
@@ -409,13 +464,14 @@ ${CLUSTER_DIRECTIVE}
 #SBATCH --output=./${LOG_DIR}/${SIM_NAME}_${RUN_TAG}_JOB--%j.out
 
 ## One gwi.py run for each selected member, one after another; a single run
-## for SPECIFY_ENSEMBLE_MEMBERS=all.
+## when ERF_MEMBERS and GMT_MEMBERS are both all.
 EOF
   # Second step: append one gwi.py command line per member to the end of the
   # job file (>> appends), after the header written above. The job runs
   # these lines in order.
-  for k in ${MEMBER_LIST}; do
-    gwi_command "${j}" "${i}" "${k}"
+  # One gwi.py run per (ERF member, GMT member) pair: the lists line up by n
+  for n in "${!ERF_LIST[@]}"; do
+    gwi_command "${j}" "${i}" "${ERF_LIST[n]}" "${GMT_LIST[n]}"
     print_gwi_command >> ${SLURM_FILE}
   done
 
