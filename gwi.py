@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 
 import src.graphing as gr
 import src.definitions as defs
+import src.input_datasets as datasets
 
 import models.AR5_IR.AR5_IR as AR5_IR
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
@@ -821,7 +822,7 @@ if __name__ == "__main__":
 
     # Stop now, before loading anything, if the datasets or members cannot
     # be attributed against each other (e.g. a model's ERF with observations).
-    defs.check_dataset_pairing(
+    datasets.check_dataset_pairing(
         erf_id, gmt_id, ensemble_members['ERF'], ensemble_members['GMT'])
 
     # e.g. ERF-all_GMT-7 (always ERF first, as in ERF--<id>_GMT--<id>)
@@ -895,12 +896,12 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Effective Radiative Forcing
-    df_forc = defs.load_ERF(erf_id, regress_vars, ensemble_members['ERF'],
-                            include_sub_vars=include_sub_vars)
+    df_forc = datasets.load_ERF(erf_id, regress_vars, ensemble_members['ERF'],
+                                include_sub_vars=include_sub_vars)
 
     if year_committed_to and year_committed_from:
         # Ensure that the ERF data goes up to the committed year.
-        df_forc = defs.extend_ERF_to_committed_year(
+        df_forc = datasets.extend_ERF_to_committed_year(
             df_forc, year_committed_to, year_committed_from)
 
     forc_var_names = sorted(
@@ -931,7 +932,7 @@ if __name__ == "__main__":
     trunc_Yrs = np.arange(start_trunc, end_trunc+1)
 
     # TEMPERATURE
-    df_temp_Obs = defs.load_GMT(
+    df_temp_Obs = datasets.load_GMT(
         gmt_id, ensemble_members['GMT'], start_pi, end_pi)
     n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
@@ -1003,8 +1004,8 @@ if __name__ == "__main__":
 
     # CMIP6 PI-CONTROL
     timeframes = [1, 3, 30]
-    df_temp_PiC = defs.load_PiC(picontrol_id, n_yrs, start_pi, end_pi)
-    df_temp_PiC = defs.filter_PiControl(df_temp_PiC, timeframes)
+    df_temp_PiC = datasets.load_PiC(picontrol_id, n_yrs, start_pi, end_pi)
+    df_temp_PiC = datasets.filter_PiControl(df_temp_PiC, timeframes)
     df_temp_PiC.set_index(np.arange(n_yrs)+start_trunc, inplace=True)
     # NOTE: For 1850-2022, we get 183 realisations for piControl
     # NOTE: For 1850-2023, we get 181 realisations for piControl
@@ -1283,7 +1284,7 @@ if __name__ == "__main__":
         prior_vars.remove('Res')
 
     # Load in the forcings for the prior calculation, specifying sub-variables
-    df_forc_priors = defs.load_ERF(
+    df_forc_priors = datasets.load_ERF(
         erf_id, prior_vars, ensemble_members['ERF'],
         include_sub_vars=include_sub_vars)
     # This is a two level column MultiIndex dataframe, with levels
@@ -1293,7 +1294,7 @@ if __name__ == "__main__":
 
     if year_committed_to:
         # Ensure that the ERF data goes up to the committed year.
-        df_forc_priors = defs.extend_ERF_to_committed_year(
+        df_forc_priors = datasets.extend_ERF_to_committed_year(
             df_forc_priors, year_committed_to, year_committed_from)
 
     if calculate_priors_output:
