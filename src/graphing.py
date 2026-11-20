@@ -251,9 +251,13 @@ def get_legend_reorder_indices(fig):
 
 
 def running_mean_internal_variability(
-    timeframes, df_temp_PiC, temp_Obs_IV
+    timeframes, df_temp_PiC, temp_Obs_IV, gmt_id
 ):
-    """Plot running means of internal variability ensemble."""
+    """Plot running means of internal variability ensemble.
+
+    gmt_id: the reference temperature dataset, for the legend, e.g.
+        'HadCRUT-2025'
+    """
     lims = [0.6, 0.4, 0.15]
     for t in range(len(timeframes)):
         axA = plt.subplot2grid(
@@ -290,7 +294,7 @@ def running_mean_internal_variability(
             temp_Obs_IV,
             np.ones(timeframes[t]),
             'valid') / timeframes[t]
-        axA.plot(_time_sliced, _data, label='HadCRUT5 median',
+        axA.plot(_time_sliced, _data, label=f'{gmt_id} median',
                  color='xkcd:teal', alpha=1)
         density = ss.gaussian_kde(_data)
         x = np.linspace(axA.get_ylim()[0], axA.get_ylim()[1], 50)
@@ -308,8 +312,12 @@ def running_mean_internal_variability(
 
 def plot_internal_variability_sample(
         ax1, ax2,
-        df_temp_PiC, df_temp_Obs, temp_Obs_IV, sigmas, sigmas_all):
-    """Plot internal variability: sigma timeseries and box plot."""
+        df_temp_PiC, df_temp_Obs, temp_Obs_IV, sigmas, sigmas_all, gmt_id):
+    """Plot internal variability: sigma timeseries and box plot.
+
+    gmt_id: the reference temperature dataset, for the legend, e.g.
+        'HadCRUT-2025'
+    """
     for p in range(len(sigmas)):
         ax1.fill_between(
             df_temp_PiC.index,
@@ -329,13 +337,13 @@ def plot_internal_variability_sample(
     ax2.plot([3, 4], df_temp_PiC.quantile(q=0.5, axis=1).mean()*np.ones(2),
              color='gray', alpha=0.7)
 
-    # HadCRUT5 median
+    # Reference temperature median
     ax1.plot(df_temp_Obs.index,
              (np.percentile(temp_Obs_IV, sigmas_all) *
               np.ones((len(df_temp_Obs.index), len(sigmas_all)))),
              color='xkcd:teal', alpha=0.7, ls='--')
     ax1.plot(df_temp_Obs.index, temp_Obs_IV,
-             color='xkcd:teal', alpha=0.7, label='HadCRUT5 median')
+             color='xkcd:teal', alpha=0.7, label=f'{gmt_id} median')
     for p in sigmas:
         ax2.fill_between(x=[1, 2],
                          y1=np.percentile(temp_Obs_IV, p[0])*np.ones(2),
@@ -442,8 +450,12 @@ def gwi_timeseries(ax, df_temp_Obs, df_temp_PiC, df_Results_ts,
                   [1850, 1900, 1950, 2000, end_tick])
 
 
-def gwi_residuals(ax, df_Results_ts):
-    """Plot the regression residuals of the GWI timeseries."""
+def gwi_residuals(ax, df_Results_ts, gmt_id):
+    """Plot the regression residuals of the GWI timeseries.
+
+    gmt_id: the reference temperature dataset, for the legend, e.g.
+        'HadCRUT-2025'
+    """
     ax.set_ylabel('Regression Residuals (°C)')
     fill_alpha = 0.2
     line_alpha = 0.7
@@ -456,10 +468,9 @@ def gwi_residuals(ax, df_Results_ts):
             color='gray', alpha=fill_alpha)
         ax.plot(df_Results_ts.index,
                 df_Results_ts.loc[:, ('Res', sigmas[-1])].values,
-                label='HadCRUT5 Residuals',
+                label=f'{gmt_id} residuals',
                 color='gray', alpha=line_alpha)
     ax.plot(df_Results_ts.index, np.zeros(len(df_Results_ts.index)),
-            # label='Reference Temp: HadCRUT5',
             color='xkcd:magenta', alpha=0.7,
             )
 
@@ -905,7 +916,13 @@ def draw_grouping_arrow(ax, vars_list, target, sources, y_offsets=None, line_y_o
 
 
 def definition_diagram(ax1, end_yr, df_headlines, df_temp_Obs, df_temp_Att,
-                       var_colours):
+                       var_colours, gmt_id):
+    """Diagram of the single-year, SR1.5 and AR6 definitions of current
+    warming.
+
+    gmt_id: the reference temperature dataset, for the labels, e.g.
+        'HadCRUT-2025'
+    """
     text_offset = 2
     rad = 5
     AR6_colour = '#67c1bf'
@@ -923,11 +940,11 @@ def definition_diagram(ax1, end_yr, df_headlines, df_temp_Obs, df_temp_Att,
     ax1.errorbar(df_temp_Obs.index, middle,
                  yerr=(err_neg, err_pos),
                  fmt='o', color=var_colours['Obs'], ms=2.5, lw=1,
-                 label='Reference Temp: HadCRUT5')
+                 label=f'Reference Temp: {gmt_id}')
     value = (f"{middle[end_yr]:.2f} " +
              f"[{lower[end_yr]:.2f}\N{EN DASH}{upper[end_yr]:.2f}] °C")
     annotation = (r'$\bf{Observed \ single \ year}$' +
-                  '\nHadCRUT5 reference' +
+                  f'\n{gmt_id} reference' +
                   f'\n{end_yr} observation:\n{value}')
     ax1.annotate(
         annotation,

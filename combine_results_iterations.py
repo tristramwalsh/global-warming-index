@@ -19,13 +19,19 @@ import functools
 from pprint import pprint
 
 
-# How far to thin the figures of member-by-member selections (GMT-7_ERF-all
-# and the like). Never applies to GMT-all_ERF-all, which is always drawn in
+# How far to thin the figures of member-by-member selections (ERF-all_GMT-7
+# and the like). Never applies to ERF-all_GMT-all, which is always drawn in
 # full. Overridden from the command line by --plot-every; see
 # ranges_to_plot() for what it means and parse_argvs() for the option
 # itself. 1 draws everything.
 PLOT_EVERY = 10
 
+
+# Results are filed by the inputs of the run that made them, in folders named
+# ERF--<id>_GMT--<id>_PREINDUSTRIAL--<start>-<end>[_COMMITTED--<from>-<to>]
+# (see gwi.py). Throughout this file, `scen` and `scenario` hold that whole
+# folder name, e.g.
+# 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'.
 
 # Where this run reads and writes. PLOT_FOLDER, AGGREGATED_FOLDER,
 # ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER and OBSERVATIONS_FOLDER are
@@ -69,6 +75,47 @@ def get_subdirs(path, prefix):
         d.split(prefix)[1] for d in os.listdir(path)
         if d.startswith(prefix) and os.path.isdir(os.path.join(path, d))
     ])
+
+
+def get_input_labels(path):
+    """Sorted list of the results folders in path, each named after the
+    inputs of the runs inside it,
+    e.g. 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'."""
+    if not os.path.exists(path):
+        return []
+    return sorted([
+        d for d in os.listdir(path)
+        if d.startswith('ERF--') and os.path.isdir(os.path.join(path, d))
+    ])
+
+
+def gmt_id_from_label(scen):
+    """The GMT dataset ID in an inputs label, e.g. 'HadCRUT-2025' from
+    'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'."""
+    return scen.split('_GMT--')[1].split('_PREINDUSTRIAL--')[0]
+
+
+def read_observations_timeseries(scen, ens):
+    """The reference temperatures a run used, as gwi.py saved them: the
+    selected GMT members, with the run's pre-industrial offset removed. One
+    column per member, indexed by year.
+
+    scen: the inputs label, e.g.
+        'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
+    ens: the member selection, e.g. 'ERF-all_GMT-all'
+    """
+    # The one Obs_timeseries file for these inputs and members
+    folder = f'{OBSERVATIONS_FOLDER}/{scen}/ENSEMBLE-MEMBER--{ens}/'
+    files = sorted(f for f in os.listdir(folder)
+                   if f.startswith('Obs_timeseries_'))
+
+    # Stop if it isn't there (results made before gwi.py saved it)
+    if len(files) != 1:
+        raise FileNotFoundError(
+            f'Expected one Obs_timeseries_*.csv file in {folder}, but found '
+            f'{len(files)}. Rerun gwi.py for these inputs to save it.')
+
+    return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
 
 
 def setup_plot_params(scen, ens, reg_vars, results_dfs):
@@ -236,7 +283,7 @@ def calculate_iteration_averages():
     work instead of one configuration's ranges at a time.
     """
 
-    scenarios_all = get_subdirs(ITERATIONS_FOLDER, 'SCENARIO--')
+    scenarios_all = get_input_labels(ITERATIONS_FOLDER)
     print(scenarios_all)
 
     # Walk the tree first, so that the log still reads as a hierarchy even
@@ -244,21 +291,21 @@ def calculate_iteration_averages():
     range_dirs = []
 
     for scenario in scenarios_all:
-        print('Collecting SCENARIO:', scenario)
+        print('Collecting INPUTS:', scenario)
 
         ensemble_selections = get_subdirs(
-            f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/', 'ENSEMBLE-MEMBER--')
+            f'{ITERATIONS_FOLDER}/{scenario}/', 'ENSEMBLE-MEMBER--')
 
         for ensemble_selection in ensemble_selections:
 
             regressed_variables_all = get_subdirs(
-                f'{ITERATIONS_FOLDER}/SCENARIO--{scenario}/'
+                f'{ITERATIONS_FOLDER}/{scenario}/'
                 f'ENSEMBLE-MEMBER--{ensemble_selection}/',
                 'VARIABLES--')
 
             for regressed_vars in regressed_variables_all:
                 _path = (f'{ITERATIONS_FOLDER}/' +
-                         f'SCENARIO--{scenario}/' +
+                         f'{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                          f'VARIABLES--{regressed_vars}/')
 
@@ -307,7 +354,7 @@ def iteration_base_path(regressed_years, scenario, ensemble_selection,
     """Return the iterations directory for a specific configuration."""
     return (
         f'{ITERATIONS_FOLDER}/'
-        f'SCENARIO--{scenario}/'
+        f'{scenario}/'
         f'ENSEMBLE-MEMBER--{ensemble_selection}/'
         f'VARIABLES--{regressed_vars}/'
         f'REGRESSED-YEARS--{regressed_years}/'
@@ -409,7 +456,7 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
     df_avg.to_csv(
         f'{out_path}' +
         f'GWI_results_{result_type}_' +
-        f'SCENARIO--{scenario}_'
+        f'{scenario}_'
         f'ENSEMBLE-MEMBER--{ensemble_selection}_' +
         f'VARIABLES--{regressed_vars}_' +
         f'REGRESSED-YEARS--{regressed_years}_' +
@@ -519,7 +566,7 @@ def load_gwi_priors_erf_obs():
     erf_files = {}
     obs_files = {}
 
-    scenarios_all = get_subdirs(AGGREGATED_FOLDER, 'SCENARIO--')
+    scenarios_all = get_input_labels(AGGREGATED_FOLDER)
 
     for scenario in scenarios_all:
         results_files.update({scenario: {}})
@@ -527,7 +574,7 @@ def load_gwi_priors_erf_obs():
         erf_files.update({scenario: {}})
         obs_files.update({scenario: {}})
 
-        _path = f'{AGGREGATED_FOLDER}/SCENARIO--{scenario}/'
+        _path = f'{AGGREGATED_FOLDER}/{scenario}/'
 
         ensembles_seletions_all = get_subdirs(_path, 'ENSEMBLE-MEMBER--')
 
@@ -539,10 +586,10 @@ def load_gwi_priors_erf_obs():
 
             # Load priors files
             _path_prior_dir = (f'{PRIORS_FOLDER}/' +
-                               f'SCENARIO--{scenario}/' +
+                               f'{scenario}/' +
                                f'ENSEMBLE-MEMBER--{ensemble_selection}/')
             _path_erf_dir = (f'{ERFS_FOLDER}/' +
-                             f'SCENARIO--{scenario}/' +
+                             f'{scenario}/' +
                              f'ENSEMBLE-MEMBER--{ensemble_selection}/')
             if os.path.exists(_path_prior_dir):
                 for f in os.listdir(_path_prior_dir):
@@ -556,7 +603,7 @@ def load_gwi_priors_erf_obs():
                             'timeseries'] = os.path.join(_path_erf_dir, f)
 
             _path = (f'{AGGREGATED_FOLDER}/' +
-                     f'SCENARIO--{scenario}/' +
+                     f'{scenario}/' +
                      f'ENSEMBLE-MEMBER--{ensemble_selection}/')
 
             regressed_variables_all = get_subdirs(_path, 'VARIABLES--')
@@ -566,7 +613,7 @@ def load_gwi_priors_erf_obs():
                     {regressed_vars: {}})
 
                 _path = (f'{AGGREGATED_FOLDER}/' +
-                         f'SCENARIO--{scenario}/' +
+                         f'{scenario}/' +
                          f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                          f'VARIABLES--{regressed_vars}/')
 
@@ -577,12 +624,12 @@ def load_gwi_priors_erf_obs():
                     res_type_dict = {
                         res_type: (
                                 f'{AGGREGATED_FOLDER}/' +
-                                f'SCENARIO--{scenario}/' +
+                                f'{scenario}/' +
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                                 f'VARIABLES--{regressed_vars}/' +
                                 f'REGRESSED-YEARS--{regressed_years}/' +
                                 f'GWI_results_{res_type}_' +
-                                f'SCENARIO--{scenario}_'
+                                f'{scenario}_'
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}_' +
                                 f'VARIABLES--{regressed_vars}_' +
                                 f'REGRESSED-YEARS--{regressed_years}_' +
@@ -603,7 +650,7 @@ def load_gwi_priors_erf_obs():
                                 ].update({regressed_years: {}})
 
                     _path_obs_dir = (f'{OBSERVATIONS_FOLDER}/' +
-                                     f'SCENARIO--{scenario}/' +
+                                     f'{scenario}/' +
                                      f'ENSEMBLE-MEMBER--{ensemble_selection}/'
                                      f'REGRESSED-YEARS--{regressed_years}/')
                     # The observation headlines don't change for different
@@ -634,27 +681,12 @@ def load_gwi_priors_erf_obs():
     # Load observation headlines
     obs_dfs = load_nested_dfs(obs_files)
 
-    # Load temperature observations timeseries
+    # Load the temperature observations timeseries each run used
     print('Loading temperature observations timeseries...')
     for scen in results_dfs.keys():
         for ens in results_dfs[scen].keys():
-            # Parse ensemble string for GMT
-            # e.g. pull the 7 (or similar) out of: GMT-7_ERF-all
-            try:
-                ens_GMT = {combo.split('-')[0]: combo.split('-')[1]
-                           for combo in ens.split('_')
-                           }['GMT']
-
-                scen_in = scen.split('_const-ERF')[0]
-
-                df_temp_Obs = defs.load_Temp(
-                    scenario=scen_in, ensemble_members=ens_GMT,
-                    start_pi=1850, end_pi=1900)
-
-                obs_dfs[scen][ens]['timeseries'] = df_temp_Obs
-            except Exception as e:
-                print('Warning: Could not load temperature observations for '
-                      f'{scen} {ens}: {e}')
+            obs_dfs[scen][ens]['timeseries'] = read_observations_timeseries(
+                scen, ens)
 
     return results_dfs, priors_dfs, erf_dfs, obs_dfs
 
@@ -737,7 +769,7 @@ def calculate_historical_only(
 
     print('\nGenerating historical-only timeseries')
     for scen in sorted(results_dfs.keys()):
-        print('SCENARIO:', scen)
+        print('INPUTS:', scen)
 
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
@@ -860,11 +892,11 @@ def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
     # then produced an error later on in the code.
     if not df_hist_headline.empty:
         df_hist_headline.to_csv(
-            f'{AGGREGATED_FOLDER}/SCENARIO--{scen}/' +
+            f'{AGGREGATED_FOLDER}/{scen}/' +
             f'ENSEMBLE-MEMBER--{ens}/' +
             f'VARIABLES--{reg_vars}/'
             f'GWI_results_{headline}_HISTORICAL-ONLY_' +
-            f'SCENARIO--{scen}_' +
+            f'{scen}_' +
             f'ENSEMBLE-MEMBER--{ens}_' +
             f'VARIABLES--{reg_vars}_' +
             f'REGRESSED-YEARS--{min_regressed_range}' +
@@ -884,7 +916,7 @@ def load_historical_only_dfs(results_dfs):
                 # Find all historical dataset in the results/aggregated folder
                 # and add them all to the dictionary.
                 _path = (f'{AGGREGATED_FOLDER}/' +
-                         f'SCENARIO--{scen}/' +
+                         f'{scen}/' +
                          f'ENSEMBLE-MEMBER--{ens}/' +
                          f'VARIABLES--{reg_vars}/')
                 # Sorted, because os.listdir order is whatever the
@@ -1106,7 +1138,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars} | '
                      f'Regressed range: {reg_range}')
@@ -1116,7 +1148,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
                  )
 
     plot_path = (f'{PLOT_FOLDER}aggregated/' +
-                 f'SCENARIO--{scen}/' +
+                 f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
@@ -1124,7 +1156,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
         os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
-                 f'Timeseries_Scenario--{scen}_' +
+                 f'Timeseries_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
@@ -1230,7 +1262,7 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars} | '
                      f'Regressed range: {reg_range}')
@@ -1240,7 +1272,7 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  )
 
     plot_path = (f'{PLOT_FOLDER}aggregated/' +
-                 f'SCENARIO--{scen}/' +
+                 f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
@@ -1248,7 +1280,7 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
         os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
-                 f'Rates_Scenario--{scen}_' +
+                 f'Rates_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
@@ -1345,7 +1377,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars} | '
                      f'Regressed range: {reg_range} | '
@@ -1355,7 +1387,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
              )
 
     plot_path = (f'{PLOT_FOLDER}iterations/' +
-                 f'SCENARIO--{scen}/' +
+                 f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
@@ -1363,7 +1395,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
         os.makedirs(plot_path, exist_ok=True)
 
     plot_name = (f'{plot_path}/' +
-                 f'Compare-Iterations_Scenario--{scen}_' +
+                 f'Compare-Iterations_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
@@ -1395,7 +1427,7 @@ def figure_spm2(
 
     # Describe this run, so that an unexpectedly missing headline can be
     # traced back to the results that produced it.
-    context = (f' (scenario {scen}, ensemble {ens}, variables {reg_vars}, '
+    context = (f' (inputs {scen}, ensemble {ens}, variables {reg_vars}, '
                f'regressed years {reg_range})')
 
     # Determine variables for SPM2 panels 2 and 3.
@@ -1516,7 +1548,7 @@ def figure_spm2(
                      )
 
         # Create plot
-        configuration = (f'Scenario: {scen} | '
+        configuration = (f'Inputs: {scen} | '
                          f'Ensemble: {ens} | '
                          f'Regressed variables: {reg_vars} | '
                          f'Regressed range: {reg_range}')
@@ -1541,7 +1573,7 @@ def figure_spm2(
 
         # Save plot
         plot_path = (f'{PLOT_FOLDER}aggregated/' +
-                     f'SCENARIO--{scen}/' +
+                     f'{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
                      f'REGRESSED-YEARS--{reg_range}/')
@@ -1550,7 +1582,7 @@ def figure_spm2(
 
         period_token = str(period).replace(' ', '-')
         plot_name = (f'{plot_path}/' +
-                     f'SPM2_BarPlot_Scenario--{scen}_' +
+                     f'SPM2_BarPlot_{scen}_' +
                      f'ENSEMBLE-MEMBER--{ens}_' +
                      f'VARIABLES--{reg_vars}_' +
                      f'REGRESSED-YEARS--{reg_range}_' +
@@ -1583,7 +1615,7 @@ def figure_waterfall(
 
     # Describe this run, so that an unexpectedly missing headline can be
     # traced back to the results that produced it.
-    context = (f' (scenario {scen}, ensemble {ens}, variables {reg_vars}, '
+    context = (f' (inputs {scen}, ensemble {ens}, variables {reg_vars}, '
                f'regressed years {reg_range})')
 
     for period in periods:
@@ -1879,7 +1911,7 @@ def figure_waterfall(
                  ha='left', fontsize=16, fontweight='bold')
 
         # Configuration text
-        configuration = (f'Scenario: {scen} | '
+        configuration = (f'Inputs: {scen} | '
                          f'Ensemble: {ens} | '
                          f'Regressed variables: {reg_vars} | '
                          f'Regressed range: {reg_range}')
@@ -1890,7 +1922,7 @@ def figure_waterfall(
 
         # Save plot
         plot_path = (f'{PLOT_FOLDER}aggregated/' +
-                     f'SCENARIO--{scen}/' +
+                     f'{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
                      f'REGRESSED-YEARS--{reg_range}/')
@@ -1899,7 +1931,7 @@ def figure_waterfall(
 
         period_token = str(period).replace(' ', '-')
         plot_name = (f'{plot_path}/' +
-                     f'Waterfall_BarPlot_Scenario--{scen}_' +
+                     f'Waterfall_BarPlot_{scen}_' +
                      f'ENSEMBLE-MEMBER--{ens}_' +
                      f'VARIABLES--{reg_vars}_' +
                      f'REGRESSED-YEARS--{reg_range}_' +
@@ -1980,19 +2012,19 @@ def figure_priors_timeseries(
         plt.subplots_adjust(right=0.8)
     fig.suptitle(
         f'Prior Warming Timeseries\n'
-        f'Scenario: {scen} | '
+        f'Inputs: {scen} | '
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
         f'{PLOT_FOLDER}priors/' +
-        f'SCENARIO--{scen}/' +
+        f'{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
     if not os.path.exists(plot_path):
         os.makedirs(plot_path, exist_ok=True)
     plot_name = (
         f'{plot_path}/' +
-        f'Prior_Timeseries_Scenario--{scen}_' +
+        f'Prior_Timeseries_{scen}_' +
         f'ENSEMBLE-MEMBER--{ens}_' +
         f'VARIABLES--{reg_vars}.png')
     fig.savefig(plot_name)
@@ -2058,19 +2090,19 @@ def figure_erf_timeseries(
         plt.subplots_adjust(right=0.8)
     fig.suptitle(
         f'Effective Radiative Forcing Timeseries\n'
-        f'Scenario: {scen} | '
+        f'Inputs: {scen} | '
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
         f'{PLOT_FOLDER}erfs/' +
-        f'SCENARIO--{scen}/' +
+        f'{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
     if not os.path.exists(plot_path):
         os.makedirs(plot_path, exist_ok=True)
     plot_name = (
         f'{plot_path}/' +
-        f'ERF_Timeseries_Scenario--{scen}_' +
+        f'ERF_Timeseries_{scen}_' +
         f'ENSEMBLE-MEMBER--{ens}_' +
         f'VARIABLES--{reg_vars}.png')
     fig.savefig(plot_name)
@@ -2093,9 +2125,9 @@ def parse_argvs():
       --plot-every=<N>     thin the figures of member-by-member selections
                            only -- the runs made with
                            --specify-ensemble-member that pull out one member
-                           (e.g. GMT-7_ERF-all) and run the whole analysis
+                           (e.g. ERF-all_GMT-7) and run the whole analysis
                            against it, as for Thorne et al. The standard
-                           GMT-all_ERF-all run handles the members inside the
+                           ERF-all_GMT-all run handles the members inside the
                            Monte Carlo instead and is ALWAYS plotted in full,
                            whatever N is.
                            For member-by-member selections: every one gets
@@ -2150,10 +2182,10 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
 
     # save as a gif
     images_list[0].save(
-        f'{PLOT_FOLDER}aggregated/SCENARIO--{scen}/' +
+        f'{PLOT_FOLDER}aggregated/{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/' +
-        f'Timeseries-animation_Scenario--{scen}_' +
+        f'Timeseries-animation_{scen}_' +
         f'Ensemble-Members--{ens}_' +
         f'Regressed--{reg_vars}_' +
         f'{min(reg_ranges_all)}_to_{max(reg_ranges_all)}.gif',
@@ -2164,8 +2196,8 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
 def ensemble_uses_all_members(ens):
     """Whether a selection uses every member of every source.
 
-    True for GMT-all_ERF-all. False for any selection that names a member,
-    such as GMT-7_ERF-all or GMT-all_ERF-7.
+    True for ERF-all_GMT-all. False for any selection that names a member,
+    such as ERF-all_GMT-7 or ERF-7_GMT-all.
 
     In the pipeline: ranges_to_plot and ensemble_is_plotted use it to exempt
     the full-ensemble selection from --plot-every, and
@@ -2204,7 +2236,7 @@ def ranges_to_plot(ens, reg_ranges, plot_every=None):
     """Choose the regressed ranges a selection gets base figures for.
 
     Returns a sorted subset of reg_ranges:
-      * all of them, for the full-ensemble selection (GMT-all_ERF-all), and
+      * all of them, for the full-ensemble selection (ERF-all_GMT-all), and
         for every selection when plot_every is 1;
       * the final range only, for a member-by-member selection whose member
         is not a multiple of plot_every (GMT-7, with the default of 10);
@@ -2215,7 +2247,7 @@ def ranges_to_plot(ens, reg_ranges, plot_every=None):
     Member-by-member selections are the runs that pull one member out of an
     ensemble and run the whole analysis against it, as for the Thorne et al.
     comparison against each GMST realisation. The standard run,
-    GMT-all_ERF-all, samples the members inside the Monte Carlo instead. So
+    ERF-all_GMT-all, samples the members inside the Monte Carlo instead. So
     with the default of 10, all hundred members of a member-by-member
     scenario get figures for their final range, and ten of them for
     1850-1950, 1850-1960, ... as well.
@@ -2313,7 +2345,7 @@ def figure_historical_only_timeseries(
             plt.subplots_adjust(right=0.8)
         fig.suptitle(f'Historical-only {headline}')
 
-        configuration = (f'Scenario: {scen} | '
+        configuration = (f'Inputs: {scen} | '
                          f'Ensemble: {ens} | '
                          f'Regressed variables: {reg_vars}')
         fig.text(0.5, 0.01, configuration, ha='center',
@@ -2369,7 +2401,7 @@ def figure_historical_vs_full_timeseries(
     fig.suptitle(
         'Historical-only (dashed) versus Full-information (solid)')
 
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars}')
     fig.text(0.5, 0.01, configuration, ha='center',
@@ -2544,7 +2576,7 @@ def figure_headlines_comparison(
     fig.suptitle(
         'Historical-only and Full-information vs 20-year Obs running mean')
 
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars}')
     fig.text(0.5, 0.01, configuration, ha='center',
@@ -2633,7 +2665,7 @@ def figure_thorne_et_al(
         'Global Warming Index (GWI)'
     )
 
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars}')
     fig.text(0.5, 0.01, configuration, ha='center',
@@ -2771,7 +2803,7 @@ def figure_constrained_warming(
 
     fig.suptitle(f'Constrained projected warming in {constrained_year}')
 
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars}')
     fig.text(0.5, 0.01, configuration, ha='center',
@@ -2954,7 +2986,7 @@ def figure_delta_contributions(
             'timeseries'].quantile(q=0.5, axis=1),
         yerr=(err_neg, err_pos),
         fmt='o', color=params['colours']['Obs'], ms=2.5, lw=1,
-        label='Reference Temp: HadCRUT5')
+        label=f'Reference Temp: {gmt_id_from_label(scen)}')
 
     ax2.set_ylabel('Global Warming, ⁰C')
     ax2.set_xticks(years, years)
@@ -2964,7 +2996,7 @@ def figure_delta_contributions(
     fig.suptitle(
         f'Contributions to the change in {changing_var} warming ' +
         'each year Y → Y+1')
-    configuration = (f'Scenario: {scen} | '
+    configuration = (f'Inputs: {scen} | '
                      f'Ensemble: {ens} | '
                      f'Regressed variables: {reg_vars}')
     fig.text(0.5, 0.01, configuration, ha='center',
@@ -3040,7 +3072,7 @@ def overarching_base_result_plotter(
 
     print('\nPlotting single-run timeseries')
     for scen in results_dfs.keys():
-        print('SCENARIO:', scen)
+        print('INPUTS:', scen)
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
@@ -3253,7 +3285,7 @@ def overarching_historical_only_plotter(
 
     print('\nGenerating historical-only timeseries')
     for scen in sorted(results_dfs.keys()):
-        print('SCENARIO:', scen)
+        print('INPUTS:', scen)
 
         for ens in results_dfs[scen].keys():
             print('  ENSEMBLE-MEMBER:', ens)
@@ -3268,7 +3300,7 @@ def overarching_historical_only_plotter(
                     continue
 
                 plot_path = f'{PLOT_FOLDER}aggregated/' + \
-                    f'SCENARIO--{scen}/' + \
+                    f'{scen}/' + \
                     f'ENSEMBLE-MEMBER--{ens}/' + \
                     f'VARIABLES--{reg_vars}/'
                 if not os.path.exists(plot_path):
@@ -3338,7 +3370,7 @@ if __name__ == '__main__':
     if PLOT_EVERY > 1:
         print(f'--plot-every={PLOT_EVERY}: member-by-member selections are '
               f'thinned to one in {PLOT_EVERY} members and ranges; '
-              'GMT-all_ERF-all is always plotted in full')
+              'ERF-all_GMT-all is always plotted in full')
     else:
         print('--plot-every=1: plotting every figure')
 

@@ -1024,7 +1024,7 @@ if __name__ == "__main__":
         # PLOT THE INTERNAL VARIABILITY #######################################
         fig = plt.figure(figsize=(15, 10))
         gr.running_mean_internal_variability(
-            timeframes, df_temp_PiC, temp_Obs_IV)
+            timeframes, df_temp_PiC, temp_Obs_IV, gmt_id)
         gr.overall_legend(fig, loc='lower center', ncol=2, nrow=False)
         fig.suptitle(
             'Selected Sample of Internal Variability from CMIP6 PiControl')
@@ -1037,7 +1037,7 @@ if __name__ == "__main__":
         ax2 = plt.subplot2grid(shape=(1, 4), loc=(0, 3), rowspan=1, colspan=1)
         gr.plot_internal_variability_sample(
             ax1, ax2, df_temp_PiC, df_temp_Obs, temp_Obs_IV,
-            sigmas, sigmas_all)
+            sigmas, sigmas_all, gmt_id)
         gr.overall_legend(fig, loc='lower center', ncol=3, nrow=False)
         fig.suptitle(
             'Selected Sample of Internal Variability from CMIP6 pi-control')
