@@ -5,6 +5,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import scipy.stats as ss
 import src.variables as variables
+import gc
 
 # font_family = 'Roboto'
 font_family = 'Lato'
@@ -573,3 +574,19 @@ def un_en_dash_ify(df):
         index={r: r.replace('\N{EN DASH}', '-') for r in rows_to_rename},
         inplace=True)
     return df
+
+
+def close_figure(fig):
+    """Close a figure and free its memory straight away.
+
+    plt.close only drops pyplot's own reference to the figure. The figure,
+    its axes and their artists still refer to one another in cycles, which
+    only Python's periodic cycle collection frees, so a process drawing many
+    figures holds hundreds of megabytes of closed ones between collections.
+    gc.collect frees them now.
+
+    In the pipeline: used by the figure functions that run in a pool, where
+    that memory is held once per worker.
+    """
+    plt.close(fig)
+    gc.collect()
