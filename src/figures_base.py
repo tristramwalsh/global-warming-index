@@ -492,7 +492,8 @@ def figure_spm2(
 
         # Add text
         fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
-                 f'Observed warming and contributions ({period})',
+                 'Observed warming and contributions ('
+                 + period.replace('-', '\N{EN DASH}') + ')',
                  fontsize=plt.rcParams['axes.titlesize'],
                  fontweight='bold',
                  )
@@ -877,12 +878,13 @@ def figure_waterfall(
 
         ax.set_xlabel(
             'Change in global mean surface temperature relative to '
-            '1850-1900 (°C)',
+            '1850\N{EN DASH}1900 (°C)',
             fontsize=12)
 
         # Title
         fig.text(0.05, 0.95,
-                 f'Attributable contributions to warming ({period})',
+                 'Attributable contributions to warming ('
+                 + period.replace('-', '\N{EN DASH}') + ')',
                  ha='left', fontsize=16, fontweight='bold')
 
         # Configuration text

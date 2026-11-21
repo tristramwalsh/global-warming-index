@@ -384,7 +384,7 @@ def plot_spm2_panel(ax, df, period, vars_list, var_colours, var_names, ylim,
     
     if show_ylabel:
         ax.set_ylabel('Change in global mean surface temperature'
-                      '\nrelative to 1850-1900 (°C)')
+                      '\nrelative to 1850\N{EN DASH}1900 (°C)')
     
     if not show_yticklabels:
         ax.set_yticklabels([])
@@ -475,31 +475,6 @@ def draw_grouping_arrow(ax, vars_list, target, sources, y_offsets=None, line_y_o
                                     color='gainsboro',
                                     lw=1)
                     )
-
-
-def en_dash_ify(df):
-    r"""Replace - with \N{EN DASH} in date danges in dataframes."""
-    """This is required by ESSD formatting"""
-    # List the rows with a - character in them
-    rows_to_rename = [r for r in df.index if '-' in r]
-    # Rename those rows, replacing the - with a \N{EN DASH}
-    df.rename(
-        index={r: r.replace('-', '\N{EN DASH}') for r in rows_to_rename},
-        inplace=True)
-    return df
-
-
-def un_en_dash_ify(df):
-    r"""Replace \N{EN DASH} with - in date danges in dataframes."""
-    """For the purposes of saving to csv, where a normal '-' is likely safest
-    for people to use, and most consistent with files from collaborators."""
-    # List the rows with a - character in them
-    rows_to_rename = [r for r in df.index if '\N{EN DASH}' in r]
-    # Rename those rows, replacing the - with a \N{EN DASH}
-    df.rename(
-        index={r: r.replace('\N{EN DASH}', '-') for r in rows_to_rename},
-        inplace=True)
-    return df
 
 
 def close_figure(fig):

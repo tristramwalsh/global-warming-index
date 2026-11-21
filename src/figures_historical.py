@@ -67,7 +67,8 @@ def figure_historical_only_timeseries(
         ax.set_xticks(xticks, xticks)
         ax.set_title(
             'Regressed years range: ' +
-            f"{params['min_range']} to {params['max_range']}")
+            f"{params['min_range']} to {params['max_range']}".replace(
+                '-', '\N{EN DASH}'))
         gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
 
         if legend_loc == 'center right':
@@ -124,7 +125,8 @@ def figure_historical_vs_full_timeseries(
 
     ax.set_title(
         'Regressed years range: ' +
-        f"{params['min_range']} to {params['max_range']}")
+        f"{params['min_range']} to {params['max_range']}".replace(
+            '-', '\N{EN DASH}'))
     gr.overall_legend(fig, 'lower center', 6)
 
     fig.suptitle(
@@ -484,7 +486,7 @@ def figure_constrained_warming(
     #     np.ceil(np.max(df_constrained.values) * 2) / 2)
     ax1.set_xlim(params['start_year'], params['end_year'])
     ax1.set_ylabel(f'Warming in {constrained_year} ⁰C')
-    ax1.set_xlabel(f'Regressed years: {start_regress}-<year>')
+    ax1.set_xlabel(f'Regressed years: {start_regress}\N{EN DASH}<year>')
     xticks = list(np.arange(params['start_year'], params['end_year'] + 1, 5))
     xticks.append(params['end_year'])
     ax1.set_xticks(xticks, xticks)
@@ -663,7 +665,7 @@ def figure_delta_contributions(
             'timeseries']
         ax2.plot(df_new.loc[:year, :].index,
                  df_new.loc[:year, (changing_var, '50')],
-                 label=f'{start_regress}-{year}',
+                 label=f'{start_regress}\N{EN DASH}{year}',
                  color='darkslategray', linestyle='solid',
                  marker='o', markeredgewidth=0,
                  alpha=(year-min(years)+1)/len(years),
