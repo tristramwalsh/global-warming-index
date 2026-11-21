@@ -2,7 +2,6 @@ import os
 import sys
 import gc
 import numpy as np
-import pandas as pd
 import matplotlib
 # Draw figures straight to file: this script only saves them, never shows
 # them. Without this, macOS picks its interactive backend, which is not safe
@@ -16,18 +15,11 @@ import src.compute_resources as compute_resources
 import src.results_layout as results_layout
 import src.variables as variables
 import src.warming_definitions as warming_definitions
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
+import src.iteration_averaging as iteration_averaging
+import src.results_reading as results_reading
+import src.historical_only as historical_only
+import src.figure_selection as figure_selection
 import functools
-from pprint import pprint
-
-
-# How far to thin the figures of member-by-member selections (ERF-all_GMT-7
-# and the like). Never applies to ERF-all_GMT-all, which is always drawn in
-# full. Overridden from the command line by --plot-every; see
-# ranges_to_plot() for what it means and parse_argvs() for the option
-# itself. 1 draws everything.
-PLOT_EVERY = 10
 
 
 # Results are filed by the inputs of the run that made them, in folders named
@@ -35,141 +27,6 @@ PLOT_EVERY = 10
 # (see gwi.py). Throughout this file, `scen` and `scenario` hold that whole
 # folder name, e.g.
 # 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'.
-
-# Where this run reads and writes. PLOT_FOLDER, AGGREGATED_FOLDER,
-# ITERATIONS_FOLDER, PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER and
-# PICONTROL_FOLDER are
-# created by set_output_folders() below -- the only place the layout is
-# written down -- and read by the functions in this file as they run.
-
-
-def set_output_folders(output_tag=None):
-    """Point every output folder at this piece of work's own directory.
-
-    With no tag these are the plain results/ and plots/ folders this script
-    has always used. With one, they become results_<tag>/ and plots_<tag>/,
-    so that separate pieces of work -- a paper, an assessment, a
-    collaborator's runs, your own development -- neither overwrite each other
-    nor all get processed every time this script runs.
-
-    Pass the same tag that was given to gwi.py, so that this reads what that
-    wrote.
-    """
-    global PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER
-    global PRIORS_FOLDER, ERFS_FOLDER, OBSERVATIONS_FOLDER, PICONTROL_FOLDER
-
-    results_root = results_layout.tagged_folder('results', output_tag)
-    PLOT_FOLDER = results_layout.tagged_folder('plots', output_tag) + '/'
-    AGGREGATED_FOLDER = f'{results_root}/aggregated'
-    ITERATIONS_FOLDER = f'{results_root}/iterations'
-    PRIORS_FOLDER = f'{results_root}/priors'
-    ERFS_FOLDER = f'{results_root}/erfs'
-    OBSERVATIONS_FOLDER = f'{results_root}/observations'
-    PICONTROL_FOLDER = f'{results_root}/picontrol'
-
-    print(f'Reading results from {ITERATIONS_FOLDER}/, '
-          f'writing plots to {PLOT_FOLDER}'
-          f'{"" if output_tag else "  (no tag set)"}')
-
-
-def get_subdirs(path, prefix):
-    """Get sorted list of subdirectories starting with a prefix."""
-    if not os.path.exists(path):
-        return []
-    return sorted([
-        d.split(prefix)[1] for d in os.listdir(path)
-        if d.startswith(prefix) and os.path.isdir(os.path.join(path, d))
-    ])
-
-
-def get_input_labels(path):
-    """Sorted list of the results folders in path, each named after the
-    inputs of the runs inside it,
-    e.g. 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'."""
-    if not os.path.exists(path):
-        return []
-    return sorted([
-        d for d in os.listdir(path)
-        if d.startswith('ERF--') and os.path.isdir(os.path.join(path, d))
-    ])
-
-
-def gmt_id_from_label(scen):
-    """The GMT dataset ID in an inputs label, e.g. 'HadCRUT-2025' from
-    'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'."""
-    return scen.split('_GMT--')[1].split('_PREINDUSTRIAL--')[0]
-
-
-def read_observations_timeseries(scen, ens):
-    """The reference temperatures a run used, as gwi.py saved them: the
-    selected GMT members, with the run's pre-industrial offset removed. One
-    column per member, indexed by year.
-
-    scen: the inputs label, e.g.
-        'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
-    ens: the member selection, e.g. 'ERF-all_GMT-all'
-    """
-    # The one Obs_timeseries file for these inputs and members
-    folder = f'{OBSERVATIONS_FOLDER}/{scen}/ENSEMBLE-MEMBER--{ens}/'
-    files = sorted(f for f in os.listdir(folder)
-                   if f.startswith('Obs_timeseries_'))
-
-    # Stop if it isn't there (results made before gwi.py saved it)
-    if len(files) != 1:
-        raise FileNotFoundError(
-            f'Expected one Obs_timeseries_*.csv file in {folder}, but found '
-            f'{len(files)}. Rerun gwi.py for these inputs to save it.')
-
-    return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
-
-
-def read_picontrol_timeseries(scen):
-    """The filtered piControl segments a run sampled internal variability
-    from, as gwi.py saved them: one column per segment, indexed by year. None
-    if there is no such file (results made before gwi.py saved it).
-
-    scen: the inputs label, e.g.
-        'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
-    """
-    # The one PiControl_timeseries file for these inputs
-    folder = f'{PICONTROL_FOLDER}/{scen}/'
-    if not os.path.exists(folder):
-        return None
-    files = sorted(f for f in os.listdir(folder)
-                   if f.startswith('PiControl_timeseries_'))
-    if len(files) != 1:
-        return None
-
-    return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
-
-
-def setup_plot_params(scen, ens, reg_vars, results_dfs):
-    """Extract common plotting parameters."""
-    reg_ranges_all = sorted(
-        [item for item in results_dfs[scen][ens][reg_vars].keys()
-            if item != 'HISTORICAL-ONLY']
-        )
-    min_regressed_range = reg_ranges_all[0]
-    max_regressed_range = reg_ranges_all[-1]
-    smallest_end_year = int(min_regressed_range.split('-')[1])
-    largest_end_year = int(max_regressed_range.split('-')[1])
-
-    first_range = reg_ranges_all[0]
-    plot_vars = results_dfs[scen][ens][reg_vars][first_range][
-        'timeseries'].columns.get_level_values(0).unique().to_list()
-    all_var_colours, scaling_map = gr.get_dynamic_colours(
-        reg_vars, plot_vars, gr.VAR_COLOURS)
-
-    return {
-        'min_range': min_regressed_range,
-        'max_range': max_regressed_range,
-        'start_year': smallest_end_year,
-        'end_year': largest_end_year,
-        'plot_vars': plot_vars,
-        'colours': all_var_colours,
-        'scaling_map': scaling_map,
-        'reg_ranges_all': reg_ranges_all
-    }
 
 
 def close_figure(fig):
@@ -186,889 +43,6 @@ def close_figure(fig):
     """
     plt.close(fig)
     gc.collect()
-
-
-def run_in_pool(func, tasks):
-    """Call func(*task) for each task in a process pool; return the results.
-
-    The results come back in the order of tasks. Tasks are sent in chunks
-    sized so that each worker gets about four, however many tasks there are.
-
-    In the pipeline: every parallel step of the script runs through it -- the
-    averaging, the loading, and each type of base figure.
-
-    Replaces mp.Pool, which cannot recover from a worker dying. When the
-    kernel kills a worker for using too much memory, mp.Pool starts a
-    replacement but never fails the task the dead worker held, so the run
-    hangs; ProcessPoolExecutor raises BrokenProcessPool instead. (If it is
-    this parent process the kernel kills, the shell prints 'Killed' and there
-    is nothing left to report anything.)
-    """
-    n_workers = compute_resources.n_workers()
-    chunksize = max(1, int(np.ceil(len(tasks) / (4 * n_workers))))
-    # Frozen, the objects already in this process -- all the loaded results
-    # -- are left out of the garbage collections the workers make after each
-    # figure (close_figure), which then stay quick and do not copy the
-    # parent's memory into every worker.
-    gc.collect()
-    gc.freeze()
-    # The workers must be forked, not spawned. A forked worker starts as a
-    # copy of this process, with the output folders set_output_folders() set
-    # and the results already loaded; a spawned one starts afresh and has
-    # neither. Fork is the default on Linux but not on macOS (spawn, since
-    # Python 3.8), so it is requested explicitly, as gwi.py does.
-    try:
-        with ProcessPoolExecutor(
-                n_workers, mp_context=mp.get_context('fork')) as executor:
-            return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
-    finally:
-        gc.unfreeze()
-
-
-def range_result_types(base_path):
-    """List the result types that have iteration files in one directory.
-
-    Returns the subset of ('timeseries', 'headlines', 'rates') for which
-    base_path -- one regressed-years directory under ITERATIONS_FOLDER --
-    holds at least one file, or [] if the directory does not exist. The
-    directory is listed once, and that one listing answers for all three.
-
-    In the pipeline: calculate_iteration_averages runs it in a pool, once for
-    every regressed-years directory of every scenario, ensemble selection and
-    set of regressed variables, and queues an average only for the result
-    types it returns.
-
-    Replaces check_headlines_files and check_rates_files. Those ran in the
-    parent, one configuration at a time; each listed the configuration's
-    directories until it found a file of its type, and if it did, switched
-    that type on for every range of the configuration. This is better
-    because:
-      - the listings run in parallel rather than one after another. Rates
-        are rarely written, so check_rates_files listed every directory --
-        all 7676 in results_Thorne_2026, which took from 2 s to 35 s on the
-        network filesystem depending on its load;
-      - each directory is judged on its own files, so nothing is queued for
-        a range without iterations of that type. The old checks queued
-        those, and each then printed 'No iterations found'.
-    """
-    try:
-        files = os.listdir(base_path)
-    except FileNotFoundError:
-        return []
-
-    # any() consumes the generator lazily, so for each result type it stops
-    # at the first file name containing it rather than testing every name.
-    return [
-        result_type for result_type in ('timeseries', 'headlines', 'rates')
-        if any(result_type in f for f in files)
-        ]
-
-
-def write_repeat_average(regressed_years, result_type, scenario,
-                         ensemble_selection, regressed_vars):
-    """Average one dataset's iterations and write the average to disk.
-
-    Calls combine_repeats for one regressed range and result type, which
-    writes the ensemble-size-weighted average of that dataset's iterations
-    to AGGREGATED_FOLDER. Returns nothing.
-
-    In the pipeline: calculate_iteration_averages runs it in a pool, once for
-    every (regressed range, result type) that range_result_types found
-    iteration files for.
-
-    Replaces running combine_repeats in the pool directly. combine_repeats
-    also returns the averaged frame and every iteration behind it, and a
-    pool pickles every return value back to the parent -- which discarded
-    them. Returning nothing avoids that transfer, and leaves combine_repeats,
-    which does the averaging itself, unchanged.
-    """
-    combine_repeats(regressed_years, result_type, scenario,
-                    ensemble_selection, regressed_vars)
-
-
-def calculate_iteration_averages():
-    """Average the timeseries, headlines and rates iterations of every run.
-
-    Walks ITERATIONS_FOLDER through every scenario, ensemble selection, set
-    of regressed variables and regressed range; finds which result types
-    each range has iteration files for; and writes the average of each of
-    those datasets to AGGREGATED_FOLDER. Returns nothing: the averages are
-    read back from disk by load_gwi_priors_erf_obs.
-
-    In the pipeline: the first step of the script, run when --re-calculate=y.
-    It uses two pools, each over one flat list of all the work -- first
-    range_result_types over every regressed-years directory, then
-    write_repeat_average over every (range, result type) to average.
-
-    Replaces a loop over the configurations (scenario, ensemble selection,
-    regressed variables) that built a new pool for each one and averaged
-    only that configuration's ranges in it. This is better because one pool
-    is started instead of one per configuration -- a hundred, for a
-    member-by-member scenario -- and the workers share one list of all the
-    work instead of one configuration's ranges at a time.
-    """
-
-    scenarios_all = get_input_labels(ITERATIONS_FOLDER)
-    print(scenarios_all)
-
-    # Walk the tree first, so that the log still reads as a hierarchy even
-    # though the averaging that follows is one flat pass.
-    range_dirs = []
-
-    for scenario in scenarios_all:
-        print('Collecting INPUTS:', scenario)
-
-        ensemble_selections = get_subdirs(
-            f'{ITERATIONS_FOLDER}/{scenario}/', 'ENSEMBLE-MEMBER--')
-
-        for ensemble_selection in ensemble_selections:
-
-            regressed_variables_all = get_subdirs(
-                f'{ITERATIONS_FOLDER}/{scenario}/'
-                f'ENSEMBLE-MEMBER--{ensemble_selection}/',
-                'VARIABLES--')
-
-            for regressed_vars in regressed_variables_all:
-                _path = (f'{ITERATIONS_FOLDER}/' +
-                         f'{scenario}/' +
-                         f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
-                         f'VARIABLES--{regressed_vars}/')
-
-                regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
-
-                steps = warming_definitions.check_steps(regressed_years_vars)
-                if steps['check_bool']:
-                    print(f'  {ensemble_selection} {regressed_vars}: '
-                          "all regressed years "
-                          f"{steps['range']}")
-
-                for regressed_years in regressed_years_vars:
-                    range_dirs.append(
-                        (regressed_years, scenario,
-                         ensemble_selection, regressed_vars))
-
-    # The directory of each regressed range, whose files say which result
-    # types it has iterations for.
-    range_paths = [
-        iteration_base_path(regressed_years, scenario,
-                            ensemble_selection, regressed_vars)
-        for regressed_years, scenario, ensemble_selection, regressed_vars
-        in range_dirs]
-
-    # Which result types each directory holds. These are thousands of
-    # network listings, none depending on another, so they run in the pool.
-    print(f'\nChecking {len(range_paths)} regressed-year directories')
-    types_per_dir = run_in_pool(
-        range_result_types, [(path,) for path in range_paths])
-
-    # One averaging task for each result type found in each directory.
-    tasks = []
-    for range_dir, result_types in zip(range_dirs, types_per_dir):
-        (regressed_years, scenario,
-         ensemble_selection, regressed_vars) = range_dir
-        for result_type in result_types:
-            tasks.append((regressed_years, result_type, scenario,
-                          ensemble_selection, regressed_vars))
-
-    print(f'Averaging {len(tasks)} datasets from '
-          f'{len(range_dirs)} regressed-year directories')
-    run_in_pool(write_repeat_average, tasks)
-
-
-def iteration_base_path(regressed_years, scenario, ensemble_selection,
-                        regressed_vars):
-    """Return the iterations directory for a specific configuration."""
-    return (
-        f'{ITERATIONS_FOLDER}/'
-        f'{scenario}/'
-        f'ENSEMBLE-MEMBER--{ensemble_selection}/'
-        f'VARIABLES--{regressed_vars}/'
-        f'REGRESSED-YEARS--{regressed_years}/'
-    )
-
-
-def load_iteration_dfs(regressed_years, result_type, scenario,
-                       ensemble_selection, regressed_vars):
-    """
-    Load each repeat iteration's results for a specific configuration.
-
-    Args:
-        regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines',
-            'rates').
-        scenario: The scenario name.
-        ensemble_selection: The ensemble selection name.
-        regressed_vars: The regressed variables.
-
-    Returns:
-        A tuple containing a dictionary of the DataFrame for each iteration,
-        and a dictionary of the ensemble size of each iteration, both keyed by
-        iteration filename. Both are empty if no files are found.
-    """
-    dict_iterations = {}
-    size_iterations = {}
-
-    base_path = iteration_base_path(
-        regressed_years, scenario, ensemble_selection, regressed_vars)
-
-    if not os.path.exists(base_path):
-        print(f'Path not found: {base_path}')
-        return dict_iterations, size_iterations
-
-    iteration_files = [
-        f for f in os.listdir(base_path)
-        if result_type in f
-    ]
-
-    if len(iteration_files) == 0:
-        print('No iterations found for:',
-              result_type, scenario, ensemble_selection,
-              regressed_years, regressed_vars)
-        return dict_iterations, size_iterations
-
-    for iteration in iteration_files:
-        fname = os.path.join(base_path, iteration)
-        ens_size = int(fname.split('ENSEMBLE-SIZE--')[-1].split('_')[0])
-        df_iteration = pd.read_csv(
-            fname, index_col=0,  header=[0, 1], skiprows=0)
-        dict_iterations[iteration] = df_iteration
-        size_iterations[iteration] = ens_size
-
-    return dict_iterations, size_iterations
-
-
-def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
-                    regressed_vars):
-    """
-    Average results across iterations for a specific configuration.
-
-    Args:
-        regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines',
-            'rates').
-        scenario: The scenario name.
-        ensemble_selection: The ensemble selection name.
-        regressed_vars: The regressed variables.
-
-    Returns:
-        A tuple containing the averaged DataFrame, a dictionary of all
-        iterations, and a dictionary of ensemble sizes, or (None, None, None)
-        if no files found.
-    """
-    dict_iterations, size_iterations = load_iteration_dfs(
-        regressed_years, result_type, scenario, ensemble_selection,
-        regressed_vars)
-
-    if len(dict_iterations) == 0:
-        return None, None, None
-
-    iteration_files = list(dict_iterations.keys())
-
-    # Produce the averaged dataset
-    df_avg = (dict_iterations[iteration_files[0]].copy() *
-              size_iterations[iteration_files[0]])
-    df_avg[:] = 0
-    for iteration in iteration_files:
-        df_avg += dict_iterations[iteration] * size_iterations[iteration]
-    # df_avg /= len(iterations)
-    df_avg /= sum(size_iterations.values())
-
-    # Create the specific directory for these regressed years
-    out_path = iteration_base_path(
-        regressed_years, scenario, ensemble_selection, regressed_vars
-        ).replace(ITERATIONS_FOLDER, AGGREGATED_FOLDER)
-    os.makedirs(out_path, exist_ok=True)
-
-    df_avg.to_csv(
-        f'{out_path}' +
-        f'GWI_results_{result_type}_' +
-        f'{scenario}_'
-        f'ENSEMBLE-MEMBER--{ensemble_selection}_' +
-        f'VARIABLES--{regressed_vars}_' +
-        f'REGRESSED-YEARS--{regressed_years}_' +
-        'AVERAGE.csv')
-
-    return df_avg, dict_iterations, size_iterations
-
-
-def read_results_csv(path):
-    """Read one results CSV into a DataFrame, or None if it does not exist.
-
-    The file has two header rows -- variable and percentile -- read as a
-    column MultiIndex, with the year or period as its index. A missing file
-    gives None, which is how the rest of the script tells a result that was
-    never written from one that was.
-
-    In the pipeline: load_nested_dfs runs it in a pool, once for every path
-    in a nested dictionary of results files (or directly, for a small one).
-
-    Replaces the reading step inside the old recursive load_nested_dfs,
-    which read each file as it came to it. It is a function of its own now
-    so that the pool can call it.
-    """
-    if os.path.exists(path):
-        return pd.read_csv(path, index_col=0, header=[0, 1], skiprows=0)
-    return None
-
-
-def collect_nested_paths(d, paths):
-    """Add every file path in a nested dictionary to the set `paths`.
-
-    Walks dictionaries nested to any depth and takes every string value to
-    be a path. Returns `paths`, so it can be called as
-    collect_nested_paths(d, set()).
-
-    In the pipeline: load_nested_dfs calls it first, for the flat list of
-    files it then reads in the pool.
-    """
-    if isinstance(d, dict):
-        for v in d.values():
-            collect_nested_paths(v, paths)
-    elif isinstance(d, str):
-        paths.add(d)
-    return paths
-
-
-def substitute_nested_dfs(d, frames):
-    """Copy a nested dictionary, replacing each path with its frame.
-
-    Keeps the keys, their nesting and their order. Every string value is
-    looked up in `frames` (path -> DataFrame, or None for a missing file);
-    anything else is kept as it is. A path that is not in `frames` raises
-    KeyError, rather than coming back as None and being taken for a file
-    that was never written.
-
-    In the pipeline: load_nested_dfs calls it last, to put the frames read
-    in the pool back where their paths were.
-    """
-    if isinstance(d, dict):
-        return {k: substitute_nested_dfs(v, frames) for k, v in d.items()}
-    elif isinstance(d, str):
-        return frames[d]
-    return d
-
-
-def load_nested_dfs(d):
-    """Return a nested dictionary of file paths with the files read in.
-
-    Takes a dictionary, nested to any depth, whose string values are paths
-    to results CSVs, and returns the same structure with each path replaced
-    by its DataFrame -- or by None where the file does not exist.
-
-    In the pipeline: load_gwi_priors_erf_obs calls it four times, for the GWI
-    results, priors, ERFs and observations. It collects every path into one
-    flat list (collect_nested_paths), reads them in a pool
-    (read_results_csv), and puts the frames back (substitute_nested_dfs). A
-    dictionary of fewer than 64 files is read directly instead.
-
-    Replaces a version that walked the dictionary recursively and read each
-    file in the parent as it came to it. This is better because the reading
-    is now parallel. pandas spends several milliseconds on each file building
-    its two-row column MultiIndex, and a scenario run member by member --
-    e.g. GMT={1..100} with ERF=all, as in the Thorne et al. analysis -- is
-    fifteen thousand files: for results_Thorne_2026, 87 s one after another
-    against about 5 s in the pool on 28 workers. The frames are small, so
-    sending them back to the parent costs far less than parsing them there.
-    """
-    paths = sorted(collect_nested_paths(d, set()))
-
-    # Starting a pool costs about 0.2 s, the same as reading 60-70 files one
-    # after another (measured with all of results_Thorne_2026 loaded, 28
-    # workers). So smaller dictionaries -- the priors and ERFs, a handful of
-    # files each -- are read directly.
-    if len(paths) < 64:
-        frames = {path: read_results_csv(path) for path in paths}
-    else:
-        frames = dict(zip(paths, run_in_pool(
-            read_results_csv, [(path,) for path in paths])))
-
-    return substitute_nested_dfs(d, frames)
-
-
-def load_gwi_priors_erf_obs():
-    """Load all averaged datasets."""
-    results_files = {}
-    priors_files = {}
-    erf_files = {}
-    obs_files = {}
-
-    scenarios_all = get_input_labels(AGGREGATED_FOLDER)
-
-    for scenario in scenarios_all:
-        results_files.update({scenario: {}})
-        priors_files.update({scenario: {}})
-        erf_files.update({scenario: {}})
-        obs_files.update({scenario: {}})
-
-        _path = f'{AGGREGATED_FOLDER}/{scenario}/'
-
-        ensembles_seletions_all = get_subdirs(_path, 'ENSEMBLE-MEMBER--')
-
-        for ensemble_selection in ensembles_seletions_all:
-            results_files[scenario].update({ensemble_selection: {}})
-            priors_files[scenario].update({ensemble_selection: {}})
-            erf_files[scenario].update({ensemble_selection: {}})
-            obs_files[scenario].update({ensemble_selection: {}})
-
-            # Load priors files
-            _path_prior_dir = (f'{PRIORS_FOLDER}/' +
-                               f'{scenario}/' +
-                               f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            _path_erf_dir = (f'{ERFS_FOLDER}/' +
-                             f'{scenario}/' +
-                             f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            if os.path.exists(_path_prior_dir):
-                for f in os.listdir(_path_prior_dir):
-                    if f.startswith('PRIOR_results_timeseries_'):
-                        priors_files[scenario][ensemble_selection][
-                            'timeseries'] = os.path.join(_path_prior_dir, f)
-            if os.path.exists(_path_erf_dir):
-                for f in os.listdir(_path_erf_dir):
-                    if f.startswith('ERF_results_timeseries_'):
-                        erf_files[scenario][ensemble_selection][
-                            'timeseries'] = os.path.join(_path_erf_dir, f)
-
-            _path = (f'{AGGREGATED_FOLDER}/' +
-                     f'{scenario}/' +
-                     f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-
-            regressed_variables_all = get_subdirs(_path, 'VARIABLES--')
-
-            for regressed_vars in regressed_variables_all:
-                results_files[scenario][ensemble_selection].update(
-                    {regressed_vars: {}})
-
-                _path = (f'{AGGREGATED_FOLDER}/' +
-                         f'{scenario}/' +
-                         f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
-                         f'VARIABLES--{regressed_vars}/')
-
-                regressed_years_vars = get_subdirs(_path, 'REGRESSED-YEARS--')
-
-                for regressed_years in regressed_years_vars:
-                    # Load GWI results files
-                    res_type_dict = {
-                        res_type: (
-                                f'{AGGREGATED_FOLDER}/' +
-                                f'{scenario}/' +
-                                f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
-                                f'VARIABLES--{regressed_vars}/' +
-                                f'REGRESSED-YEARS--{regressed_years}/' +
-                                f'GWI_results_{res_type}_' +
-                                f'{scenario}_'
-                                f'ENSEMBLE-MEMBER--{ensemble_selection}_' +
-                                f'VARIABLES--{regressed_vars}_' +
-                                f'REGRESSED-YEARS--{regressed_years}_' +
-                                'AVERAGE.csv'
-                            )
-                        for res_type in ['timeseries', 'headlines', 'rates']
-                    }
-                    results_files[scenario
-                                  ][ensemble_selection
-                                    ][regressed_vars
-                                      ].update({
-                                          regressed_years: res_type_dict
-                                          })
-
-                    # Load observations files
-                    obs_files[scenario
-                              ][ensemble_selection
-                                ].update({regressed_years: {}})
-
-                    _path_obs_dir = (f'{OBSERVATIONS_FOLDER}/' +
-                                     f'{scenario}/' +
-                                     f'ENSEMBLE-MEMBER--{ensemble_selection}/'
-                                     f'REGRESSED-YEARS--{regressed_years}/')
-                    # The observation headlines don't change for different
-                    # regression variables, which means that the file only
-                    # needs to be loaded once. It is faster to check this than
-                    # access os.listdir multiple times and keep overwriting the
-                    # file path in the dictionary.
-                    if 'headlines' not in obs_files[scenario
-                                                    ][ensemble_selection
-                                                      ][regressed_years]:
-                        if os.path.exists(_path_obs_dir):
-                            for f in os.listdir(_path_obs_dir):
-                                if f.startswith('Obs_results_headlines_'):
-                                    obs_files[scenario
-                                              ][ensemble_selection
-                                                ][regressed_years
-                                                  ]['headlines'
-                                                    ] = \
-                                        os.path.join(_path_obs_dir, f)
-
-    print('\nLoading all averaged datasets')
-    # Load results timeseries and headlines
-    results_dfs = load_nested_dfs(results_files)
-    # Load priors timeseries
-    priors_dfs = load_nested_dfs(priors_files)
-    # Load ERF timeseries
-    erf_dfs = load_nested_dfs(erf_files)
-    # Load observation headlines
-    obs_dfs = load_nested_dfs(obs_files)
-
-    # Load the temperature observations timeseries each run used
-    print('Loading temperature observations timeseries...')
-    for scen in results_dfs.keys():
-        for ens in results_dfs[scen].keys():
-            obs_dfs[scen][ens]['timeseries'] = read_observations_timeseries(
-                scen, ens)
-
-    return results_dfs, priors_dfs, erf_dfs, obs_dfs
-
-
-def map_headline_to_index(
-        headline=None, year=None, index_str=None, invert=False):
-    """Map headline year to string format used in headlines dataframe."""
-
-    if not invert:
-        mapping = {
-            'ANNUAL': str(year),
-            'SR15': f'{year} (SR15 definition)',
-            'AR6': f'{year-9}-{year}',
-            'CGWL': f'{year-9}-{year+10} (CGWL definition)',
-        }
-
-        return mapping.get(headline, None)
-
-    elif invert:
-        if 'CGWL' in index_str:
-            return 'CGWL'
-        elif 'SR15' in index_str:
-            return 'SR15'
-        # Check whether index_str is of the form 'YYYY-YYYY'
-        elif '-' in index_str and index_str.replace('-', '').isdigit():
-            return 'AR6'
-        else:
-            return 'ANNUAL'
-
-
-def get_available_headlines(results_dfs, scen, ens, reg_vars, reg_ranges_all):
-    """Determine available headlines from the datasets.
-
-    Note this doesn't work out all the years that each headline is available
-    for; we just need to know which headlines are available for any regression
-    range for this configuration; the actual years will be handled later in
-    combine_historical_only, which handles gaps in the data on a case by case
-    basis.
-    """
-    # Assume to start that we do have headlines available
-    available_headlines = set()
-
-    for reg_range in reg_ranges_all:
-        if 'headlines' not in results_dfs[scen][ens][reg_vars][reg_range]:
-            continue
-        else:  # we do have headline file
-            df = results_dfs[scen][ens][reg_vars][reg_range]['headlines']
-            for index_str in df.index:
-                available_headlines.add(
-                    map_headline_to_index(
-                        index_str=index_str, invert=True)
-                )
-
-    # Check if available_headlines is empty:
-    if not available_headlines:
-        valid_headlines = ['ANNUAL']
-        headline_toggle = False
-    else:
-        valid_headlines = list(available_headlines)
-        headline_toggle = True
-
-    print('      Valid headlines: ',  valid_headlines)
-    return valid_headlines, headline_toggle
-
-
-def calculate_historical_only(
-    results_dfs
-):
-    """Derive the historical-only datasets and save them as CSVs.
-
-    For every scenario, selection and set of regressed variables with more
-    than one regressed range, and for each headline available (ANNUAL, AR6,
-    SR15, CGWL), builds a timeseries in which each year's value comes from
-    the regression that ends in that year, and writes it to
-    AGGREGATED_FOLDER (combine_historical_only). Plots nothing.
-
-    In the pipeline: step 4 of the script, run with --re-calculate=y. Step 5,
-    load_historical_only_dfs, reads the CSVs back for plotting.
-    """
-
-    print('\nGenerating historical-only timeseries')
-    for scen in sorted(results_dfs.keys()):
-        print('INPUTS:', scen)
-
-        for ens in results_dfs[scen].keys():
-            print('  ENSEMBLE-MEMBER:', ens)
-
-            for reg_vars in sorted(results_dfs[scen][ens].keys()):
-                print('    REGRESSED-VARIABLES:', reg_vars)
-
-                # Get all available regressed year ranges
-                reg_ranges_all = sorted(
-                    list(results_dfs[scen][ens][reg_vars].keys()))
-
-                if len(reg_ranges_all) == 1:
-                    # No historical years to compare against, so skip to the
-                    # next set of variables.
-                    print('      Only one regressed range available; ' +
-                          'skipping historical-only calculation.')
-                    continue
-
-                # The +PRE variant also includes the years before the
-                # earliest regressed range, but with the same headline
-                # definitions as the historical-only dataset. This is
-                # inconsistent with the way the historical-only dataset is
-                # calculated, but is included as a reference for plotting.
-                # If I really want a full-information (instead of
-                # historical-only) dataset using the various definitions, this
-                # will need doing inside GWI.py (and could easily be added
-                # using a new argv of 'all' alongside 'y' and 'n' in the
-                # headline_toggles).
-
-                # Determine which headline definitions to calculate the
-                # historical-only timeseries for.
-
-                headlines, headline_toggle = get_available_headlines(
-                    results_dfs, scen, ens, reg_vars, reg_ranges_all)
-
-                print(f'      Available headlines: {headlines}')
-                print(f'      Using headlines dataframe: {headline_toggle}')
-
-                # Determine whether to pull the headline from the headlines or
-                # timeseries dataframe. You can only pull annual years from the
-                # both headlines and timeseries dataframes. The value of
-                # selecting, is that the headlines are much more
-                # computationally expensive to calculate, do you may not always
-                # calculate the headlines for all regressed_year ranges.
-
-                for headline in headlines:
-                    combine_historical_only(
-                        scen, ens, reg_vars, reg_ranges_all,
-                        headline, headline_toggle,
-                        results_dfs)
-
-
-def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
-                            headline, headline_toggle, results_dfs):
-    """Calculate historical-only timeseries for each headline."""
-
-    # Identift range of regressed years
-    min_regressed_range = min(reg_ranges_all)
-    max_regressed_range = max(reg_ranges_all)
-
-    print('      Creating historical-only timeseries for '
-          f'{headline}: between ' +
-          f'{min_regressed_range} and {max_regressed_range}')
-
-    # Prepare empty timeseries for each headline
-    df_hist_headline = results_dfs[
-        scen][ens][reg_vars][reg_ranges_all[0]]['timeseries'].copy()
-    df_hist_headline[:] = 0
-
-    # Collect the appropriate regressed range results
-    for reg_range in reg_ranges_all:
-        # Extract the relevant headline names for this regressed range
-        current_year = int(reg_range.split('-')[1])
-        headline_index = map_headline_to_index(headline, current_year)
-
-        # Select the type of dataset to pull the results from.
-        res_type = 'headlines' if headline_toggle else 'timeseries'
-
-        # Check availability of this headline time for this configuration
-        if headline_index in results_dfs[scen
-                                         ][ens
-                                           ][reg_vars
-                                             ][reg_range
-                                               ][res_type
-                                                 ].index:
-            # Pull out the relevant headline/time data
-            _df = results_dfs[scen
-                              ][ens
-                                ][reg_vars
-                                  ][reg_range
-                                    ][res_type
-                                      ].loc[headline_index]
-            df_hist_headline.loc[current_year] = _df
-
-        else:
-            pass  # headline not available for this regressed range
-
-    # Remove all years that are not the end of an attribution
-    # period to avoid confusion (i.e. the longer earlier years
-    # before the historical-only focus period).
-    end_years = [int(reg_range.split('-')[1])
-                 for reg_range in reg_ranges_all]
-    smallest_end_year = min(end_years)
-    largest_end_year = max(end_years)
-
-    # Filter the dataframe to only include the years that are
-    # relevant for the historical-only dataset: these are years
-    # that are >= smallest_end_year and <= largest_end_year.
-    df_hist_headline = df_hist_headline.loc[
-        smallest_end_year:largest_end_year, :]
-
-    # Remove any rows that contain on the value zero
-    df_hist_headline = df_hist_headline.loc[
-        (df_hist_headline != 0).any(axis=1)]
-
-    # Check whether the dataframe is empty and save if not. This fixes an issue
-    # where the CGWL isn't calculated in some years in some scenarios
-    # (the latter years of observed-202x) due to no "future" ERFs being
-    # available. In this case the CGWL csv would be saved, but empty, which
-    # then produced an error later on in the code.
-    if not df_hist_headline.empty:
-        df_hist_headline.to_csv(
-            f'{AGGREGATED_FOLDER}/{scen}/' +
-            f'ENSEMBLE-MEMBER--{ens}/' +
-            f'VARIABLES--{reg_vars}/'
-            f'GWI_results_{headline}_HISTORICAL-ONLY_' +
-            f'{scen}_' +
-            f'ENSEMBLE-MEMBER--{ens}_' +
-            f'VARIABLES--{reg_vars}_' +
-            f'REGRESSED-YEARS--{min_regressed_range}' +
-            f'_to_{max_regressed_range}.csv')
-
-
-def load_historical_only_dfs(results_dfs):
-    """Load historical-only datasets; add to the results_files dictionary."""
-    print('\nLoading historical-only datasets into results_dfs structure')
-    # Load historical-only data from csv files if they are available
-    # Iterate over the structure identified in results_files
-    # This is reasonable because historical-only datasets can only exist in
-    # the same directories/configurations as the main results datasets.
-    for scen in results_dfs.keys():
-        for ens in results_dfs[scen].keys():
-            for reg_vars in results_dfs[scen][ens].keys():
-                # Find all historical dataset in the results/aggregated folder
-                # and add them all to the dictionary.
-                _path = (f'{AGGREGATED_FOLDER}/' +
-                         f'{scen}/' +
-                         f'ENSEMBLE-MEMBER--{ens}/' +
-                         f'VARIABLES--{reg_vars}/')
-                # Sorted, because os.listdir order is whatever the
-                # filesystem gives, and the headlines are drawn in this order
-                # -- unsorted, two runs on the same numbers could stack their
-                # lines and legends differently.
-                hist_files = sorted([
-                    f for f in os.listdir(_path)
-                    if f.startswith('GWI_results_')
-                    and 'HISTORICAL-ONLY' in f])
-
-                for hist_file in hist_files:
-                    _df = pd.read_csv(_path + hist_file,
-                                      index_col=0, header=[0, 1], skiprows=0)
-                    headline_name = hist_file.split('GWI_results_')[1].split(
-                        '_HISTORICAL-ONLY')[0]
-
-                    if 'HISTORICAL-ONLY' not in results_dfs[scen
-                                                            ][ens
-                                                              ][reg_vars]:
-                        results_dfs[scen][ens][reg_vars][
-                            'HISTORICAL-ONLY'] = {}
-
-                    results_dfs[scen][ens][reg_vars][
-                        'HISTORICAL-ONLY'].update({headline_name: _df})
-
-    return results_dfs
-
-
-def is_dataset_present(data_dict, required_keys):
-    """
-    Check if the required datasets are present in the provided dictionary
-    and are not None.
-    
-    Parameters:
-    -----------
-    data_dict : dict
-        Dictionary containing datasets, typically
-        results_dfs[scen][ens][reg_vars][reg_range]
-    required_keys : list or str
-        List of keys (or single key) that must be present and not None.
-        
-    Returns:
-    --------
-    bool
-        True if all required datasets are present and not None, False
-        otherwise.
-    """
-    if isinstance(required_keys, str):
-        required_keys = [required_keys]
-        
-    for key in required_keys:
-        if key not in data_dict or data_dict[key] is None:
-            return False
-    return True
-
-
-def headline_var_available(df, period, var, context=''):
-    """
-    Check whether a variable can be plotted for a given headline period.
-
-    The bar plotters previously tested only whether a variable's column
-    existed, which is not the same as it having a value: a column present but
-    NaN for this period was passed to matplotlib as a NaN bar with NaN error
-    bars, which produces an "All-NaN axis encountered" RuntimeWarning from the
-    autoscaler and a phantom labelled slot with no bar in the figure.
-
-    There is exactly one situation in which a missing value is legitimate:
-    'Res' (the residual, Obs - Tot) on a CGWL period. The CGWL definition is a
-    20-year window centred on the present (year-9 to year+10), so whenever it
-    extends beyond the end of the observations there is no observed
-    temperature from which to form a residual, and gwi.py deliberately writes
-    NaN there. Note that gwi.py already applies the same logic to the
-    *observed* CGWL headline, which it declines to compute at all when the
-    window runs past the data.
-
-    Any other non-finite headline means the results do not match the
-    configuration that produced them (eg a truncation range that runs past the
-    end of the observations for that dataset vintage), so it is raised rather
-    than quietly skipped.
-
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Headlines dataframe, indexed by period with (variable, percentile)
-        columns.
-    period : str
-        The headline period (row label), eg '2016-2035 (CGWL definition)'.
-    var : str
-        The variable to check, eg 'GHG' or 'Res'.
-    context : str
-        Description of the run being plotted, included in the error message to
-        make an unexpected NaN traceable back to its scenario/range.
-
-    Returns:
-    --------
-    bool
-        True if the variable has a finite median for this period, False if it
-        is legitimately absent.
-    """
-    # No such dataset for this run at all (eg a scenario whose observation
-    # results were never produced), or the period is absent from it. The
-    # latter is how gwi.py signals an uncomputable observed headline: it
-    # declines to write a CGWL row when the window runs past the observations,
-    # rather than writing NaN.
-    if df is None or period not in df.index:
-        return False
-
-    # Not calculated for this run at all (eg sub-variables that were not
-    # requested); nothing anomalous about this, so nothing to plot.
-    if (var, '50') not in df.columns:
-        return False
-
-    if np.isfinite(df.loc[period, (var, '50')]):
-        return True
-
-    # The one expected absence: a residual for a window reaching into the
-    # future, where no observations exist yet.
-    if var == 'Res' and 'CGWL' in str(period):
-        return False
-
-    raise ValueError(
-        f"Headline '{var}' is NaN for period '{period}'{context}. Only 'Res' "
-        "on a CGWL period may legitimately be missing; this indicates the "
-        "results are inconsistent with the configuration that produced them "
-        "(eg a truncation range extending beyond the observations).")
 
 
 def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
@@ -1173,7 +147,7 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
                  fontsize='x-small', fontfamily='monospace',
                  )
 
-    plot_path = (f'{PLOT_FOLDER}aggregated/' +
+    plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -1297,7 +271,7 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  fontsize='x-small', fontfamily='monospace',
                  )
 
-    plot_path = (f'{PLOT_FOLDER}aggregated/' +
+    plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -1335,7 +309,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
     Replaces a version that took the whole results_dfs; see
     figure_timeseries.
     """
-    dict_iterations, _ = load_iteration_dfs(
+    dict_iterations, _ = iteration_averaging.load_iteration_dfs(
         reg_range, 'timeseries', scen, ens, reg_vars)
 
     # The comparison is only meaningful where a configuration has been run
@@ -1412,7 +386,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
              fontsize='x-small', fontfamily='monospace',
              )
 
-    plot_path = (f'{PLOT_FOLDER}iterations/' +
+    plot_path = (f'{results_layout.PLOT_FOLDER}iterations/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
@@ -1465,7 +439,8 @@ def figure_spm2(
         # CGWL period; see headline_var_available).
         vars_panel2 = [
             v for v in possible_vars_p2
-            if headline_var_available(df_headlines, period, v, context)]
+            if results_reading.headline_var_available(
+                df_headlines, period, v, context)]
 
         # Panel 3: Components
         vars_panel3 = []
@@ -1475,7 +450,7 @@ def figure_spm2(
                     # Identify available variables in this group
                     group_vars = [
                         sub_var for sub_var in variables.SUB_VAR_MAPPING[group]
-                        if headline_var_available(
+                        if results_reading.headline_var_available(
                             df_headlines, period, sub_var, context)]
                     # Sort by median value (largest to smallest)
                     group_vars.sort(
@@ -1598,7 +573,7 @@ def figure_spm2(
             ax.set_axisbelow(True)
 
         # Save plot
-        plot_path = (f'{PLOT_FOLDER}aggregated/' +
+        plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                      f'{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
@@ -1666,7 +641,8 @@ def figure_waterfall(
             # missing headline raises (see headline_var_available).
             vars_in_group = [
                 v for v in source_vars
-                if headline_var_available(df_headlines, period, v, context)]
+                if results_reading.headline_var_available(
+                    df_headlines, period, v, context)]
             # Sort from largest to smallest warming contribution
             vars_in_group.sort(key=lambda v: get_stats(v)[0], reverse=True)
 
@@ -1702,7 +678,8 @@ def figure_waterfall(
         # results at all. Without this check get_stats falls back to
         # (0, 0, 0), which draws a zero-height bar labelled "Observed
         # warming" rather than omitting it.
-        if headline_var_available(df_obs_headlines, period, 'Obs', context):
+        if results_reading.headline_var_available(
+                df_obs_headlines, period, 'Obs', context):
             plot_items.append({'var': 'Obs', 'type': 'total'})
 
         # 2. Prepare plot
@@ -1947,7 +924,7 @@ def figure_waterfall(
         fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
 
         # Save plot
-        plot_path = (f'{PLOT_FOLDER}aggregated/' +
+        plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                      f'{scen}/' +
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
@@ -1964,19 +941,6 @@ def figure_waterfall(
                      f'PERIOD--{period_token}.png')
         fig.savefig(plot_name)
         close_figure(fig)
-
-
-def priors_available(priors_dfs, scen, ens):
-    """Whether prior warming results exist for this scenario/ensemble.
-
-    gwi.py only writes the prior dataset when run with
-    --calculate-priors-output=y. The priors are plotting-only, so their absence
-    is not an error: the figures that use them are skipped instead.
-
-    Checks the value rather than just the key, because load_nested_dfs maps a
-    path that no longer exists to None.
-    """
-    return priors_dfs.get(scen, {}).get(ens, {}).get('timeseries') is not None
 
 
 def figure_priors_timeseries(
@@ -2042,7 +1006,7 @@ def figure_priors_timeseries(
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
-        f'{PLOT_FOLDER}priors/' +
+        f'{results_layout.PLOT_FOLDER}priors/' +
         f'{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
@@ -2120,7 +1084,7 @@ def figure_erf_timeseries(
         f'Ensemble: {ens} | '
         f'Regressed variables: {reg_vars}')
     plot_path = (
-        f'{PLOT_FOLDER}erfs/' +
+        f'{results_layout.PLOT_FOLDER}erfs/' +
         f'{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/')
@@ -2150,7 +1114,7 @@ def figure_picontrol(scen, ens, obs_dfs):
     (behind its plot_piControl switch).
     """
     # The filtered piControl segments, as gwi.py saved them
-    df_temp_PiC = read_picontrol_timeseries(scen)
+    df_temp_PiC = results_reading.read_picontrol_timeseries(scen)
     if df_temp_PiC is None:
         print('      Skipping piControl figures (no piControl file)')
         return
@@ -2166,10 +1130,11 @@ def figure_picontrol(scen, ens, obs_dfs):
     timeframes = [1, 3, 30]
     sigmas = [[17, 83], [5, 95]]
     sigmas_all = [5, 17, 83, 95, 50]
-    gmt_id = gmt_id_from_label(scen)
+    gmt_id = results_layout.gmt_id_from_label(scen)
 
     # Where the figures go
-    plot_path = f'{PLOT_FOLDER}picontrol/{scen}/ENSEMBLE-MEMBER--{ens}/'
+    plot_path = (f'{results_layout.PLOT_FOLDER}picontrol/{scen}/'
+                 f'ENSEMBLE-MEMBER--{ens}/')
     os.makedirs(plot_path, exist_ok=True)
     plot_label = f'{scen}_ENSEMBLE-MEMBER--{ens}'
 
@@ -2244,7 +1209,8 @@ def parse_argvs():
     output_tag = argv_dict.get('--output-tag')
     # Default to re-calculating if not asked otherwise.
     re_calculate = argv_dict.get('--re-calculate', 'y') == 'y'
-    plot_every = int(argv_dict.get('--plot-every', PLOT_EVERY))
+    plot_every = int(argv_dict.get('--plot-every',
+                                   figure_selection.PLOT_EVERY))
     if plot_every < 1:
         sys.exit(f'--plot-every must be 1 or more, not {plot_every}')
     return output_tag, re_calculate, plot_every
@@ -2272,7 +1238,7 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
 
     # save as a gif
     images_list[0].save(
-        f'{PLOT_FOLDER}aggregated/{scen}/' +
+        f'{results_layout.PLOT_FOLDER}aggregated/{scen}/' +
         f'ENSEMBLE-MEMBER--{ens}/' +
         f'VARIABLES--{reg_vars}/' +
         f'Timeseries-animation_{scen}_' +
@@ -2281,97 +1247,6 @@ def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
         f'{min(reg_ranges_all)}_to_{max(reg_ranges_all)}.gif',
         save_all=True, append_images=images_list[1:],
         optimize=False, duration=500, loop=0)
-
-
-def ensemble_uses_all_members(ens):
-    """Whether a selection uses every member of every source.
-
-    True for ERF-all_GMT-all. False for any selection that names a member,
-    such as ERF-all_GMT-7 or ERF-7_GMT-all.
-
-    In the pipeline: ranges_to_plot and ensemble_is_plotted use it to exempt
-    the full-ensemble selection from --plot-every, and
-    overarching_base_result_plotter to say so in the log.
-    """
-    return set(
-        combo.split('-')[1] for combo in ens.split('_')
-        ) == {'all'}
-
-
-def ensemble_is_plotted(ens, plot_every):
-    """Whether a selection gets base figures beyond its final regressed range.
-
-    True for the full-ensemble selection, and for a member-by-member
-    selection whose member number is a multiple of plot_every -- GMT-10,
-    GMT-20, ... for the default of 10. False for every other member.
-
-    In the pipeline: ranges_to_plot calls it for each member-by-member
-    selection.
-
-    With ranges_to_plot, replaces toggle_single_timeseries, which picked the
-    same one-in-ten members but applied the choice to the timeseries, rates
-    and gif only. Every member still got the iteration comparison, SPM2 and
-    waterfall figures for every regressed range.
-    """
-    if ensemble_uses_all_members(ens):
-        return True
-    ens_nums = [
-        s for s in (combo.split('-')[1] for combo in ens.split('_'))
-        if s.isdigit()
-        ]
-    return any(int(s) % plot_every == 0 for s in ens_nums)
-
-
-def ranges_to_plot(ens, reg_ranges, plot_every=None):
-    """Choose the regressed ranges a selection gets base figures for.
-
-    Returns a sorted subset of reg_ranges:
-      * all of them, for the full-ensemble selection (ERF-all_GMT-all), and
-        for every selection when plot_every is 1;
-      * the final range only, for a member-by-member selection whose member
-        is not a multiple of plot_every (GMT-7, with the default of 10);
-      * the final range and every range ending on a multiple of plot_every
-        (1850-1950, 1850-1960, ...), for one whose member is (GMT-10).
-    plot_every defaults to PLOT_EVERY, which --plot-every sets.
-
-    Member-by-member selections are the runs that pull one member out of an
-    ensemble and run the whole analysis against it, as for the Thorne et al.
-    comparison against each GMST realisation. The standard run,
-    ERF-all_GMT-all, samples the members inside the Monte Carlo instead. So
-    with the default of 10, all hundred members of a member-by-member
-    scenario get figures for their final range, and ten of them for
-    1850-1950, 1850-1960, ... as well.
-
-    In the pipeline: overarching_base_result_plotter calls it once for each
-    selection and set of regressed variables, and draws every base figure --
-    timeseries, rates, iteration comparison, SPM2 and waterfall -- for the
-    ranges it returns only. The historical-only figures do not use it, and
-    are drawn for every selection.
-
-    Replaces toggle_single_timeseries (see ensemble_is_plotted). This is
-    better because every base figure is thinned the same way, which takes a
-    hundred-member scenario from about 61,600 figures to about 1,600, and
-    because the final range -- the headline result, and the reason for
-    running every member -- is kept for every member.
-    """
-    if plot_every is None:
-        plot_every = PLOT_EVERY
-
-    reg_ranges = sorted(reg_ranges)
-    if not reg_ranges:
-        return reg_ranges
-    final_range = reg_ranges[-1]
-
-    if plot_every <= 1 or ensemble_uses_all_members(ens):
-        return reg_ranges
-
-    if not ensemble_is_plotted(ens, plot_every):
-        return [final_range]
-
-    return [
-        r for r in reg_ranges
-        if r == final_range or int(r.split('-')[1]) % plot_every == 0
-        ]
 
 
 def figure_historical_only_timeseries(
@@ -2781,7 +1656,7 @@ def figure_constrained_warming(
     else:
         start_regress = 'VAR'
 
-    has_priors = priors_available(priors_dfs, scen, ens)
+    has_priors = results_reading.priors_available(priors_dfs, scen, ens)
 
     print('      Creating constrained results')
     # Calculate how the expected final year of the timeseries changes
@@ -3076,7 +1951,7 @@ def figure_delta_contributions(
             'timeseries'].quantile(q=0.5, axis=1),
         yerr=(err_neg, err_pos),
         fmt='o', color=params['colours']['Obs'], ms=2.5, lw=1,
-        label=f'Reference Temp: {gmt_id_from_label(scen)}')
+        label=f'Reference Temp: {results_layout.gmt_id_from_label(scen)}')
 
     ax2.set_ylabel('Global Warming, ⁰C')
     ax2.set_xticks(years, years)
@@ -3116,26 +1991,6 @@ def figure_delta_contributions(
           delta_rms / residual_rms)
 
 
-def describe_ranges(reg_ranges):
-    """Summarise a list of regressed ranges by their end years, for the log.
-
-    Returns the end years joined by commas -- '1950, 1960, 2025' -- or, for
-    more than ten ranges, the first two and last two: '1950, 1951, ... 2024,
-    2025'. Returns 'none' for an empty list. The ranges of one selection
-    share a start year, so their end years are what tell them apart.
-
-    In the pipeline: overarching_base_result_plotter uses it in the log line
-    for each selection, which says which ranges it is drawing.
-    """
-    if not reg_ranges:
-        return 'none'
-
-    ends = [r.split('-')[1] for r in reg_ranges]
-    if len(ends) <= 10:
-        return ', '.join(ends)
-    return f'{ends[0]}, {ends[1]}, ... {ends[-2]}, {ends[-1]}'
-
-
 def overarching_base_result_plotter(
     results_dfs,
     obs_dfs,
@@ -3170,14 +2025,15 @@ def overarching_base_result_plotter(
             # The piControl figures depend on the inputs and the members,
             # not on the regressed variables, so are drawn once here (for
             # the selections that get figures; see ensemble_is_plotted)
-            if ensemble_is_plotted(ens, PLOT_EVERY):
+            if figure_selection.ensemble_is_plotted(
+                    ens, figure_selection.PLOT_EVERY):
                 print('    Plotting piControl figures')
                 figure_picontrol(scen, ens, obs_dfs)
 
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED_VARIABLES:', reg_vars)
 
-                params = setup_plot_params(
+                params = figure_selection.setup_plot_params(
                     scen, ens, reg_vars, results_dfs)
                 reg_ranges_all = params['reg_ranges_all']
 
@@ -3190,39 +2046,42 @@ def overarching_base_result_plotter(
                 # chosen once here for all of them (see ranges_to_plot).
                 # params keeps the full list, reg_ranges_all, because the
                 # figures also look results up by params['max_range'] etc.
-                reg_ranges_plot = ranges_to_plot(ens, reg_ranges_all)
-                if ensemble_uses_all_members(ens):
+                reg_ranges_plot = figure_selection.ranges_to_plot(
+                    ens, reg_ranges_all)
+                if figure_selection.ensemble_uses_all_members(ens):
                     print('      Plotting all '
                           f'{len(reg_ranges_all)} regressed ranges '
                           '(full ensemble: --plot-every does not apply)')
                 elif len(reg_ranges_plot) == len(reg_ranges_all):
                     print('      Plotting all '
                           f'{len(reg_ranges_all)} regressed ranges '
-                          f'(--plot-every={PLOT_EVERY})')
+                          f'(--plot-every={figure_selection.PLOT_EVERY})')
                 else:
+                    ending = figure_selection.describe_ranges(reg_ranges_plot)
                     print(f'      Plotting {len(reg_ranges_plot)} of '
                           f'{len(reg_ranges_all)} regressed ranges '
-                          f'(--plot-every={PLOT_EVERY}), ending '
-                          f'{describe_ranges(reg_ranges_plot)}')
+                          f'(--plot-every={figure_selection.PLOT_EVERY}), '
+                          f'ending {ending}')
 
                 ###############################################################
                 # 1. Plot GWI Timeseries
                 valid_ranges_ts = [
                     r for r in reg_ranges_plot
-                    if is_dataset_present(
+                    if results_reading.is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'timeseries')
                     ]
                 tasks_ts = [
                     (r, results_dfs[scen][ens][reg_vars][r]['timeseries'])
                     for r in valid_ranges_ts]
                 if valid_ranges_ts:
+                    ending = figure_selection.describe_ranges(valid_ranges_ts)
                     print('        Plotting figure_timeseries for GWI: '
                           '1 figure per regressed range, for '
                           f'{len(valid_ranges_ts)} regressed range/s '
-                          f'ending {describe_ranges(valid_ranges_ts)}; '
+                          f'ending {ending}; '
                           'in parallel on '
                           f'{compute_resources.n_workers()} worker/s')
-                    plot_names = run_in_pool(
+                    plot_names = compute_resources.run_in_pool(
                         functools.partial(
                             figure_timeseries,
                             scen=scen, ens=ens, reg_vars=reg_vars,
@@ -3233,20 +2092,22 @@ def overarching_base_result_plotter(
 
                 valid_ranges_rates = [
                     r for r in reg_ranges_plot
-                    if is_dataset_present(
+                    if results_reading.is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'rates')
                     ]
                 tasks_rates = [
                     (r, results_dfs[scen][ens][reg_vars][r]['rates'])
                     for r in valid_ranges_rates]
                 if valid_ranges_rates:
+                    ending = figure_selection.describe_ranges(
+                        valid_ranges_rates)
                     print('        Plotting figure_rates for GWI: '
                           '1 figure per regressed range, for '
                           f'{len(valid_ranges_rates)} regressed range/s '
-                          f'ending {describe_ranges(valid_ranges_rates)}; '
+                          f'ending {ending}; '
                           'in parallel on '
                           f'{compute_resources.n_workers()} worker/s')
-                    run_in_pool(
+                    compute_resources.run_in_pool(
                         functools.partial(
                             figure_rates,
                             scen=scen, ens=ens, reg_vars=reg_vars,
@@ -3279,14 +2140,15 @@ def overarching_base_result_plotter(
                 # as the timeseries figures above.
                 iteration_comparison_toggle = True
                 if iteration_comparison_toggle and valid_ranges_ts:
+                    ending = figure_selection.describe_ranges(valid_ranges_ts)
                     print('        Plotting figure_iteration_comparison: '
                           '1 figure per regressed range with more '
                           'than one iteration, for '
                           f'{len(valid_ranges_ts)} regressed range/s '
-                          f'ending {describe_ranges(valid_ranges_ts)}; '
+                          f'ending {ending}; '
                           'in parallel on '
                           f'{compute_resources.n_workers()} worker/s')
-                    run_in_pool(
+                    compute_resources.run_in_pool(
                         functools.partial(
                             figure_iteration_comparison,
                             scen=scen, ens=ens, reg_vars=reg_vars,
@@ -3296,7 +2158,7 @@ def overarching_base_result_plotter(
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
-                if priors_available(priors_dfs, scen, ens):
+                if results_reading.priors_available(priors_dfs, scen, ens):
                     print('        Plotting figure_timeseries for PRIORS')
                     figure_priors_timeseries(
                         scen, ens, reg_vars, priors_dfs, obs_dfs,  params)
@@ -3313,7 +2175,7 @@ def overarching_base_result_plotter(
                 # 4. Plot SPM2 Bar Plot
                 valid_ranges_headlines = [
                     r for r in reg_ranges_plot
-                    if is_dataset_present(
+                    if results_reading.is_dataset_present(
                         results_dfs[scen][ens][reg_vars][r], 'headlines')
                     ]
                 # Each range here has its own headlines -- that is what the
@@ -3337,19 +2199,21 @@ def overarching_base_result_plotter(
                     ]
                 n_headline_figures = len(headline_periods)
                 headline_names = list(dict.fromkeys(
-                    map_headline_to_index(index_str=str(period), invert=True)
+                    historical_only.map_headline_to_index(
+                        index_str=str(period), invert=True)
                     for period in headline_periods))
                 if valid_ranges_headlines:
+                    ending = figure_selection.describe_ranges(
+                        valid_ranges_headlines)
                     print('        Plotting SPM2 for GWI: '
                           f'{n_headline_figures} figure/s, 1 per headline '
                           f'period ({", ".join(headline_names)}) of each '
                           'range, for '
                           f'{len(valid_ranges_headlines)} regressed range/s '
-                          'ending '
-                          f'{describe_ranges(valid_ranges_headlines)}; in '
+                          f'ending {ending}; in '
                           'parallel over the ranges on '
                           f'{compute_resources.n_workers()} worker/s')
-                    run_in_pool(
+                    compute_resources.run_in_pool(
                         functools.partial(
                             figure_spm2,
                             scen=scen, ens=ens, reg_vars=reg_vars,
@@ -3360,16 +2224,17 @@ def overarching_base_result_plotter(
                 ###############################################################
                 # 5. Plot Waterfall Plot
                 if valid_ranges_headlines:
+                    ending = figure_selection.describe_ranges(
+                        valid_ranges_headlines)
                     print('        Plotting Waterfall for GWI: '
                           f'{n_headline_figures} figure/s, 1 per headline '
                           f'period ({", ".join(headline_names)}) of each '
                           'range, for '
                           f'{len(valid_ranges_headlines)} regressed range/s '
-                          'ending '
-                          f'{describe_ranges(valid_ranges_headlines)}; in '
+                          f'ending {ending}; in '
                           'parallel over the ranges on '
                           f'{compute_resources.n_workers()} worker/s')
-                    run_in_pool(
+                    compute_resources.run_in_pool(
                         functools.partial(
                             figure_waterfall,
                             scen=scen, ens=ens, reg_vars=reg_vars,
@@ -3395,20 +2260,20 @@ def overarching_historical_only_plotter(
             for reg_vars in sorted(results_dfs[scen][ens].keys()):
                 print('    REGRESSED-VARIABLES:', reg_vars)
 
-                if not is_dataset_present(
+                if not results_reading.is_dataset_present(
                         results_dfs[scen][ens][reg_vars], 'HISTORICAL-ONLY'):
                     print('      No historical-only datasets available; '
                           'skipping historical-only plotting.')
                     continue
 
-                plot_path = f'{PLOT_FOLDER}aggregated/' + \
+                plot_path = f'{results_layout.PLOT_FOLDER}aggregated/' + \
                     f'{scen}/' + \
                     f'ENSEMBLE-MEMBER--{ens}/' + \
                     f'VARIABLES--{reg_vars}/'
                 if not os.path.exists(plot_path):
                     os.makedirs(plot_path, exist_ok=True)
 
-                params = setup_plot_params(
+                params = figure_selection.setup_plot_params(
                     scen, ens, reg_vars, results_dfs)
 
                 # 1. Plot historical-only timeseries for each headline
@@ -3466,26 +2331,30 @@ if __name__ == '__main__':
     # historical-only dataset was calculated over.
 
     output_tag, re_calculate, plot_every = parse_argvs()
-    set_output_folders(output_tag)
-    PLOT_EVERY = plot_every
+    results_layout.set_output_folders(output_tag)
+    figure_selection.PLOT_EVERY = plot_every
     print(f'Re-calculate results: {re_calculate}')
-    if PLOT_EVERY > 1:
-        print(f'--plot-every={PLOT_EVERY}: member-by-member selections are '
-              f'thinned to one in {PLOT_EVERY} members and ranges; '
+    if figure_selection.PLOT_EVERY > 1:
+        print(f'--plot-every={figure_selection.PLOT_EVERY}: member-by-member '
+              'selections are thinned to one in '
+              f'{figure_selection.PLOT_EVERY} members and ranges; '
               'ERF-all_GMT-all is always plotted in full')
     else:
         print('--plot-every=1: plotting every figure')
 
     # Ensure directoriesfor plots and results exist
-    for folder in [PLOT_FOLDER, AGGREGATED_FOLDER, ITERATIONS_FOLDER]:
+    for folder in [results_layout.PLOT_FOLDER,
+                   results_layout.AGGREGATED_FOLDER,
+                   results_layout.ITERATIONS_FOLDER]:
         os.makedirs(folder, exist_ok=True)
 
     # 1.Calculate gwi iteration averages
     if re_calculate:
-        calculate_iteration_averages()
+        iteration_averaging.calculate_iteration_averages()
 
     # 2. Load results (gwi, priors, obs) into dataframes
-    results_dfs, priors_dfs, erf_dfs, obs_dfs = load_gwi_priors_erf_obs()
+    results_dfs, priors_dfs, erf_dfs, obs_dfs = (
+        results_reading.load_gwi_priors_erf_obs())
 
     # 3. Plot the basic results
     overarching_base_result_plotter(
@@ -3493,10 +2362,10 @@ if __name__ == '__main__':
 
     # 4. Generate historical-only timeseries and save to CSVs.
     if re_calculate:
-        calculate_historical_only(results_dfs)
+        historical_only.calculate_historical_only(results_dfs)
 
     # 5. Load the historical-only data into dataframes
-    results_dfs = load_historical_only_dfs(results_dfs)
+    results_dfs = results_reading.load_historical_only_dfs(results_dfs)
 
     # 6. Plot the historical-only results
     overarching_historical_only_plotter(

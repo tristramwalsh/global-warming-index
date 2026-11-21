@@ -12,6 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 import src.run_log as run_log
+import gc
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 
 
 # lru_cache makes Python work the answer out on the first call and hand back
@@ -390,3 +393,40 @@ def percentile_threaded(array, q, axis, n_threads=None):
             out[:, sl, ...] = result
 
     return out
+
+
+def run_in_pool(func, tasks):
+    """Call func(*task) for each task in a process pool; return the results.
+
+    The results come back in the order of tasks. Tasks are sent in chunks
+    sized so that each worker gets about four, however many tasks there are.
+
+    In the pipeline: every parallel step of the script runs through it -- the
+    averaging, the loading, and each type of base figure.
+
+    Replaces mp.Pool, which cannot recover from a worker dying. When the
+    kernel kills a worker for using too much memory, mp.Pool starts a
+    replacement but never fails the task the dead worker held, so the run
+    hangs; ProcessPoolExecutor raises BrokenProcessPool instead. (If it is
+    this parent process the kernel kills, the shell prints 'Killed' and there
+    is nothing left to report anything.)
+    """
+    n_processes = n_workers()
+    chunksize = max(1, int(np.ceil(len(tasks) / (4 * n_processes))))
+    # Frozen, the objects already in this process -- all the loaded results
+    # -- are left out of the garbage collections the workers make after each
+    # figure (close_figure), which then stay quick and do not copy the
+    # parent's memory into every worker.
+    gc.collect()
+    gc.freeze()
+    # The workers must be forked, not spawned. A forked worker starts as a
+    # copy of this process, with the output folders set_output_folders() set
+    # and the results already loaded; a spawned one starts afresh and has
+    # neither. Fork is the default on Linux but not on macOS (spawn, since
+    # Python 3.8), so it is requested explicitly, as gwi.py does.
+    try:
+        with ProcessPoolExecutor(
+                n_processes, mp_context=mp.get_context('fork')) as executor:
+            return list(executor.map(func, *zip(*tasks), chunksize=chunksize))
+    finally:
+        gc.unfreeze()

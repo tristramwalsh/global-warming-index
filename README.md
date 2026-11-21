@@ -356,7 +356,7 @@ For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
 ###### 2.4.3.2 Historical-Only Timeseries
 For iterations generated in order to provide different regression end years (e.g., `END_REGRESS=$(seq 1950 2024)`):
 1. For each regression end year (e.g., 1950, 1951, ..., 2024), a separate GWI calculation is performed
-2. The `calculate_historical_only()` function extracts values for each year from the appropriate regression period
+2. `calculate_historical_only()` (in `src/historical_only.py`) extracts values for each year from the appropriate regression period
     1. When `headline` datasets are available, this pulls from the **`headlines`** dataframes at the appropriate string index
     2. When `headline` datasets are not available, this pulls from the **`timeseries`** dataframes at the index `current_year`
 3. The result is a timeseries where each year's attribution is based only on data available up to that year, which provides an estimate of what the GWI would have been if calculated in real-time each year, though note that the datasets and climate parameters are still the same as used in the full-information GWI.
