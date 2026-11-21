@@ -523,14 +523,28 @@ def figure_delta_contributions(
         scen, ens, reg_vars,
         results_dfs, obs_dfs, df_constrained,
         plot_path, params):
-    """Generate timeseries showing source of changes in GWI value each year."""
+    """Generate timeseries showing source of changes in GWI value each year.
+
+    Every change from year Y-1 to Y compares the runs regressed to Y-1 and to
+    Y, so the figure needs consecutive regression end years, all with the
+    same start year; otherwise it is skipped, with the reason printed. The
+    schematic panel shows the last four end years, or all of them when there
+    are fewer.
+    """
 
     start_years = set([int(reg_range.split('-')[0])
                        for reg_range in params['reg_ranges_all']])
-    if len(start_years) == 1:
-        start_regress = list(start_years)[0]
-    else:
-        start_regress = 'VAR'
+    end_years = sorted([int(reg_range.split('-')[1])
+                        for reg_range in params['reg_ranges_all']])
+    if len(start_years) > 1:
+        print('      Skipping delta contributions: the regressed ranges '
+              'start in different years')
+        return
+    if any(np.diff(end_years) != 1):
+        print('      Skipping delta contributions: the regression end years '
+              'are not consecutive')
+        return
+    start_regress = list(start_years)[0]
 
     print('      Creating delta contributions')
 
@@ -626,8 +640,9 @@ def figure_delta_contributions(
 
     #######################################################################
     # Plot schematic diagram
-    years = list(range(params['end_year'], params['end_year']-4, -1))
-    # which [2023, 2022, 2021, 2020] when the end year is 2023.
+    # The last four end years, latest first, e.g. [2023, 2022, 2021, 2020];
+    # fewer when fewer were run.
+    years = end_years[::-1][:4]
     for year in years:
         df_new = results_dfs[scen][ens][reg_vars][f'{start_regress}-{year}'][
             'timeseries']
@@ -689,8 +704,7 @@ def figure_delta_contributions(
 
     ax2.set_ylabel('Global Warming, ⁰C')
     ax2.set_xticks(years, years)
-    # ax2.set_xlim(2019.5, 2023.5)
-    ax2.set_xlim(params['end_year']-4+0.5, params['end_year']+0.5)
+    ax2.set_xlim(min(years)-0.5, max(years)+0.5)
 
     fig.suptitle(
         f'Contributions to the change in {changing_var} warming ' +
