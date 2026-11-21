@@ -41,6 +41,13 @@
 #
 #     python combine_results_iterations.py --output-tag=<TAG>
 #
+# Alternatively, give it any one of the experiment's recipes, and it reads
+# the tag from there:
+#
+#     python combine_results_iterations.py --recipe=<recipe>
+#
+# run-gwi.sh prints the command when it finishes.
+#
 # Leave empty for the plain logs_slurm/ (or logs_direct/), results/ and plots/
 # folders. The option is always passed to gwi.py and its value says whether
 # it applies, the same convention as COMMITTED=n or INCLUDE_SUB_VARS=n.

@@ -118,7 +118,9 @@ bash run-gwi.sh recipes/my-recipe.sh [dry|direct|slurm]
 ```
 Run `bash run-gwi.sh` with no arguments for a usage message, which also lists the recipes available. The script checks that the `gwi` environment is active before running anything; it does not activate it for you, as that differs between machines.
 
-A recipe sets every setting in the template, each once, and nothing else; the script checks this before running anything, and stops if a setting is missing, repeated or unknown (a typo, say). Comments are optional, so a recipe can be just the list of settings. When a new setting is added to the template, add it to every recipe in `recipes/` too. `recipes/dev*.sh` are ignored by git: use them for your own development runs. Recipes that make up one experiment share an `OUTPUT_TAG`: run each, then combine them together.
+A recipe sets every setting in the template, each once, and nothing else; the script checks this before running anything, and stops if a setting is missing, repeated or unknown (a typo, say). Comments are optional, so a recipe can be just the list of settings. When a new setting is added to the template, add it to every recipe in `recipes/` too. `recipes/dev*.sh` are ignored by git: use them for your own development runs.
+
+Several recipes can share the same `OUTPUT_TAG`. This is useful when one analysis needs runs that a single recipe can't describe: each recipe sets one ERF dataset, one temperature dataset, one set of regressed variables and so on, so an analysis that compares several of them needs one recipe for each. Give all of those recipes the same tag and run each of them. Their results all go into the same `results_<tag>/` folder, and the combination script then processes them together as one analysis (see **2.1.2**).
 
 In direct and slurm mode, a copy of the recipe goes into the log folder, headed with the date, the host, the mode, and the git commit the run started from (noting any uncommitted changes to tracked files).
 
@@ -136,11 +138,13 @@ bash run-gwi.sh recipes/TEMPLATE.sh direct
 > The template's results are not fit for any real use. Its ensemble is trivially small (10 samples from each source of uncertainty), so it only checks that everything runs. Real results need much larger ensembles (see `SUBSAMPLE_ITERATIONS`).
 
 ##### 2.1.2. Combine results from multiple iterations
-Once the runs have completed, run the combination script with the same tag:
+Once the runs have completed, run the combination script with the recipe's `OUTPUT_TAG` (`run-gwi.sh` prints this command when it finishes):
 
 ```bash
-python combine_results_iterations.py
+python combine_results_iterations.py --output-tag=quick-test
 ```
+
+Alternatively, `--recipe=recipes/TEMPLATE.sh` reads the tag from the recipe for you.
 
 This averages the repeat iterations, where applicable derives the historical-information-only timeseries (when a sequence of regression end years are used), and produces all associated figures.
 
@@ -290,7 +294,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
 - Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
 - Usually the recipe's own name; recipes that make up one experiment share a tag.
-- Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`).
+- Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`); alternatively, give it one of the recipes (`--recipe=<recipe>`) and it reads the tag from there. `run-gwi.sh` prints the command when it finishes.
 - Left empty, the plain `results/`, `plots/` and `logs_slurm/` (or `logs_direct/`) folders are used.
 
 
@@ -357,8 +361,9 @@ After running multiple iterations, use `combine_results_iterations.py` to aggreg
 python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --plot-every=<N>
 ```
 
-All three options are optional:
-- `--output-tag=<tag>` = the recipe's `OUTPUT_TAG`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+All options are optional:
+- `--output-tag=<tag>` = the recipes' shared `OUTPUT_TAG`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+- `--recipe=<recipe>` = an alternative to `--output-tag`: a recipe file, e.g. `recipes/TEMPLATE.sh`, whose `OUTPUT_TAG` the script reads. Recipes in one experiment share a tag, so any of them will do. Give this or `--output-tag`, not both.
 - `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
 - `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `ERF-all_GMT-all` selection is always plotted in full.
 

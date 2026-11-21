@@ -59,8 +59,10 @@ ensemble is far too small for real results):
   bash run-gwi.sh recipes/TEMPLATE.sh direct
 
 Activate the gwi environment first (direct and slurm modes). Once the runs
-have finished, combine and plot them, using the recipe's output tag:
+have finished, combine and plot them, using the recipe's output tag;
+run-gwi.sh prints this command when it finishes:
   python combine_results_iterations.py --output-tag=<RECIPE_OUTPUT_TAG>
+(or --recipe=<recipe>, which reads the tag from the recipe).
 EOF
 }
 
@@ -359,3 +361,19 @@ done
 count=$((count + 1))
 
 done
+
+###############################################################################
+## Next step ##################################################################
+
+# Print the command that combines and plots these results, so that it is on
+# the terminal right where the run finished.
+COMBINE_COMMAND="python combine_results_iterations.py"
+if [ -n "${RECIPE_OUTPUT_TAG}" ]; then
+  COMBINE_COMMAND+=" --output-tag=${RECIPE_OUTPUT_TAG}"
+fi
+echo
+case "${MODE}" in
+  dry)    echo "Next, after a direct or slurm run: ${COMBINE_COMMAND}" ;;
+  direct) echo "Next: ${COMBINE_COMMAND}" ;;
+  slurm)  echo "Next, once the jobs have finished: ${COMBINE_COMMAND}" ;;
+esac

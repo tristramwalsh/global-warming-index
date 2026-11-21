@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import matplotlib
 # Draw figures straight to file: this script only saves them, never shows
@@ -26,6 +27,24 @@ import functools
 # 'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'.
 
 
+def read_recipe_output_tag(recipe):
+    """Return the RECIPE_OUTPUT_TAG that a recipe file sets.
+
+    The recipe is sourced by bash, as run-gwi.sh does, so the value is read
+    exactly as the runs saw it, quoting and all. An empty tag returns None,
+    meaning the plain results/ and plots/ folders.
+    """
+    if not os.path.isfile(recipe):
+        sys.exit(f'Recipe not found: {recipe}')
+    result = subprocess.run(
+        ['bash', '-c', 'source "$1" && printf %s "${RECIPE_OUTPUT_TAG-}"',
+         '_', recipe],
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.exit(f'Could not read the recipe {recipe}:\n{result.stderr}')
+    return result.stdout or None
+
+
 def parse_argvs():
     """Read the command line and return the settings it asks for.
 
@@ -35,6 +54,12 @@ def parse_argvs():
                            of the plain results/ and plots/ folders. Use the
                            same tag that was given to gwi.py. Empty or absent
                            means the plain folders, as before.
+      --recipe=<file>      an alternative to --output-tag: take the tag
+                           from a recipe instead, e.g.
+                           --recipe=recipes/TEMPLATE.sh reads its
+                           RECIPE_OUTPUT_TAG. Recipes in one experiment
+                           share a tag, so any of them will do. Give this
+                           or --output-tag, not both.
       --re-calculate=y|n   whether to recompute the iteration averages, and
                            the historical-only datasets derived from them,
                            or reuse what is already in the aggregated folder.
@@ -69,6 +94,10 @@ def parse_argvs():
         argv_dict = {}
 
     output_tag = argv_dict.get('--output-tag')
+    if '--recipe' in argv_dict:
+        if output_tag is not None:
+            sys.exit('Give --recipe or --output-tag, not both.')
+        output_tag = read_recipe_output_tag(argv_dict['--recipe'])
     # Default to re-calculating if not asked otherwise.
     re_calculate = argv_dict.get('--re-calculate', 'y') == 'y'
     plot_every = int(argv_dict.get('--plot-every',
