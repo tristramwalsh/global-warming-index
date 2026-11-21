@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Builds run-gwi.sh's list of gwi.py runs from its member settings
-# (ERF_MEMBERS and GMT_MEMBERS). run-gwi.sh sources this file. It only
-# decides which members each gwi.py run is given; the sampling of ensemble
-# members inside gwi.py is separate, and unaffected.
+# Builds run-gwi.sh's list of gwi.py runs from the recipe's member settings
+# (RECIPE_ERF_MEMBERS and RECIPE_GMT_MEMBERS). run-gwi.sh sources this file.
+# It only decides which members each gwi.py run is given; the sampling of
+# ensemble members inside gwi.py is separate, and unaffected.
 #
 # build_member_runs ERF_MEMBERS GMT_MEMBERS
 #   Turns the two member settings into the gwi.py runs to make, one per
@@ -16,7 +16,8 @@
 #   log names, e.g. ERF-all_GMT-1-3.
 #   If the combination isn't allowed, prints why and returns 1.
 #
-# The cases are described next to ERF_MEMBERS and GMT_MEMBERS in run-gwi.sh.
+# The cases are described next to RECIPE_ERF_MEMBERS and RECIPE_GMT_MEMBERS in
+# recipes/TEMPLATE.sh.
 
 # The two pairing keywords
 PAIR_WITH_GMT=paired_with_GMT_member
@@ -35,15 +36,16 @@ build_member_runs() {
   if [ "${erf_members}" = "${PAIR_WITH_ERF}" ] || \
      [ "${gmt_members}" = "${PAIR_WITH_GMT}" ]; then
     echo "Pairing keyword on the wrong side: use" \
-         "ERF_MEMBERS=${PAIR_WITH_GMT} or GMT_MEMBERS=${PAIR_WITH_ERF}." >&2
+         "RECIPE_ERF_MEMBERS=${PAIR_WITH_GMT} or" \
+         "RECIPE_GMT_MEMBERS=${PAIR_WITH_ERF}." >&2
     return 1
   fi
 
   # ERROR: pairing keywords on both sides, so no members to pair
   if [ "${erf_members}" = "${PAIR_WITH_GMT}" ] && \
      [ "${gmt_members}" = "${PAIR_WITH_ERF}" ]; then
-    echo "ERF_MEMBERS and GMT_MEMBERS cannot both be pairing keywords: list" \
-         "the members on one side." >&2
+    echo "RECIPE_ERF_MEMBERS and RECIPE_GMT_MEMBERS cannot both be pairing" \
+         "keywords: list the members on one side." >&2
     return 1
   fi
 
@@ -102,7 +104,8 @@ build_member_runs() {
   else
     echo "Members are listed for both ERF (${erf_members}) and GMT" \
          "(${gmt_members}). Set one side to all, or to its pairing keyword" \
-         "(ERF_MEMBERS=${PAIR_WITH_GMT} or GMT_MEMBERS=${PAIR_WITH_ERF})." >&2
+         "(RECIPE_ERF_MEMBERS=${PAIR_WITH_GMT} or" \
+         "RECIPE_GMT_MEMBERS=${PAIR_WITH_ERF})." >&2
     return 1
   fi
 

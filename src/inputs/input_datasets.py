@@ -144,8 +144,9 @@ def check_dataset_pairing(erf_id, gmt_id, erf_member, gmt_member):
         raise ValueError(
             f'{erf_id} has one ERF member for each GMT member, so they must '
             'be attributed one-to-one: give the same single member for both '
-            f'(got ERF member {erf_member!r}, GMT member {gmt_member!r}). In '
-            'run-gwi.sh, set ERF_MEMBERS=paired_with_GMT_member.')
+            f'(got ERF member {erf_member!r}, GMT member {gmt_member!r}), '
+            'with --erf-member and --gmt-member. In a run-gwi.sh recipe, set '
+            'RECIPE_ERF_MEMBERS=paired_with_GMT_member.')
 
 
 def find_dataset_file(metadata, pattern):

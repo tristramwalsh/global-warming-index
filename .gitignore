@@ -2,6 +2,9 @@
 # The rest of models/FaIR_V2/ (SOURCE.md, CMIP6 parameters) is tracked.
 /models/FaIR_V2/FaIRv2_0_0_alpha1/
 
+# recipes for your own development runs
+/recipes/dev*.sh
+
 # logs: slurm mode and direct mode of run-gwi.sh
 /logs_slurm*/
 /logs_direct*/

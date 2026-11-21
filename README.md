@@ -100,23 +100,40 @@ Prerequisites:
 
 ### 2. Running the Analysis
 
-The workflow is controlled by the `run-gwi.sh` script, which calculates the GWI for every configuration set at its top: either by submitting a SLURM job for each, or by running them directly in the current shell.
+It is best to run the GWI calculations using `run-gwi.sh`, a wrapper that builds every attribution configuration required and either submits each as a Slurm job or runs them in the current shell. Each run from `run-gwi.sh` is delivered through `gwi.py`, which calculates the GWI once for the options given on its command line. While `gwi.py` can be run directly, it takes about twenty options, and most analyses require running it many times across different configurations, usually on a Slurm-managed HPC cluster, which is why the `run-gwi.sh` wrapper is provided for ease of use and reproducibility.
+
+To configure and run an attribution analysis you don't need to edit `run-gwi.sh`; the script `run-gwi.sh` takes its settings from a *recipe*: a short file in `recipes/` that sets every setting you need for a set of runs. Keeping each set of runs in its own recipe makes it easy to rerun, test and reproduce them.
+
 
 #### 2.1. Basic Usage
 
 ##### 2.1.1. Run the GWI iterations
-Edit the settings at the top of `run-gwi.sh` (see **Configuration Arguments** below), activate the `gwi` environment, then:
+Make a recipe by copying the template, which lists and explains every setting (see **Configuration Arguments** below), and edit the values:
 ```bash
-bash run-gwi.sh
+cp recipes/TEMPLATE.sh recipes/my-recipe.sh
 ```
-The script checks that the `gwi` environment is active before running anything; it does not activate it for you, as that differs between machines.
+Then activate the `gwi` environment, and run the recipe:
+```bash
+bash run-gwi.sh recipes/my-recipe.sh [dry|direct|slurm]
+```
+Run `bash run-gwi.sh` with no arguments for a usage message, which also lists the recipes available. The script checks that the `gwi` environment is active before running anything; it does not activate it for you, as that differs between machines.
 
-**Run modes** (`MODE`):
+A recipe sets every setting in the template, each once, and nothing else; the script checks this before running anything, and stops if a setting is missing, repeated or unknown (a typo, say). Comments are optional, so a recipe can be just the list of settings. When a new setting is added to the template, add it to every recipe in `recipes/` too. `recipes/dev*.sh` are ignored by git: use them for your own development runs. Recipes that make up one experiment share an `OUTPUT_TAG`: run each, then combine them together.
+
+In direct and slurm mode, a copy of the recipe goes into the log folder, headed with the date, the host, the mode, and the git commit the run started from (noting any uncommitted changes to tracked files).
+
+**Run modes** (the second argument):
 - `slurm` = generate and submit one SLURM job per configuration. Use this for full-size runs.
 - `direct` = run each configuration now, one after another, in this shell: on a laptop or on an interactive node. Use this for quick tests and development. It stops at the first failure, and logs go to `logs_direct/` (or `logs_direct_<tag>/`).
-- `dry` = print the `gwi.py` commands that would run, and run nothing.
+- `dry` (the default) = print the `gwi.py` commands that would run, and run nothing.
 
-For a quick test, set `MODE=direct` and uncomment the **Quick test** settings in `run-gwi.sh`; on a laptop this takes well under a minute.
+For a quick test, run the template itself, whose values are a small, fast configuration (on a laptop this takes well under a minute):
+```bash
+bash run-gwi.sh recipes/TEMPLATE.sh direct
+```
+
+> [!WARNING]
+> The template's results are not fit for any real use. Its ensemble is trivially small (10 samples from each source of uncertainty), so it only checks that everything runs. Real results need much larger ensembles (see `SUBSAMPLE_ITERATIONS`).
 
 ##### 2.1.2. Combine results from multiple iterations
 Once the runs have completed, run the combination script with the same tag:
@@ -131,9 +148,7 @@ See **Combining Results from Multiple Iterations** for its options, and **Output
 
 #### 2.2. Configuration Arguments
 
-The following parameters in `run-gwi.sh` control the analysis:
-
-**`MODE`**: How to run each configuration: `slurm`, `direct` or `dry` (see **Run modes** above).
+The following settings control the analysis. Every recipe sets each of them, named with a `RECIPE_` prefix (e.g. `RECIPE_ERF_DATASET=IGCC-2025`), so that it is clear in `run-gwi.sh` which values come from the recipe; the prefix is left out below. `recipes/TEMPLATE.sh` lists them all, with the values each can take.
 
 **`START_REGRESS`**: The starting year for the observational constraint period (e.g., `1850`)
 - Defines when start year of the data ranges that the regression constraint is applied over.
@@ -168,7 +183,7 @@ The following parameters in `run-gwi.sh` control the analysis:
     - `n` = no pre-industrial offset applied (temperatures are left in their default state, which may be relative to a different baseline depending on the dataset)
 
 **`INCLUDE_REG_CONST`**: Toggle regression constant (`y` or `n`)
-- Specifies whether to include a constant term offset within the multi-variable regression. We typically set this to `n`, as in `run-gwi.sh`. (`gwi.py` itself defaults to `y` if the option is not passed.)
+- Specifies whether to include a constant term offset within the multi-variable regression. We typically set this to `n`, as in `recipes/TEMPLATE.sh`. (`gwi.py` itself defaults to `y` if the option is not passed.)
 - Examples:
     - `y` = include the constant term in the regression
     - `n` = do not include the constant term in the regression
@@ -273,7 +288,8 @@ The following parameters in `run-gwi.sh` control the analysis:
 
 
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
-- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
+- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
+- Usually the recipe's own name; recipes that make up one experiment share a tag.
 - Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`).
 - Left empty, the plain `results/`, `plots/` and `logs_slurm/` (or `logs_direct/`) folders are used.
 
@@ -286,8 +302,9 @@ The following parameters in `run-gwi.sh` control the analysis:
 #### 2.3. What the Script Does
 
 The `run-gwi.sh` script:
-1. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
-2. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
+1. Checks the recipe against `recipes/TEMPLATE.sh`, then reads it
+2. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
+3. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
     - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
     - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
 
@@ -341,7 +358,7 @@ python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --p
 ```
 
 All three options are optional:
-- `--output-tag=<tag>` = the `OUTPUT_TAG` used in `run-gwi.sh`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+- `--output-tag=<tag>` = the recipe's `OUTPUT_TAG`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
 - `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
 - `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `ERF-all_GMT-all` selection is always plotted in full.
 
@@ -376,8 +393,8 @@ global-warming-index/
 │                        ├── GWI_results_headlines_*.csv
 │                        └── GWI_results_rates_*.csv  (if INCLUDE_RATE=y)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
-├── logs_slurm/   one log per Slurm job (slurm mode)
-└── logs_direct/  one log per configuration (direct mode)
+├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
+└── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
 ```
 
 The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-industrial period (`PREINDUSTRIAL--none` with no offset), plus `_COMMITTED--{start}-{end}` when `COMMITTED` is set; e.g. `ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900`. Below it, `ENSEMBLE-MEMBER--` gives the member selection, ERF first, e.g. `ERF-all_GMT-all` or `ERF-all_GMT-7`. Each file's name repeats these labels.

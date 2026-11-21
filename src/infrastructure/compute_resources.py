@@ -283,8 +283,8 @@ def _check_and_report_memory(n_bytes, shape):
     interest.
     """
     limit = job_memory_limit()
-    advice = ('lower the number of samples, or raise CPU_MEM in '
-              'run-gwi.sh')
+    advice = ('lower the number of samples (--samples), or raise the '
+              'memory per CPU (RECIPE_CPU_MEM in a run-gwi.sh recipe)')
 
     if limit is not None and n_bytes > limit:
         raise MemoryError(

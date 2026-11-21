@@ -26,9 +26,9 @@ GWI outputs for <what they were for>.
 
 ## Contents
 
-| Scenario | Description | Results | Config |
+| Scenario | Description | Results | Recipe |
 | --- | --- | --- | --- |
-| `<scenario>` | <one sentence> | ✅ | ✅ `configs/<file>` |
+| `<scenario>` | <one sentence> | ✅ | ✅ `recipes/<file>` |
 
 ✅ included · ❌ not included
 
