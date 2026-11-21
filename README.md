@@ -1,6 +1,6 @@
 # The Global Warming Index
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24020859.svg)](https://doi.org/10.5281/zenodo.24020859)
+[![DOI: 10.5281/zenodo.24020859](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.24020859-blue.svg)](https://doi.org/10.5281/zenodo.24020859)
 [![Code licence: MIT](https://img.shields.io/badge/code%20licence-MIT-yellow.svg)](LICENSE)
 [![Outputs licence: CC BY 4.0](https://img.shields.io/badge/outputs%20licence-CC%20BY%204.0-lightgrey.svg)](published_outputs/LICENSE.md)
 
@@ -65,8 +65,6 @@ If you use results from `published_outputs/`, e.g. the outputs for other specifi
 Each release has a git tag and GitHub release, and is archived on Zenodo as a version named after the tag, under the concept DOI https://doi.org/10.5281/zenodo.24020859 (each version's own DOI is on its Zenodo page).
 
 The code is MIT-licensed ([`LICENSE`](LICENSE)); the published outputs are [`CC BY 4.0`](published_outputs/LICENSE.md); the input data keep their own licences (see the `SOURCE.md` in each data folder).
-
-Changes between releases are in [`CHANGELOG.md`](CHANGELOG.md), and the release process is in [`RELEASING.md`](RELEASING.md).
 
 | Release | Made for | Outputs in `published_outputs/` |
 | --- | --- | --- |
