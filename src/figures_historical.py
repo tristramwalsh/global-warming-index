@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import src.graphing as gr
+import src.plot_style as plot_style
 import src.results_layout as results_layout
 import src.variables as variables
 import src.results_reading as results_reading
@@ -189,11 +190,11 @@ def figure_headlines_comparison(
             v for v in params['plot_vars'] if v not in unwanted_vars]
         for vv in plot_vars_main:
             # Determine line style
-            ls = gr.HEADLINE_LINE_STYLE.get(vv)
+            ls = plot_style.HEADLINE_LINE_STYLE.get(vv)
             if ls is None:
                 # Try to get style from parent
                 parent = params['scaling_map'].get(vv)
-                ls = gr.HEADLINE_LINE_STYLE.get(parent, 'solid')
+                ls = plot_style.HEADLINE_LINE_STYLE.get(parent, 'solid')
 
             # Plot the historical only timeseries
             ax1.plot(results_dfs[scen][ens][reg_vars][
@@ -202,7 +203,7 @@ def figure_headlines_comparison(
                          'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
                      label=f'{headline}-{vv}',
                      linestyle=ls,
-                     color=gr.HEADLINE_COLOURS[headline]
+                     color=plot_style.HEADLINE_COLOURS[headline]
                      )
             if vv != 'Nat':
                 df_hist_headline = results_dfs[scen][ens][reg_vars][
@@ -213,7 +214,7 @@ def figure_headlines_comparison(
                     resid,
                     label=f'{headline}-{vv}',
                     linestyle=ls,
-                    color=gr.HEADLINE_COLOURS[headline]
+                    color=plot_style.HEADLINE_COLOURS[headline]
                 )
                 # Score the residual against the headline's own uncertainty,
                 # with sigma inferred from the 5-95 percentile range.
@@ -246,14 +247,14 @@ def figure_headlines_comparison(
             ax3.plot(df_fullinfo_defs.index, df_fullinfo_defs,
                      label=f'{headline}-{vv}',
                      linestyle=ls,
-                     color=gr.HEADLINE_COLOURS[headline]
+                     color=plot_style.HEADLINE_COLOURS[headline]
                      )
             if vv != 'Nat':
                 ax4.plot(
                     (df_fullinfo_defs - df_temp_Obs_20yr),
                     label=f'{headline}-{vv}',
                     linestyle=ls,
-                    color=gr.HEADLINE_COLOURS[headline]
+                    color=plot_style.HEADLINE_COLOURS[headline]
                 )
 
     # Plotting 20-year running means on observations moved to the
@@ -352,11 +353,11 @@ def figure_thorne_et_al(
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
         for vv in plot_vars_main:
             # Determine line style
-            ls = gr.HEADLINE_LINE_STYLE.get(vv)
+            ls = plot_style.HEADLINE_LINE_STYLE.get(vv)
             if ls is None:
                 # Try to get style from parent
                 parent = params['scaling_map'].get(vv)
-                ls = gr.HEADLINE_LINE_STYLE.get(parent, 'solid')
+                ls = plot_style.HEADLINE_LINE_STYLE.get(parent, 'solid')
 
             # Plot the historical only timeseries
             ax.plot(results_dfs[scen][ens][reg_vars][
@@ -365,7 +366,7 @@ def figure_thorne_et_al(
                         'HISTORICAL-ONLY'][headline].loc[:, (vv, '50')],
                     label=f'{headline}-{vv}',
                     linestyle=ls,
-                    color=gr.HEADLINE_COLOURS[headline]
+                    color=plot_style.HEADLINE_COLOURS[headline]
                     )
     ax.plot(df_temp_Obs_20yr.index, df_temp_Obs_20yr,
             label='Obs 20-year running mean',

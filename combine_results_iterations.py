@@ -15,6 +15,7 @@ import src.historical_only as historical_only
 import src.figure_selection as figure_selection
 import src.figures_base as figures_base
 import src.figures_historical as figures_historical
+import src.plot_style as plot_style
 import functools
 
 
@@ -418,6 +419,8 @@ if __name__ == '__main__':
 
     output_tag, re_calculate, plot_every = parse_argvs()
     results_layout.set_output_folders(output_tag)
+    # Apply the figure style (fonts, axes, grid) before drawing anything
+    plot_style.use()
     figure_selection.PLOT_EVERY = plot_every
     print(f'Re-calculate results: {re_calculate}')
     if figure_selection.PLOT_EVERY > 1:

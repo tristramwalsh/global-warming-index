@@ -3,6 +3,7 @@ parameters, and the thinning of member-by-member selections
 (--plot-every).
 """
 import src.graphing as gr
+import src.plot_style as plot_style
 
 
 # How far to thin the figures of member-by-member selections (ERF-all_GMT-7
@@ -28,7 +29,7 @@ def setup_plot_params(scen, ens, reg_vars, results_dfs):
     plot_vars = results_dfs[scen][ens][reg_vars][first_range][
         'timeseries'].columns.get_level_values(0).unique().to_list()
     all_var_colours, scaling_map = gr.get_dynamic_colours(
-        reg_vars, plot_vars, gr.VAR_COLOURS)
+        reg_vars, plot_vars, plot_style.VAR_COLOURS)
 
     return {
         'min_range': min_regressed_range,
