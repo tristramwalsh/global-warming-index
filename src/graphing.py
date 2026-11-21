@@ -1,5 +1,7 @@
 """Plotting helpers for combine_results_iterations.py."""
 
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as ss
@@ -491,3 +493,54 @@ def close_figure(fig):
     """
     plt.close(fig)
     gc.collect()
+
+
+def add_configuration_text(fig, scen, ens, reg_vars, reg_range=None,
+                           extra=None, x=0.5, y=0.01, **text_kwargs):
+    """Write the line saying what a figure shows, by default centred at its
+    foot in small monospace, e.g.
+    'Inputs: ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900 |
+    Ensemble: ERF-all_GMT-all | Regressed variables: GHG-Nat-OHF |
+    Regressed range: 1850-2025'.
+
+    reg_range: the regressed range, e.g. '1850-2025', if the figure has one
+    extra: any further 'Name: value' part, e.g. 'Iterations: 3'
+    x, y, text_kwargs: where and how to write it, passed to fig.text, e.g.
+        x=0.05, y=0.93, ha='left', color='#555555'
+    """
+    # The parts every figure has
+    parts = [f'Inputs: {scen}',
+             f'Ensemble: {ens}',
+             f'Regressed variables: {reg_vars}']
+
+    # The parts only some figures have
+    if reg_range is not None:
+        parts.append(f'Regressed range: {reg_range}')
+    if extra is not None:
+        parts.append(extra)
+
+    # Write it: centred at the foot unless told otherwise
+    style = {'ha': 'center', 'fontsize': 'x-small', 'fontfamily': 'monospace'}
+    style.update(text_kwargs)
+    fig.text(x, y, ' | '.join(parts), **style)
+
+
+def half_degree_limits(values):
+    """Axis limits that just contain the values, rounded out to the nearest
+    half: e.g. values from -0.3 to 1.32 give (-0.5, 1.5)."""
+    return (np.floor(np.min(values) * 2) / 2,
+            np.ceil(np.max(values) * 2) / 2)
+
+
+def save_and_close_figure(fig, folder, file_name):
+    """Save a figure as folder/file_name, making the folder if needed, then
+    close it and free its memory (see close_figure). Returns the file path.
+
+    folder: e.g. results_layout.PLOT_FOLDER + 'aggregated/<inputs>/...'
+    file_name: e.g. 'Timeseries_<inputs>_ENSEMBLE-MEMBER--<ens>_....png'
+    """
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, file_name)
+    fig.savefig(path)
+    close_figure(fig)
+    return path

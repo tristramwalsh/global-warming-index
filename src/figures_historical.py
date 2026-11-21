@@ -59,7 +59,8 @@ def figure_historical_only_timeseries(
             reorder = None
         ax.set_ylim(
             -1,
-            np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
+            gr.half_degree_limits(
+                obs_dfs[scen][ens]['timeseries'].values)[1])
         ax.set_xlim(params['start_year'], params['end_year'])
         xticks = list(
             np.arange(params['start_year'], params['end_year'] + 1, 5))
@@ -75,18 +76,13 @@ def figure_historical_only_timeseries(
             plt.subplots_adjust(right=0.8)
         fig.suptitle(f'Historical-only {headline}')
 
-        configuration = (f'Inputs: {scen} | '
-                         f'Ensemble: {ens} | '
-                         f'Regressed variables: {reg_vars}')
-        fig.text(0.5, 0.01, configuration, ha='center',
-                 fontsize='x-small', fontfamily='monospace')
+        gr.add_configuration_text(fig, scen, ens, reg_vars)
 
-        fig.savefig(
-            plot_path +
+        gr.save_and_close_figure(
+            fig, plot_path,
             f'Historical_only_{headline}_' +
             f'{scen}_{ens}_{reg_vars}_' +
             f"{params['min_range']}_to_{params['max_range']}.png")
-        plt.close(fig)
 
 
 def figure_historical_vs_full_timeseries(
@@ -117,7 +113,7 @@ def figure_historical_vs_full_timeseries(
         hatch=None, linestyle=var_linestyles)
 
     ax.set_ylim(
-        -1, np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2)
+        -1, gr.half_degree_limits(obs_dfs[scen][ens]['timeseries'].values)[1])
     ax.set_xlim(params['start_year'], params['end_year'])
     xticks = list(np.arange(params['start_year'], params['end_year'] + 1, 5))
     xticks.append(params['end_year'])
@@ -132,18 +128,13 @@ def figure_historical_vs_full_timeseries(
     fig.suptitle(
         'Historical-only (dashed) versus Full-information (solid)')
 
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace')
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
 
-    fig.savefig(
-        plot_path +
+    gr.save_and_close_figure(
+        fig, plot_path,
         'ANNUAL_Historical_vs_Full_timeseries_' +
         f'{scen}_{ens}_{reg_vars}_' +
         f"{params['min_range']}_to_{params['max_range']}.png")
-    plt.close(fig)
 
 
 def figure_headlines_comparison(
@@ -275,16 +266,10 @@ def figure_headlines_comparison(
                 )
 
     # Slice the df_temp_Obs using the smallest and largest end years
-    min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].loc[
-            params['start_year']:params['end_year']
-        ].values) * 2) / 2
+    min_y, max_y = gr.half_degree_limits(
+        obs_dfs[scen][ens]['timeseries'].loc[
+            params['start_year']:params['end_year']].values)
     min_y = min([-0.5, min_y])
-    max_y = np.ceil(np.max(
-            obs_dfs[scen][ens][
-                'timeseries'].loc[params['start_year']:params['end_year']
-                                  ].values) * 2) / 2
-    # min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
-    # max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].values) * 2) / 2
     ax1.set_ylim(min_y, max_y)
     ax3.set_ylim(min_y, max_y)
     for ax in [ax1, ax2]:
@@ -307,18 +292,13 @@ def figure_headlines_comparison(
     fig.suptitle(
         'Historical-only and Full-information vs 20-year Obs running mean')
 
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace')
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
 
-    fig.savefig(plot_path +
-                'Historical_and_full_headlines_' +
-                f'{scen}_{ens}_{reg_vars}_' +
-                f"{params['min_range']}_to_{params['max_range']}.png")
-
-    plt.close(fig)
+    gr.save_and_close_figure(
+        fig, plot_path,
+        'Historical_and_full_headlines_' +
+        f'{scen}_{ens}_{reg_vars}_' +
+        f"{params['min_range']}_to_{params['max_range']}.png")
 
 
 def figure_thorne_et_al(
@@ -376,13 +356,10 @@ def figure_thorne_et_al(
             )
 
     # Slice the df_temp_Obs using the smallest and largest end years
-    min_y = np.floor(np.min(obs_dfs[scen][ens]['timeseries'].loc[
-        params['start_year']:params['end_year']
-            ].values) * 2) / 2
+    min_y, max_y = gr.half_degree_limits(
+        obs_dfs[scen][ens]['timeseries'].loc[
+            params['start_year']:params['end_year']].values)
     min_y = min([-0.5, min_y])
-    max_y = np.ceil(np.max(obs_dfs[scen][ens]['timeseries'].loc[
-        params['start_year']:params['end_year']
-            ].values) * 2) / 2
 
     ax.set_ylim(min_y, max_y)
     ax.set_xlim(params['start_year'], params['end_year'] + 0.5)
@@ -396,17 +373,13 @@ def figure_thorne_et_al(
         'Global Warming Index (GWI)'
     )
 
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace')
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
 
-    fig.savefig(plot_path +
-                'Historical_only_headlines_' +
-                f'{scen}_{ens}_{reg_vars}_' +
-                f"{params['min_range']}_to_{params['max_range']}.png")
-    plt.close(fig)
+    gr.save_and_close_figure(
+        fig, plot_path,
+        'Historical_only_headlines_' +
+        f'{scen}_{ens}_{reg_vars}_' +
+        f"{params['min_range']}_to_{params['max_range']}.png")
 
 
 def figure_constrained_warming(
@@ -534,19 +507,14 @@ def figure_constrained_warming(
 
     fig.suptitle(f'Constrained projected warming in {constrained_year}')
 
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace')
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
 
-    fig.savefig(
-        plot_path +
+    gr.save_and_close_figure(
+        fig, plot_path,
         f'Projected_warming_in_{constrained_year}_' +
         f'regressing_{reg_vars}_'
         'constrained_by_regressed_years_' +
         f"{params['min_range']}_to_{params['max_range']}.png")
-    plt.close(fig)
 
     return df_constrained
 
@@ -727,19 +695,14 @@ def figure_delta_contributions(
     fig.suptitle(
         f'Contributions to the change in {changing_var} warming ' +
         'each year Y → Y+1')
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace')
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
     gr.overall_legend(fig, 'lower center', 3)
     fig.tight_layout(rect=[0.05, 0.15, 0.95, 0.95])
 
-    fig.savefig(
-        plot_path +
+    gr.save_and_close_figure(
+        fig, plot_path,
         'Historical_delta_contributions_' +
         f"{reg_vars}_{params['min_range']}_to_{params['max_range']}.png")
-    plt.close(fig)
 
     # Compare variation between internal variation (using Residual as a
     # proxy for this, because ideally speaking, all forced warming is

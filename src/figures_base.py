@@ -3,7 +3,6 @@ inputs, member selection and regressed range: timeseries, rates, iteration
 comparison, SPM2 and waterfall bar plots, priors, ERFs, piControl and the
 timeseries animation.
 """
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -78,11 +77,8 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
         all_data_vars, params['colours'], linestyle=var_linestyles,
         plume_vars=plume_vars)
 
-    ax.set_ylim(
-        np.floor(np.min(df_ts.drop(columns='Res', level=0).values) * 2) / 2,
-        # np.ceil(np.max(df_temp_Obs.values) * 2) / 2,
-        np.ceil(np.max(df_ts.drop(columns='Res', level=0).values) * 2) / 2
-    )
+    ax.set_ylim(*gr.half_degree_limits(
+        df_ts.drop(columns='Res', level=0).values))
     # ax.set_ylim(-2,5)
 
     ax.set_xlim(trunc_start, trunc_end+1)
@@ -110,32 +106,18 @@ def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars} | '
-                     f'Regressed range: {reg_range}')
-    if configuration:
-        fig.text(0.5, 0.01, configuration, ha='center',
-                 fontsize='x-small', fontfamily='monospace',
-                 )
+    gr.add_configuration_text(fig, scen, ens, reg_vars, reg_range)
 
     plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
-
-    plot_name = (f'{plot_path}/' +
-                 f'Timeseries_{scen}_' +
+    file_name = (f'Timeseries_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
-    # plot_names.append(plot_name)
-    fig.savefig(plot_name)
-    gr.close_figure(fig)
-    return plot_name
+    return gr.save_and_close_figure(fig, plot_path, file_name)
 
 
 def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
@@ -234,31 +216,18 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars} | '
-                     f'Regressed range: {reg_range}')
-    if configuration:
-        fig.text(0.5, 0.01, configuration, ha='center',
-                 fontsize='x-small', fontfamily='monospace',
-                 )
+    gr.add_configuration_text(fig, scen, ens, reg_vars, reg_range)
 
     plot_path = (f'{results_layout.PLOT_FOLDER}aggregated/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
-
-    plot_name = (f'{plot_path}/' +
-                 f'Rates_{scen}_' +
+    file_name = (f'Rates_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
-    fig.savefig(plot_name)
-    gr.close_figure(fig)
-    return plot_name
+    return gr.save_and_close_figure(fig, plot_path, file_name)
 
 
 def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
@@ -349,31 +318,20 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
              )
 
     # Add configuration text
-    configuration = (f'Inputs: {scen} | '
-                     f'Ensemble: {ens} | '
-                     f'Regressed variables: {reg_vars} | '
-                     f'Regressed range: {reg_range} | '
-                     f'Iterations: {len(dict_iterations)}')
-    fig.text(0.5, 0.01, configuration, ha='center',
-             fontsize='x-small', fontfamily='monospace',
-             )
+    gr.add_configuration_text(
+        fig, scen, ens, reg_vars, reg_range,
+        extra=f'Iterations: {len(dict_iterations)}')
 
     plot_path = (f'{results_layout.PLOT_FOLDER}iterations/' +
                  f'{scen}/' +
                  f'ENSEMBLE-MEMBER--{ens}/' +
                  f'VARIABLES--{reg_vars}/' +
                  f'REGRESSED-YEARS--{reg_range}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
-
-    plot_name = (f'{plot_path}/' +
-                 f'Compare-Iterations_{scen}_' +
+    file_name = (f'Compare-Iterations_{scen}_' +
                  f'ENSEMBLE-MEMBER--{ens}_' +
                  f'VARIABLES--{reg_vars}_' +
                  f'REGRESSED-YEARS--{reg_range}.png')
-    fig.savefig(plot_name)
-    gr.close_figure(fig)
-    return plot_name
+    return gr.save_and_close_figure(fig, plot_path, file_name)
 
 
 def figure_spm2(
@@ -522,14 +480,7 @@ def figure_spm2(
                      )
 
         # Create plot
-        configuration = (f'Inputs: {scen} | '
-                         f'Ensemble: {ens} | '
-                         f'Regressed variables: {reg_vars} | '
-                         f'Regressed range: {reg_range}')
-        if configuration:
-            fig.text(0.5, 0.01, configuration, ha='center',
-                     fontsize='x-small', fontfamily='monospace',
-                     )
+        gr.add_configuration_text(fig, scen, ens, reg_vars, reg_range)
 
         # Draw arrows for Ant <- GHG + OHF
         y_offsets = {
@@ -551,18 +502,13 @@ def figure_spm2(
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
                      f'REGRESSED-YEARS--{reg_range}/')
-        if not os.path.exists(plot_path):
-            os.makedirs(plot_path, exist_ok=True)
-
         period_token = str(period).replace(' ', '-')
-        plot_name = (f'{plot_path}/' +
-                     f'SPM2_BarPlot_{scen}_' +
+        file_name = (f'SPM2_BarPlot_{scen}_' +
                      f'ENSEMBLE-MEMBER--{ens}_' +
                      f'VARIABLES--{reg_vars}_' +
                      f'REGRESSED-YEARS--{reg_range}_' +
                      f'PERIOD--{period_token}.png')
-        fig.savefig(plot_name)
-        gr.close_figure(fig)
+        gr.save_and_close_figure(fig, plot_path, file_name)
 
 
 def figure_waterfall(
@@ -888,12 +834,9 @@ def figure_waterfall(
                  ha='left', fontsize=16, fontweight='bold')
 
         # Configuration text
-        configuration = (f'Inputs: {scen} | '
-                         f'Ensemble: {ens} | '
-                         f'Regressed variables: {reg_vars} | '
-                         f'Regressed range: {reg_range}')
-        fig.text(0.05, 0.93, configuration, ha='left', fontsize=8,
-                 fontfamily='monospace', color='#555555')
+        gr.add_configuration_text(fig, scen, ens, reg_vars, reg_range,
+                                  x=0.05, y=0.93, ha='left', fontsize=8,
+                                  color='#555555')
 
         fig.tight_layout(rect=(0.02, 0.03, 0.98, 0.93))
 
@@ -903,18 +846,88 @@ def figure_waterfall(
                      f'ENSEMBLE-MEMBER--{ens}/' +
                      f'VARIABLES--{reg_vars}/' +
                      f'REGRESSED-YEARS--{reg_range}/')
-        if not os.path.exists(plot_path):
-            os.makedirs(plot_path, exist_ok=True)
-
         period_token = str(period).replace(' ', '-')
-        plot_name = (f'{plot_path}/' +
-                     f'Waterfall_BarPlot_{scen}_' +
+        file_name = (f'Waterfall_BarPlot_{scen}_' +
                      f'ENSEMBLE-MEMBER--{ens}_' +
                      f'VARIABLES--{reg_vars}_' +
                      f'REGRESSED-YEARS--{reg_range}_' +
                      f'PERIOD--{period_token}.png')
-        fig.savefig(plot_name)
-        gr.close_figure(fig)
+        gr.save_and_close_figure(fig, plot_path, file_name)
+
+
+def figure_plume_timeseries(df_ts, df_temp_Obs, scen, ens, reg_vars, params,
+                            title, ylabel, start_year, folder, file_prefix):
+    """Plot a timeseries of each variable's percentile plume, and save it:
+    used for the prior warming and the ERFs.
+
+    df_ts: the timeseries, columns (variable, percentile)
+    df_temp_Obs: observations to draw too, or None
+    title: e.g. 'Prior Warming Timeseries'
+    ylabel: the y-axis label, or None for gr.gwi_timeseries's default
+    start_year: the earliest year to show, e.g. 1850
+    folder: the folder under PLOT_FOLDER, e.g. 'priors'
+    file_prefix: the start of the file name, e.g. 'Prior_Timeseries'
+    """
+    plot_vars = df_ts.columns.get_level_values(0).unique().to_list()
+
+    # Define major variables (for plumes)
+    plume_vars = [v for v in plot_vars
+                  if v in variables.SUB_VAR_MAPPING or v == 'Res']
+
+    # Define linestyles for all variables
+    var_linestyles = gr.get_dynamic_linestyles(plot_vars)
+
+    # Determine legend location
+    sub_vars = [v for v in plot_vars if v not in plume_vars]
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
+                          rowspan=1, colspan=1)
+
+    gr.gwi_timeseries(
+        ax, df_temp_Obs, None, df_ts,
+        plot_vars, params['colours'],
+        hatch='x', linestyle=var_linestyles,
+        plume_vars=plume_vars,
+        ylabel=ylabel)
+
+    if sub_vars:
+        legend_loc = 'center right'
+        legend_cols = 1
+        reorder = gr.get_legend_reorder_indices(fig)
+    else:
+        legend_loc = 'lower center'
+        legend_cols = 7
+        reorder = None
+
+    ax.set_ylim(*gr.half_degree_limits(df_ts.values))
+    ax.set_xlim(max(start_year, df_ts.index.min()), df_ts.index.max())
+    gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
+
+    if legend_loc == 'center right':
+        plt.subplots_adjust(right=0.8)
+
+    # Title, above the axes (as in the GWI timeseries figure)
+    fig.text(ax.get_position().x0, ax.get_position().y1+0.02,
+             title,
+             ha='left',
+             fontsize=plt.rcParams['axes.titlesize'],
+             fontweight='bold'
+             )
+
+    # Add configuration text
+    gr.add_configuration_text(fig, scen, ens, reg_vars)
+
+    plot_path = (
+        f'{results_layout.PLOT_FOLDER}{folder}/' +
+        f'{scen}/' +
+        f'ENSEMBLE-MEMBER--{ens}/' +
+        f'VARIABLES--{reg_vars}/')
+    file_name = (
+        f'{file_prefix}_{scen}_' +
+        f'ENSEMBLE-MEMBER--{ens}_' +
+        f'VARIABLES--{reg_vars}.png')
+    gr.save_and_close_figure(fig, plot_path, file_name)
 
 
 def figure_priors_timeseries(
@@ -923,76 +936,11 @@ def figure_priors_timeseries(
         params
 ):
     """Plot timeseries for PRIOR warming."""
-    plot_vars_priors = priors_dfs[
-        scen][ens]['timeseries'].columns.get_level_values(
-            0).unique().to_list()
-
-    # Define major variables (for plumes)
-    plume_vars = [v for v in plot_vars_priors
-                  if v in variables.SUB_VAR_MAPPING or v == 'Res']
-
-    # Define linestyles for all variables
-    var_linestyles = gr.get_dynamic_linestyles(plot_vars_priors)
-
-    # Determine legend location
-    sub_vars = [v for v in plot_vars_priors if v not in plume_vars]
-
-    fig = plt.figure(figsize=(12, 8))
-    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
-                          rowspan=1, colspan=1)
-
-    gr.gwi_timeseries(
-        ax, obs_dfs[scen][ens]['timeseries'], None,
-        priors_dfs[scen][ens]['timeseries'],
-        plot_vars_priors, params['colours'],
-        hatch='x', linestyle=var_linestyles,
-        plume_vars=plume_vars)
-
-    if sub_vars:
-        legend_loc = 'center right'
-        legend_cols = 1
-        reorder = gr.get_legend_reorder_indices(fig)
-    else:
-        legend_loc = 'lower center'
-        legend_cols = 7
-        reorder = None
-
-    ax.set_ylim(
-        np.floor(np.min(
-            priors_dfs[scen][ens]['timeseries'].values)
-            * 2) / 2,
-        np.ceil(np.max(
-            priors_dfs[scen][ens]['timeseries'].values)
-            * 2) / 2
-        )
-    # ax.set_ylim(-2,5)
-    ax.set_xlim(
-        max(1850,
-            priors_dfs[scen][ens]['timeseries'].index.min()),
-        priors_dfs[scen][ens]['timeseries'].index.max())
-    gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
-
-    if legend_loc == 'center right':
-        plt.subplots_adjust(right=0.8)
-    fig.suptitle(
-        f'Prior Warming Timeseries\n'
-        f'Inputs: {scen} | '
-        f'Ensemble: {ens} | '
-        f'Regressed variables: {reg_vars}')
-    plot_path = (
-        f'{results_layout.PLOT_FOLDER}priors/' +
-        f'{scen}/' +
-        f'ENSEMBLE-MEMBER--{ens}/' +
-        f'VARIABLES--{reg_vars}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
-    plot_name = (
-        f'{plot_path}/' +
-        f'Prior_Timeseries_{scen}_' +
-        f'ENSEMBLE-MEMBER--{ens}_' +
-        f'VARIABLES--{reg_vars}.png')
-    fig.savefig(plot_name)
-    plt.close(fig)
+    figure_plume_timeseries(
+        priors_dfs[scen][ens]['timeseries'], obs_dfs[scen][ens]['timeseries'],
+        scen, ens, reg_vars, params,
+        title='Prior Warming Timeseries', ylabel=None, start_year=1850,
+        folder='priors', file_prefix='Prior_Timeseries')
 
 
 def figure_erf_timeseries(
@@ -1000,77 +948,12 @@ def figure_erf_timeseries(
         erf_dfs, params
 ):
     """Plot timeseries for ERF."""
-    plot_vars_erf = erf_dfs[
-        scen][ens]['timeseries'].columns.get_level_values(
-            0).unique().to_list()
-
-    # Define major variables (for plumes)
-    plume_vars = [v for v in plot_vars_erf
-                  if v in variables.SUB_VAR_MAPPING or v == 'Res']
-
-    # Define linestyles for all variables
-    var_linestyles = gr.get_dynamic_linestyles(plot_vars_erf)
-
-    # Determine legend location
-    sub_vars = [v for v in plot_vars_erf if v not in plume_vars]
-
-    fig = plt.figure(figsize=(12, 8))
-    ax = plt.subplot2grid(shape=(1, 1), loc=(0, 0),
-                          rowspan=1, colspan=1)
-
-    gr.gwi_timeseries(
-        ax, None, None,
-        erf_dfs[scen][ens]['timeseries'],
-        plot_vars_erf, params['colours'],
-        hatch='x', linestyle=var_linestyles,
-        plume_vars=plume_vars,
-        ylabel='Effective Radiative Forcing (W m⁻²)')
-
-    if sub_vars:
-        legend_loc = 'center right'
-        legend_cols = 1
-        reorder = gr.get_legend_reorder_indices(fig)
-    else:
-        legend_loc = 'lower center'
-        legend_cols = 7
-        reorder = None
-
-    ax.set_ylim(
-        np.floor(np.min(
-            erf_dfs[scen][ens]['timeseries'].values)
-            * 2) / 2,
-        np.ceil(np.max(
-            erf_dfs[scen][ens]['timeseries'].values)
-            * 2) / 2
-        )
-    # ax.set_ylim(-2,5)
-    ax.set_xlim(
-        max(1750,
-            erf_dfs[scen][ens]['timeseries'].index.min()),
-        erf_dfs[scen][ens]['timeseries'].index.max())
-    gr.overall_legend(fig, legend_loc, legend_cols, reorder=reorder)
-
-    if legend_loc == 'center right':
-        plt.subplots_adjust(right=0.8)
-    fig.suptitle(
-        f'Effective Radiative Forcing Timeseries\n'
-        f'Inputs: {scen} | '
-        f'Ensemble: {ens} | '
-        f'Regressed variables: {reg_vars}')
-    plot_path = (
-        f'{results_layout.PLOT_FOLDER}erfs/' +
-        f'{scen}/' +
-        f'ENSEMBLE-MEMBER--{ens}/' +
-        f'VARIABLES--{reg_vars}/')
-    if not os.path.exists(plot_path):
-        os.makedirs(plot_path, exist_ok=True)
-    plot_name = (
-        f'{plot_path}/' +
-        f'ERF_Timeseries_{scen}_' +
-        f'ENSEMBLE-MEMBER--{ens}_' +
-        f'VARIABLES--{reg_vars}.png')
-    fig.savefig(plot_name)
-    plt.close(fig)
+    figure_plume_timeseries(
+        erf_dfs[scen][ens]['timeseries'], None,
+        scen, ens, reg_vars, params,
+        title='Effective Radiative Forcing Timeseries',
+        ylabel='Effective Radiative Forcing (W m⁻²)', start_year=1750,
+        folder='erfs', file_prefix='ERF_Timeseries')
 
 
 def figure_picontrol(scen, ens, obs_dfs):
@@ -1109,7 +992,6 @@ def figure_picontrol(scen, ens, obs_dfs):
     # Where the figures go
     plot_path = (f'{results_layout.PLOT_FOLDER}picontrol/{scen}/'
                  f'ENSEMBLE-MEMBER--{ens}/')
-    os.makedirs(plot_path, exist_ok=True)
     plot_label = f'{scen}_ENSEMBLE-MEMBER--{ens}'
 
     # 1. Running means of each segment, and their distributions
@@ -1119,8 +1001,8 @@ def figure_picontrol(scen, ens, obs_dfs):
     gr.overall_legend(fig, loc='lower center', ncol=2, nrow=False)
     fig.suptitle(
         'Selected Sample of Internal Variability from CMIP6 PiControl')
-    fig.savefig(f'{plot_path}piControl_Selected_Segments_{plot_label}.png')
-    gr.close_figure(fig)
+    gr.save_and_close_figure(
+        fig, plot_path, f'piControl_Selected_Segments_{plot_label}.png')
 
     # 2. The spread of the segments against the observed estimate
     fig = plt.figure(figsize=(15, 10))
@@ -1132,10 +1014,9 @@ def figure_picontrol(scen, ens, obs_dfs):
     gr.overall_legend(fig, loc='lower center', ncol=3, nrow=False)
     fig.suptitle(
         'Selected Sample of Internal Variability from CMIP6 pi-control')
-    fig.savefig(
-        f'{plot_path}piControl_Internal_Variability_Distribution_'
-        f'{plot_label}.png')
-    gr.close_figure(fig)
+    gr.save_and_close_figure(
+        fig, plot_path,
+        f'piControl_Internal_Variability_Distribution_{plot_label}.png')
 
 
 def figure_gif_animation(plot_names, scen, ens, reg_vars, reg_ranges_all):
