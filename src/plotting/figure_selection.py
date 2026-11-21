@@ -2,8 +2,8 @@
 parameters, and the thinning of member-by-member selections
 (--plot-every).
 """
-import src.graphing as gr
-import src.plot_style as plot_style
+import src.plotting.graphing as gr
+import src.plotting.plot_style as plot_style
 
 
 # How far to thin the figures of member-by-member selections (ERF-all_GMT-7

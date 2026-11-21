@@ -4,9 +4,9 @@ combine_results_iterations.py.
 import os
 import pandas as pd
 
-import src.compute_resources as compute_resources
-import src.results_layout as results_layout
-import src.warming_definitions as warming_definitions
+import src.infrastructure.compute_resources as compute_resources
+import src.postprocessing.results_layout as results_layout
+import src.method.warming_definitions as warming_definitions
 
 
 def range_result_types(base_path):

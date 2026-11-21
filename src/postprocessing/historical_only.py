@@ -1,7 +1,7 @@
 """The historical-only GWI: for each year, the values from the regression
 that ended in that year. For combine_results_iterations.py.
 """
-import src.results_layout as results_layout
+import src.postprocessing.results_layout as results_layout
 
 
 def map_headline_to_index(

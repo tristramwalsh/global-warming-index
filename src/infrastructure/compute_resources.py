@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-import src.run_log as run_log
+import src.infrastructure.run_log as run_log
 import gc
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor

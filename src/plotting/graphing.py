@@ -5,7 +5,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as ss
-import src.variables as variables
+import src.method.variables as variables
 import gc
 
 

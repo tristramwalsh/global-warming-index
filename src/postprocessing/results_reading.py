@@ -5,8 +5,8 @@ import os
 import numpy as np
 import pandas as pd
 
-import src.compute_resources as compute_resources
-import src.results_layout as results_layout
+import src.infrastructure.compute_resources as compute_resources
+import src.postprocessing.results_layout as results_layout
 
 
 def read_observations_timeseries(scen, ens):

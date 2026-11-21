@@ -6,11 +6,11 @@ year's change.
 import numpy as np
 import matplotlib.pyplot as plt
 
-import src.graphing as gr
-import src.plot_style as plot_style
-import src.results_layout as results_layout
-import src.variables as variables
-import src.results_reading as results_reading
+import src.plotting.graphing as gr
+import src.plotting.plot_style as plot_style
+import src.postprocessing.results_layout as results_layout
+import src.method.variables as variables
+import src.postprocessing.results_reading as results_reading
 
 
 def figure_historical_only_timeseries(

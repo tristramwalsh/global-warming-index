@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
-import src.variables as variables
+import src.method.variables as variables
 
 
 def attribution_output_vars(df_forc, regress_vars):

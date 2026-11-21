@@ -6,16 +6,16 @@ import matplotlib
 # to use in the forked worker processes that draw the figures. It must come
 # before the figure modules below, which import matplotlib.pyplot.
 matplotlib.use('Agg')
-import src.compute_resources as compute_resources
-import src.results_layout as results_layout
-import src.warming_definitions as warming_definitions
-import src.iteration_averaging as iteration_averaging
-import src.results_reading as results_reading
-import src.historical_only as historical_only
-import src.figure_selection as figure_selection
-import src.figures_base as figures_base
-import src.figures_historical as figures_historical
-import src.plot_style as plot_style
+import src.infrastructure.compute_resources as compute_resources
+import src.postprocessing.results_layout as results_layout
+import src.method.warming_definitions as warming_definitions
+import src.postprocessing.iteration_averaging as iteration_averaging
+import src.postprocessing.results_reading as results_reading
+import src.postprocessing.historical_only as historical_only
+import src.plotting.figure_selection as figure_selection
+import src.plotting.figures_base as figures_base
+import src.plotting.figures_historical as figures_historical
+import src.plotting.plot_style as plot_style
 import functools
 
 

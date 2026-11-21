@@ -172,7 +172,7 @@ GMT_DATASET=HadCRUT-2025
 GMT_MEMBERS=all
 
 # How ERF_MEMBERS and GMT_MEMBERS combine (the CASEs in
-# src/prepare_ensemble_selections.sh):
+# src/infrastructure/prepare_ensemble_selections.sh):
 # - CASE 1: all and all: one run, sampling from both whole ensembles.
 # - CASE 2: members listed on one side, all on the other (e.g.
 #   ERF_MEMBERS=all, GMT_MEMBERS={1..200}): one run per listed member, each
@@ -319,8 +319,8 @@ fi
 # Turn ERF_MEMBERS and GMT_MEMBERS into the runs to make: run n uses ERF
 # member ERF_LIST[n] with GMT member GMT_LIST[n]. Also sets MEMBER_TAG for the
 # job and log names. Stops if the combination isn't allowed. The logic is in
-# src/prepare_ensemble_selections.sh.
-source "$(dirname "$0")/src/prepare_ensemble_selections.sh"
+# src/infrastructure/prepare_ensemble_selections.sh.
+source "$(dirname "$0")/src/infrastructure/prepare_ensemble_selections.sh"
 build_member_runs "${ERF_MEMBERS}" "${GMT_MEMBERS}" || exit 1
 
 # Regression variables, sorted and dash-joined to match the results naming.

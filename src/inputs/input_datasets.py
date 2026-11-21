@@ -13,9 +13,9 @@ import pandas as pd
 import pymagicc
 import xarray as xr
 
-import src.run_log as run_log
-import src.variables as variables
-import src.warming_definitions as warming_definitions
+import src.infrastructure.run_log as run_log
+import src.method.variables as variables
+import src.method.warming_definitions as warming_definitions
 
 
 # INPUT DATASETS ##############################################################
@@ -59,7 +59,7 @@ import src.warming_definitions as warming_definitions
 DATASETS_WITH_PAIRED_MEMBERS = ['FutureVolc_ESM-rcp45-Volc']
 
 # The data folder, next to src/
-DATA_DIR = Path(__file__).parent / '../data'
+DATA_DIR = Path(__file__).parent / '../../data'
 
 
 @dataclass(frozen=True)

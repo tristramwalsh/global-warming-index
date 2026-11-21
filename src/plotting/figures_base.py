@@ -8,12 +8,12 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from highlight_text import ax_text
 
-import src.graphing as gr
-import src.results_layout as results_layout
-import src.variables as variables
-import src.warming_definitions as warming_definitions
-import src.iteration_averaging as iteration_averaging
-import src.results_reading as results_reading
+import src.plotting.graphing as gr
+import src.postprocessing.results_layout as results_layout
+import src.method.variables as variables
+import src.method.warming_definitions as warming_definitions
+import src.postprocessing.iteration_averaging as iteration_averaging
+import src.postprocessing.results_reading as results_reading
 
 
 def figure_timeseries(reg_range, df_ts, scen, ens, reg_vars,

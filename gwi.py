@@ -13,13 +13,13 @@ import pandas as pd
 
 # import scipy.stats as ss
 
-import src.attribution as attribution
-import src.compute_resources as compute_resources
-import src.results_layout as results_layout
-import src.run_log as run_log
-import src.variables as variables
-import src.warming_definitions as warming_definitions
-import src.input_datasets as datasets
+import src.method.attribution as attribution
+import src.infrastructure.compute_resources as compute_resources
+import src.postprocessing.results_layout as results_layout
+import src.infrastructure.run_log as run_log
+import src.method.variables as variables
+import src.method.warming_definitions as warming_definitions
+import src.inputs.input_datasets as datasets
 
 import models.AR5_IR.AR5_IR as AR5_IR
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
@@ -789,7 +789,7 @@ if __name__ == "__main__":
         regress_vars = sorted(['GHG', 'Nat', 'OHF'])
 
     # Specify the input datasets, by ID (see INPUT DATASETS in
-    # src/input_datasets.py): the ERFs, the reference temperatures (GMT), and
+    # src/inputs/input_datasets.py): the ERFs, the reference temperatures (GMT), and
     # the piControl simulations that sample internal variability.
     #   e.g. --erf-dataset=IGCC-2025 --gmt-dataset=HadCRUT-2025
     #   e.g. --erf-dataset=SSP_extension-2022-SSP245 --gmt-dataset=JK_multi-2025

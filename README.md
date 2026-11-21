@@ -287,7 +287,7 @@ The following parameters in `run-gwi.sh` control the analysis:
 
 The `run-gwi.sh` script:
 1. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
-2. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/prepare_ensemble_selections.sh`):
+2. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
     - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
     - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
 
@@ -356,7 +356,7 @@ For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
 ###### 2.4.3.2 Historical-Only Timeseries
 For iterations generated in order to provide different regression end years (e.g., `END_REGRESS=$(seq 1950 2024)`):
 1. For each regression end year (e.g., 1950, 1951, ..., 2024), a separate GWI calculation is performed
-2. `calculate_historical_only()` (in `src/historical_only.py`) extracts values for each year from the appropriate regression period
+2. `calculate_historical_only()` (in `src/postprocessing/historical_only.py`) extracts values for each year from the appropriate regression period
     1. When `headline` datasets are available, this pulls from the **`headlines`** dataframes at the appropriate string index
     2. When `headline` datasets are not available, this pulls from the **`timeseries`** dataframes at the index `current_year`
 3. The result is a timeseries where each year's attribution is based only on data available up to that year, which provides an estimate of what the GWI would have been if calculated in real-time each year, though note that the datasets and climate parameters are still the same as used in the full-information GWI.
@@ -425,7 +425,7 @@ Each climate model's source file is in its folder in `models/` (see [Climate Mod
 **From:** <URL or DOI, or who supplied it; date>
 ```
 
-To add a new year of an existing dataset (e.g. `HadCRUT-2026`), put its files in `data/observed-2026/GMT/HadCRUT/`, named as for earlier years (the version number in a HadCRUT file name may change), with a `SOURCE.md`: no code changes are needed. A new product needs its own loader in `src/input_datasets.py`; the comment at the top of that file describes the dataset IDs and folders.
+To add a new year of an existing dataset (e.g. `HadCRUT-2026`), put its files in `data/observed-2026/GMT/HadCRUT/`, named as for earlier years (the version number in a HadCRUT file name may change), with a `SOURCE.md`: no code changes are needed. A new product needs its own loader in `src/inputs/input_datasets.py`; the comment at the top of that file describes the dataset IDs and folders.
 
 
 ##### 2.4.6. Climate Models
