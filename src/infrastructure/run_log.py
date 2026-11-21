@@ -1,5 +1,9 @@
-"""The run log: notes collected during a run, and section headers.
+"""The run log: notes collected during a run, section headers, and the git
+commit the run used.
 """
+
+import os
+import subprocess
 
 
 _run_notes = []
@@ -40,3 +44,33 @@ def log_section(title, width=76):
     eye or with grep.
     """
     print(f'\n── {title.upper()} '.ljust(width, '─'), flush=True)
+
+
+def describe_git_commit():
+    """The git commit of the code this run is using, for the run log.
+
+    Recorded by gwi.py itself, at the moment it runs, rather than only by
+    run-gwi.sh when it submits: a queued Slurm job reads the code on disk
+    when it starts, which may have changed since it was submitted. Notes
+    uncommitted changes to tracked files, which mean the commit alone does
+    not describe the code. Never stops the run: without git, or outside a
+    repository, it says the commit is unknown.
+    """
+    this_folder = os.path.dirname(os.path.abspath(__file__))
+
+    def git(*args):
+        return subprocess.run(
+            ['git', '-C', this_folder, *args], capture_output=True, text=True,
+            timeout=30)
+
+    try:
+        commit = git('rev-parse', '--short', 'HEAD')
+        if commit.returncode != 0:
+            return 'unknown (not a git repository)'
+        description = commit.stdout.strip()
+        # diff --quiet exits with 1 for changes (other codes are errors)
+        if git('diff', '--quiet', 'HEAD').returncode == 1:
+            description += ' (with uncommitted changes to tracked files)'
+        return description
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown (git not available)'

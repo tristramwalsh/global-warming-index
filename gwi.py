@@ -572,19 +572,39 @@ if __name__ == "__main__":
     # --picontrol-dataset=<id> (required, e.g. CMIP6)
     # --erf-member=<member or all> (default all)
     # --gmt-member=<member or all> (default all)
-    # (run-gwi.sh passes every option; see it for the full list)
+    # (every option is listed in KNOWN_OPTIONS below; run-gwi.sh passes them
+    # all)
 
-    if len(sys.argv) > 1:
-        # Separate out the names and values for each argv, and place them in
-        # a dictionary for later use.
-        argvs = sys.argv
-        argv_dict = {argv.split('=')[0]: argv.split('=')[1]
-                     for argv in argvs
-                     if '=' in argv}
-    else:
-        # Adding this simplifies logic later on, as we can always assume that
-        # the dictionary exists, and just check for the presence.
-        argv_dict = {}
+    # Every option gwi.py reads. Anything else on the command line stops the
+    # run: an unknown option is most likely a typo (e.g. --sample=10000),
+    # which would otherwise be ignored silently, leaving the default in its
+    # place.
+    KNOWN_OPTIONS = (
+        '--samples', '--seed', '--regress-range', '--truncate',
+        '--include-rate', '--headline-toggles', '--headline-years',
+        '--regress-variables', '--erf-dataset', '--gmt-dataset',
+        '--picontrol-dataset', '--committed', '--preindustrial-era',
+        '--include-reg-const', '--erf-member', '--gmt-member',
+        '--include-sub-vars', '--calculate-priors-output', '--output-tag',
+    )
+
+    # Separate out the name and value of each option, --name=value, into a
+    # dictionary for later use. Options left out are absent from it (most
+    # then fall back to a default, or to asking interactively).
+    argv_dict = {}
+    for argv in sys.argv[1:]:
+        name, equals, value = argv.partition('=')
+        if not equals:
+            raise ValueError(
+                f'Invalid argument {argv!r}: give options as --name=value '
+                '(e.g. --samples=10).')
+        if name not in KNOWN_OPTIONS:
+            raise ValueError(
+                f'Unknown option {name!r}. The options are: '
+                f'{", ".join(KNOWN_OPTIONS)}.')
+        if name in argv_dict:
+            raise ValueError(f'Option {name!r} is given more than once.')
+        argv_dict[name] = value
 
     # Define pre-industrial period for temperature offset.
     # The average of this period is used as the offset, as standard in IPCC.
@@ -975,6 +995,7 @@ if __name__ == "__main__":
     compute_resources.log_slurm_configuration()
 
     run_log.log_section('Run configuration')
+    print(f'Git commit: {run_log.describe_git_commit()}')
     print(f'Regressed variables: {regress_vars}')
     print(f'ERF dataset: {erf_id}')
     print(f'GMT dataset: {gmt_id}')
