@@ -1,7 +1,8 @@
 """Where results and figures are written.
 """
-import re
 import os
+import re
+import uuid
 
 
 def tagged_folder(base, tag):
@@ -92,3 +93,39 @@ def gmt_id_from_label(scen):
     """The GMT dataset ID in an inputs label, e.g. 'HadCRUT-2025' from
     'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'."""
     return scen.split('_GMT--')[1].split('_PREINDUSTRIAL--')[0]
+
+
+def write_csv(df, path):
+    """Write a DataFrame to a CSV file, so that no one ever sees half of it.
+
+    df: the DataFrame, written with df.to_csv(...)'s defaults
+    path: the CSV file to write; replaced if it exists
+
+    Several Slurm jobs can write the same file at once: run-gwi.sh submits
+    one job per (iteration, regression end year), and every one of them
+    writes the same undated files (the priors, the ERF percentiles, the
+    observations and the piControl segments), each with identical content.
+    Written in place, a file that another job is still writing, or that a
+    job was killed while writing, can be read truncated.
+
+    So the file is written in full under a temporary name in the same
+    folder, then renamed onto `path`. On one filesystem a rename is atomic:
+    a reader finds either the old complete file or the new complete file,
+    never a partial one, and of several jobs writing the same file, the last
+    to finish wins. The temporary name is short and random (output names
+    are already close to the 255-byte limit) and hidden, ending in .tmp, so
+    nothing that reads results picks it up.
+    """
+    # The folder the file goes in
+    folder = os.path.dirname(os.path.abspath(path))
+    # A temporary file beside it, under a name no other job will use
+    temp_path = os.path.join(folder, f'.gwi-write-{uuid.uuid4().hex}.tmp')
+    try:
+        # Write the whole file under the temporary name
+        df.to_csv(temp_path)
+        # Move it onto the final name, in one atomic step
+        os.replace(temp_path, path)
+    finally:
+        # Remove the temporary file if anything stopped the move
+        if os.path.exists(temp_path):
+            os.remove(temp_path)

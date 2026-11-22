@@ -247,7 +247,7 @@ if __name__ == "__main__":
         '--regress-variables', '--erf-dataset', '--gmt-dataset',
         '--picontrol-dataset', '--committed', '--preindustrial-era',
         '--include-reg-const', '--erf-member', '--gmt-member',
-        '--include-sub-vars', '--calculate-priors-output', '--output-tag',
+        '--include-sub-vars', '--output-tag',
     )
 
     # Separate out the name and value of each option, --name=value, into a
@@ -437,20 +437,6 @@ if __name__ == "__main__":
         include_sub_vars = True if include_sub_vars == 'y' else False
     else:
         include_sub_vars = False
-
-    # Determine whether to calculate the prior (pre-constrained) warming.
-    # The priors depend only on the ERF ensemble and the FaIR parameters, NOT
-    # on the reference temperature ensemble member, so when sweeping over
-    # individual GMT members every run recomputes an identical prior dataset.
-    # The priors are used only for plotting (in combine_results_iterations.py),
-    # never for the attribution results themselves, so they can be switched off
-    # for per-member sweeps. Defaults to 'y' to preserve previous behaviour.
-    if '--calculate-priors-output' in argv_dict:
-        calculate_priors_output = argv_dict['--calculate-priors-output']
-        calculate_priors_output = (
-            False if calculate_priors_output == 'n' else True)
-    else:
-        calculate_priors_output = True
 
     # Specify years for headlines calculations
     # Format '2024', '2022,2023,2024', etc.
@@ -647,8 +633,10 @@ if __name__ == "__main__":
     # at the dataset's year, with the pre-industrial offset removed. The
     # combination script plots these, so it need not reload them from data/.
     # Identical for every iteration of a configuration, so (like the priors)
-    # the file has no date and is simply overwritten.
-    df_temp_Obs.to_csv(
+    # the file has no date: each run overwrites it, atomically, since
+    # several jobs may write it at once (see results_layout.write_csv).
+    results_layout.write_csv(
+        df_temp_Obs,
         f'{results_folder_obs}{out_path_obs_timeseries}' +
         f'Obs_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
@@ -676,7 +664,6 @@ if __name__ == "__main__":
     print('Random seed: '
           f'{seed if seed is not None else "none (unseeded sampling)"}')
     print(f'Calculate and save rates: {rate_toggle}')
-    print(f'Calculate and save priors: {calculate_priors_output}')
     print(f'Include pre-industrial offset: {inc_pi_offset}')
     print(f'Include constant term in regression: {inc_reg_const}')
     print(f'Using model: {emulator_choice}')
@@ -693,9 +680,11 @@ if __name__ == "__main__":
 
     # Save the filtered piControl segments, for the internal-variability
     # figures drawn by combine_results_iterations.py. Identical for every
-    # iteration of these inputs, so (like the priors) the file has no date
-    # and is simply overwritten.
-    df_temp_PiC.to_csv(
+    # iteration of these inputs, so (like the priors) the file has no date:
+    # each run overwrites it, atomically, since several jobs may write it at
+    # once (see results_layout.write_csv).
+    results_layout.write_csv(
+        df_temp_PiC,
         f'{results_folder_picontrol}{out_path_picontrol}' +
         f'PiControl_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
@@ -854,7 +843,7 @@ if __name__ == "__main__":
     T1b = dt.datetime.now()
     run_log.log_section('Timeseries')
     print(f'Calculating GWI ... took {T1b - T1a}')
-    # T2a is read below as the start marker for the PRIORS stage.
+    # The start of the PRIORS stage
     T2a = T1b
     # The number of members, for the output file names
     n = temp_Att_Results.shape[2]
@@ -866,31 +855,26 @@ if __name__ == "__main__":
     # so it needs no calculation of its own. Its summary is taken over every
     # (parameter set, ERF member) pair, each counted once: the prior of the
     # full ensemble, which may differ from the pairs the attribution's
-    # members use, which depend on the sampling design and its size.
+    # members use, which depend on the sampling design and its size. The
+    # priors are always written: they cost a second or so.
 
-    if calculate_priors_output:
-        print('Adding the aggregate variables to the PRIORS', end=' ')
-        # Every forcing variable plus the aggregates (Ant, Tot), as the
-        # attribution's outputs hold them: (p, e, t, v'), and the names
-        # along v', sorted
-        T_prior, prior_vars_all = attribution.add_aggregate_variables(
-            T_mod, forcing_vars, regress_vars)
-        T2b = dt.datetime.now()
-        print(f'... took {T2b - T2a}')
-        # How many (parameter set, ERF member) pairs there are, and how many
-        # the attribution's members use (each pair as one number, p · E + e)
-        n_erf = T_mod.shape[1]
-        n_pairs = T_mod.shape[0] * n_erf
-        pairs_used = np.unique(member_index[0] * n_erf + member_index[1])
-        print(f'The priors are every (parameter set, ERF member) pair, '
-              f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
-              f'which may differ from the pairs the attribution samples: its '
-              f'members use {len(pairs_used):,} of them.')
-    else:
-        print('Skipping PRIORS (--calculate-priors-output=n)')
-        # T2b is read further down as the start marker for the GWI percentile
-        # timing, so it must be defined on both branches.
-        T2b = T2a
+    print('Adding the aggregate variables to the PRIORS', end=' ')
+    # Every forcing variable plus the aggregates (Ant, Tot), as the
+    # attribution's outputs hold them: (p, e, t, v'), and the names along
+    # v', sorted
+    T_prior, prior_vars_all = attribution.add_aggregate_variables(
+        T_mod, forcing_vars, regress_vars)
+    T2b = dt.datetime.now()
+    print(f'... took {T2b - T2a}')
+    # How many (parameter set, ERF member) pairs there are, and how many the
+    # attribution's members use (each pair as one number, p · E + e)
+    n_erf = T_mod.shape[1]
+    n_pairs = T_mod.shape[0] * n_erf
+    pairs_used = np.unique(member_index[0] * n_erf + member_index[1])
+    print(f'The priors are every (parameter set, ERF member) pair, '
+          f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
+          f'which may differ from the pairs the attribution samples: its '
+          f'members use {len(pairs_used):,} of them.')
 
     # PRODUCE FINAL RESULTS DATASETS ######################################
 
@@ -949,39 +933,36 @@ if __name__ == "__main__":
     df_Results.index.name = 'Year'
     gwi_filename = (f'{results_folder}{output_path}' +
                     f'GWI_results_timeseries_{variation}.csv')
-    df_Results.to_csv(gwi_filename)
+    results_layout.write_csv(df_Results, gwi_filename)
 
     T3a = dt.datetime.now()
     print(f'... took {T3a - T2b}')
 
-    if calculate_priors_output:
-        print('Calculating percentiles for priors', end=' ')
-        T_prior_start = dt.datetime.now()
-        # The percentiles over every parameter set and ERF member:
-        # (n_sigmas, years, v'), laid out as for the GWI
-        priors_timeseries_array = np.percentile(
-            T_prior, sigmas_all, axis=(0, 1))
-        dict_Results_priors = {
-            (var, sigma):
-            priors_timeseries_array[
-                sigmas_all.index(sigma), :, prior_vars_all.index(var)]
-            for var in prior_vars_all for sigma in sigmas_all
-        }
-        df_Results_priors = pd.DataFrame(
-            dict_Results_priors, index=df_forc.index.to_numpy())
-        df_Results_priors.columns.names = ['variable', 'percentile']
-        df_Results_priors.index.name = 'Year'
-        priors_filename = (
-            f'{results_folder_priors}{output_path_priors}' +
-            f'PRIOR_results_timeseries_{variation_priors}.csv'
-        )
-        # Note that every iteration of GWI will result in an identical prior
-        # dataset, so if running multiple iterations, this will overwrite the
-        # previously saved prior dataset (there is no date identifier in the
-        # filename), but note this is intended behaviour to avoid unnecessary
-        # duplication of identical datasets.
-        df_Results_priors.to_csv(priors_filename)
-        print(f'... took {dt.datetime.now() - T_prior_start}')
+    print('Calculating percentiles for priors', end=' ')
+    T_prior_start = dt.datetime.now()
+    # The percentiles over every parameter set and ERF member:
+    # (n_sigmas, years, v'), laid out as for the GWI
+    priors_timeseries_array = np.percentile(
+        T_prior, sigmas_all, axis=(0, 1))
+    dict_Results_priors = {
+        (var, sigma):
+        priors_timeseries_array[
+            sigmas_all.index(sigma), :, prior_vars_all.index(var)]
+        for var in prior_vars_all for sigma in sigmas_all
+    }
+    df_Results_priors = pd.DataFrame(
+        dict_Results_priors, index=df_forc.index.to_numpy())
+    df_Results_priors.columns.names = ['variable', 'percentile']
+    df_Results_priors.index.name = 'Year'
+    priors_filename = (
+        f'{results_folder_priors}{output_path_priors}' +
+        f'PRIOR_results_timeseries_{variation_priors}.csv'
+    )
+    # Every iteration of a configuration gives identical priors, so the
+    # file has no date: each run overwrites it, atomically, since several
+    # jobs may write it at once (see results_layout.write_csv).
+    results_layout.write_csv(df_Results_priors, priors_filename)
+    print(f'... took {dt.datetime.now() - T_prior_start}')
 
     print('Calculating percentiles for ERF', end=' ')
     # The forcing of every variable, for every ERF member: (t, e, v)
@@ -1009,7 +990,7 @@ if __name__ == "__main__":
         f'{results_folder_erfs}{output_path_erfs}' +
         f'ERF_results_timeseries_{variation_erfs}.csv'
     )
-    df_Results_ERF.to_csv(erf_filename)
+    results_layout.write_csv(df_Results_ERF, erf_filename)
 
     T3b = dt.datetime.now()
     print(f'... took {T3b - T3a}')
@@ -1185,8 +1166,10 @@ if __name__ == "__main__":
         print(f'... took {T2 - T1}')
 
     df_headlines = pd.concat(dfs, axis=0)
-    df_headlines.to_csv(f'{results_folder}{output_path}' +
-                        f'GWI_results_headlines_{variation}.csv')
+    results_layout.write_csv(
+        df_headlines,
+        f'{results_folder}{output_path}' +
+        f'GWI_results_headlines_{variation}.csv')
 
     # OBSERVATIONS HEADLINE RESULTS ###########################################
     if headline_toggles:
@@ -1312,7 +1295,8 @@ if __name__ == "__main__":
 
         if dfs_obs:
             df_headlines_obs = pd.concat(dfs_obs, axis=0)
-            df_headlines_obs.to_csv(
+            results_layout.write_csv(
+                df_headlines_obs,
                 f'{results_folder_obs}{out_path_obs}' +
                 f'Obs_results_headlines_{variation_obs}.csv')
 
@@ -1353,8 +1337,10 @@ if __name__ == "__main__":
             dfs_rates.append(df_rates_i)
 
         df_rates = pd.concat(dfs_rates, axis=0)
-        df_rates.to_csv(f'{results_folder}{output_path}' +
-                        f'GWI_results_rates_{variation}.csv')
+        results_layout.write_csv(
+            df_rates,
+            f'{results_folder}{output_path}' +
+            f'GWI_results_rates_{variation}.csv')
         T8 = dt.datetime.now()
         print(f'... took {T8 - T7}')
 

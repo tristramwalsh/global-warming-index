@@ -220,7 +220,6 @@ gwi_command() {
     --erf-member="$3"
     --gmt-member="$4"
     --include-sub-vars="${RECIPE_INCLUDE_SUB_VARS}"
-    --calculate-priors-output="${RECIPE_CALCULATE_PRIORS_OUTPUT}"
     --output-tag="${RECIPE_OUTPUT_TAG}"
   )
 }
@@ -275,9 +274,6 @@ if [ "${RECIPE_INCLUDE_SUB_VARS}" = "y" ]; then
 fi
 if [ "${RECIPE_INCLUDE_RATE}" = "y" ]; then
   RUN_TAG="${RUN_TAG}_RATE--y"
-fi
-if [ "${RECIPE_CALCULATE_PRIORS_OUTPUT}" = "n" ]; then
-  RUN_TAG="${RUN_TAG}_PRIORS--n"
 fi
 if [ -n "${RECIPE_SEED}" ]; then
   RUN_TAG="${RUN_TAG}_SEED--${RECIPE_SEED}"

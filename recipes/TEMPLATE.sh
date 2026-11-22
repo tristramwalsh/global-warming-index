@@ -244,17 +244,6 @@ RECIPE_TRUNCATION=1850-2050
 # e.g. n
 RECIPE_INCLUDE_RATE=n
 
-# Select whether to calculate the prior (pre-constrained) warming output.
-# The priors depend only on the ERF ensemble and FaIR parameters, NOT on the
-# reference temperature member. These priors are not used directly in the GWI
-# calculation, but are useful for understanding the prior distribution of
-# warming pre-constraint. Setting this to n is useful for the single-member
-# selection runs, where the priors are identical for all members and need only
-# be calculated once.
-# e.g. y
-# e.g. n
-RECIPE_CALCULATE_PRIORS_OUTPUT=n
-
 # Select whether to include the headlines in the regression
 # e.g. 'annual,SR1.5,AR6,CGWL'
 # e.g. n

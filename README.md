@@ -283,12 +283,6 @@ The following settings control the analysis. Every recipe sets each of them, nam
 - `$(seq -s, 1950 2024)` = all years in a range (expensive)
 
 
-**`CALCULATE_PRIORS_OUTPUT`**: Also output the prior (pre-constraint) warming (`y` or `n`)
-- The priors depend only on the ERF ensemble and FaIR parameters, not on the reference temperatures. These are useful for understanding the prior distribution of warming before the observational constraint. All ensemble members are used for this, so note that, depending on the size of the GWI Monte Carlo ensemble, the output priors could be a different sample than used in the GWI calculation itself. The priors are saved in the same hierarchy as the GWI results, but in `results/priors/` (or `results_<tag>/priors/`).
-- `y` = calculate and save the priors (default in `gwi.py`)
-- `n` = skip them, e.g. for member-by-member runs that select only temperature members, where they would be identical for every member
-
-
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
 - Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
 - Usually the recipe's own name; recipes that make up one experiment share a tag.
@@ -405,7 +399,7 @@ The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-in
 `{category}` is one of:
 - `iterations/` = the results of each `gwi.py` run
 - `aggregated/` = those averaged across iterations by `combine_results_iterations.py`, plus the historical-only timeseries
-- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply. `observations/` also holds `Obs_timeseries_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots.
+- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply. The prior warming is FaIR's warming before the observational constraint: it depends only on the ERF ensemble and the FaIR parameters, not on the reference temperatures, and is summarised over every (FaIR parameter set, ERF member) pair, each counted once. Depending on the size of the GWI ensemble, those pairs can differ from the ones the GWI's members use; each run's log says how many it used. The priors, ERF, observed-timeseries and piControl files are the same for every iteration of a configuration, so they have no date in their name, and each run overwrites them in one step, so that runs writing them at the same time never leave a partial file. `observations/` also holds `Obs_timeseries_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots.
 - `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries_*.csv`, one per inputs folder), for the internal-variability figures.
 
 The CSVs are:
@@ -478,7 +472,6 @@ Both `gwi.py` and `combine_results_iterations.py` run as many worker processes a
 
 Normally (`ERF_MEMBERS=all`, `GMT_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
 1. Set the members wanted on one side (e.g. `GMT_MEMBERS={1..100}`), and `all` on the other; or, to pair ERF and GMT members one-to-one (as `FutureVolc_ESM-rcp45-Volc` needs), the pairing keyword on the other (e.g. `ERF_MEMBERS=paired_with_GMT_member`).
-2. Set `CALCULATE_PRIORS_OUTPUT=n` if only temperature members are selected, since the priors would be the same for every GMT member.
-3. Allow enough `WALLTIME`: each job runs `gwi.py` once for every member, one after another.
+2. Allow enough `WALLTIME`: each job runs `gwi.py` once for every member, one after another.
 
 Each member's results go to their own `ENSEMBLE-MEMBER--{selection}` folder (e.g. `ENSEMBLE-MEMBER--ERF-all_GMT-7`), and `combine_results_iterations.py` processes them all. As a full set of figures for every member would run to tens of thousands, it thins the figures of member-by-member selections by default (`--plot-every=10`): every member gets the figures for its final regressed range, and one member in ten also gets them for every tenth regression end year. The historical-only figures are drawn for every member.

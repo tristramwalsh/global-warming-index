@@ -428,9 +428,10 @@ def headline_var_available(df, period, var, context=''):
 def priors_available(priors_dfs, scen, ens):
     """Whether prior warming results exist for this scenario/ensemble.
 
-    gwi.py only writes the prior dataset when run with
-    --calculate-priors-output=y. The priors are plotting-only, so their absence
-    is not an error: the figures that use them are skipped instead.
+    gwi.py always writes the prior dataset now, but results written before
+    (when it had a --calculate-priors-output option) may lack it. The priors
+    are plotting-only, so their absence is not an error: the figures that
+    use them are skipped instead.
 
     Checks the value rather than just the key, because load_nested_dfs maps a
     path that no longer exists to None.
