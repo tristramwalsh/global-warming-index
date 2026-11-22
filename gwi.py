@@ -14,6 +14,7 @@ import pandas as pd
 # import scipy.stats as ss
 
 import src.method.attribution as attribution
+import src.method.emulators as emulators
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
@@ -22,7 +23,6 @@ import src.method.warming_definitions as warming_definitions
 import src.inputs.input_datasets as datasets
 
 import models.AR5_IR.AR5_IR as AR5_IR
-import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 
 ###############################################################################
@@ -121,46 +121,20 @@ def GWI_faster(
     trunc_Yrs = df_temp_Obs_trunc.index.to_numpy()  # Truncation years
     forc_Yrs = df_forc.index.to_numpy()  # Full forcing years
 
-    # Prepare FaIR parameters for this particular model.
-    params_FaIR = df_params[model_choice]
-    params_FaIR.columns = pd.MultiIndex.from_product(
-        [[model_choice], params_FaIR.columns])
-
-    # Prepare results array for temperatures. Note that temp_Mod naming refers
-    # to the fact that these temperatures are outputs from the model.
-    temp_Mod_array_all_years = np.empty(shape=(forc_Yrs.shape[0],
-                                               len(var_list_ERF),
-                                               len(ens_list_ERF)))
-
-    # Calculate pre-regression temperature estimatesw from forcings for all 
-    # ensembles at once, leveraging FaIR's vectorisation
-    for var in var_list_ERF:
-        # Select forcings for the specific variable. This selects all ensemble
-        # members available from the random subsample.
-        # TODO: check the date range when specifying separate truncation years
-        # in future versions.
-        forc_var_All = df_forc.loc[:, (var, slice(None))]
-
-        # FaIR won't run without emissions or concentrations, so specify
-        # no zero emissions for input.
-        emis_FAIR = fair.return_empty_emissions(
-            df_to_copy=False,
-            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
-            scen_names=ens_list_ERF)
-        # Prepare a FaIR-compatible forcing dataframe
-        forc_FaIR = fair.return_empty_forcing(
-            df_to_copy=False,
-            start_year=min(forc_Yrs), end_year=max(forc_Yrs), timestep=1,
-            scen_names=ens_list_ERF)
-        for ens in ens_list_ERF:
-            forc_FaIR[ens] = forc_var_All[(var, ens)].to_numpy()
-
-        # Run FaIR. Convert output to numpy array for later regression.
-        temp_All = fair.run_FaIR(emissions_in=emis_FAIR,
-                                 forcing_in=forc_FaIR,
-                                 thermal_parameters=params_FaIR,
-                                 show_run_info=False)['T'].to_numpy()
-        temp_Mod_array_all_years[:, var_list_ERF.index(var), :] = temp_All
+    # Stage A: the modelled warming from each forcing variable alone, for
+    # every ERF member, with the one parameter set model_choice. The adapter
+    # runs every parameter set in the table it is given, in the table's
+    # order, and returns them along the first axis (p) of T_mod, shape
+    # (p, e, t, v). Given only model_choice's columns, it runs just that set:
+    # p has length 1, and T_mod[0] is the warming with parameter set
+    # model_choice.
+    params_this_set = df_params[[model_choice]]
+    T_mod = emulators.run_fair_v2_alpha(
+        emulators.forcing_array(df_forc, var_list_ERF, ens_list_ERF),
+        forc_Yrs, params_this_set)
+    # Take that one parameter set, and reorder the axes from (e, t, v) to
+    # the (t, v, e) the code below expects: (years, variables, ERF members).
+    temp_Mod_array_all_years = T_mod[0].transpose(1, 2, 0)
 
     i = 0
     for ens in range(len(ens_list_ERF)):
