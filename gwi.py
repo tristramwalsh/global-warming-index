@@ -15,6 +15,7 @@ import pandas as pd
 
 import src.method.attribution as attribution
 import src.method.emulators as emulators
+import src.method.regression as regression
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
@@ -136,78 +137,54 @@ def GWI_faster(
     # the (t, v, e) the code below expects: (years, variables, ERF members).
     temp_Mod_array_all_years = T_mod[0].transpose(1, 2, 0)
 
+    # Express the modelled warming relative to its pre-industrial mean, if
+    # asked to: each ERF member and variable relative to its own mean over
+    # the pre-industrial years (both included).
+    if inc_pi_offset:
+        # Which forcing years are pre-industrial
+        in_pi = (forc_Yrs >= start_pi) & (forc_Yrs <= end_pi)
+        # Subtract each (variable, ERF member)'s mean over those years:
+        # (t, v, e) minus (v, e), broadcast over the years
+        temp_Mod_array_all_years = (
+            temp_Mod_array_all_years -
+            temp_Mod_array_all_years[in_pi].mean(axis=0))
+
+    # Stage B: the scaling factors. Every observed GMT member, and every
+    # piControl segment, is fitted onto each ERF member's modelled warming,
+    # all in one batched solve. The regressors X are the regressed variables
+    # (plus a column of ones, if a constant is used) over the regression
+    # years, for each ERF member: shape (e, t, k).
+
+    # Where each regressed variable sits on the variable axis
+    reg_indices = [var_list_ERF.index(var) for var in regress_vars]
+    # Which forcing years are in the regression
+    in_regress_forc = (forc_Yrs >= start_regress) & (forc_Yrs <= end_regress)
+    # The regressed variables over the regression years: (t, k, e)
+    X = temp_Mod_array_all_years[in_regress_forc][:, reg_indices, :]
+    # Put the ERF members first, one regressor matrix each: (e, t, k)
+    X = X.transpose(2, 0, 1)
+    if inc_reg_const:
+        # Add a column of ones to every matrix, for the constant: k + 1
+        X = np.concatenate([X, np.ones(X.shape[:-1] + (1,))], axis=-1)
+    # The observed GMT members over the regression years: (t, o)
+    Y_obs = df_temp_Obs[ens_list_Obs].to_numpy()[
+        (temp_Yrs >= start_regress) & (temp_Yrs <= end_regress)]
+    # The piControl segments over the regression years: (t, c)
+    Y_pic = df_temp_PiC[ens_list_PiC].to_numpy()[
+        (PiC_Yrs >= start_regress) & (PiC_Yrs <= end_regress)]
+    # Every fit at once: coefs.obs (e, o, k), coefs.pic (e, c, k)
+    coefs = regression.ols(X, Y_obs, Y_pic)
+
     i = 0
     for ens in range(len(ens_list_ERF)):
         # Select just the one ensemble member:
         temp_Mod_array_all_years_ens = temp_Mod_array_all_years[:, :, ens]
 
-        # Remove pre-industrial offset before regression if specified.
-        if inc_pi_offset:
-            ens_offset = temp_Mod_array_all_years_ens[(forc_Yrs >= start_pi) &
-                                                      (forc_Yrs <= end_pi), :
-                                                      ].mean(axis=0)
-            temp_Mod_array_all_years_ens = (temp_Mod_array_all_years_ens -
-                                            ens_offset)
-
-        # Prepare regression variables
-        # We only regress 'regress_vars'.
-        reg_indices = [var_list_ERF.index(var) for var in regress_vars]
-        temp_Mod_regress_vars_ens = temp_Mod_array_all_years_ens[:, reg_indices]
-
-        # Add a constant offset term to the regression if specified.
-        if inc_reg_const:
-            temp_Mod_regress_vars_ens = np.append(
-                temp_Mod_regress_vars_ens,
-                np.ones((temp_Mod_regress_vars_ens.shape[0], 1)),
-                axis=1)
-        n_reg_vars = temp_Mod_regress_vars_ens.shape[1]
-
-        # Prepare arrays to store regression coefficients.
-        # Dimensions correspond to:
-        # (1st dimension) number of variables and
-        # (2nd dimension) the number of samples available for each of
-        # reference Obs temps piControl internal variability temps. This is
-        # because are regressing all sub-ensemble members for Obs and PiC
-        # separately, and then adding the regression coefficients together
-        # afterwards.
-        coef_Obs_Results = np.empty((n_reg_vars, len(ens_list_Obs)))
-        coef_PiC_Results = np.empty((n_reg_vars, len(ens_list_PiC)))
-
-        # Regress against observations
-        c_i = 0
-        # Iterate over the samples of the observed temperature ensemble
-        for temp_Obs_Ens in ens_list_Obs:
-            # Select the required reference temperature ensemble timeseries
-            temp_Obs_i = df_temp_Obs[temp_Obs_Ens].to_numpy()
-            # Select only the year range for temp_Mod_array_all_years_ens and
-            # temp_Obs_i that corresponds to the regression range.
-            temp_Mod_regress_yrs = temp_Mod_regress_vars_ens[
-                                        (forc_Yrs >= start_regress) &
-                                        (forc_Yrs <= end_regress)]
-            temp_Obs_i_regress = temp_Obs_i[(temp_Yrs >= start_regress) &
-                                            (temp_Yrs <= end_regress)]
-            coef_Obs_i = np.linalg.lstsq(
-                temp_Mod_regress_yrs, temp_Obs_i_regress, rcond=None)[0]
-            coef_Obs_Results[:, c_i] = coef_Obs_i
-            c_i += 1
-
-        # Regress against piControl
-        c_j = 0
-        # Iterate over the samples of the piControl temperature ensemble
-        for temp_PiC_Ens in ens_list_PiC:
-            # Select the required piControl temperature ensemble timeseries
-            temp_PiC_j = df_temp_PiC[temp_PiC_Ens].to_numpy()
-            # Select only the year range for temp_Mod_array_all_years_ens and
-            # temp_PiC_j that corresponds to the regression range.
-            temp_Mod_regress_yrs = temp_Mod_regress_vars_ens[
-                                        (forc_Yrs >= start_regress) &
-                                        (forc_Yrs <= end_regress)]
-            temp_PiC_j_regress = temp_PiC_j[(PiC_Yrs >= start_regress) &
-                                            (PiC_Yrs <= end_regress)]
-            coef_PiC_j = np.linalg.lstsq(
-                temp_Mod_regress_yrs, temp_PiC_j_regress, rcond=None)[0]
-            coef_PiC_Results[:, c_j] = coef_PiC_j
-            c_j += 1
+        # This ERF member's scaling factors from the observed members,
+        # transposed to (regressors, GMT members) for the code below
+        coef_Obs_Results = coefs.obs[ens].T
+        # ... and from the piControl segments: (regressors, segments)
+        coef_PiC_Results = coefs.pic[ens].T
 
         # Combine regression coefficients from observations and piControl
 
