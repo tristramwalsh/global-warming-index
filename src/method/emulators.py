@@ -45,43 +45,73 @@ def run_fair_v2_alpha(forcing, years, params):
     year, which FaIR starts from zero.
 
     FaIR's thermal response is linear in forcing, so each variable's warming
-    is its own run: FaIR is driven by that variable's forcing alone, with
-    zero emissions. Each call runs one parameter set and one variable for
-    every ERF member at once, as FaIR vectorises over its "scenarios" (here,
-    the ERF members).
+    is its own run, driven by that variable's forcing alone. Each call runs
+    one variable for every ERF member and every parameter set at once: FaIR
+    vectorises over its "scenarios" (here, the ERF members) and over its
+    thermal parameter sets.
+
+    FaIR won't run without emissions (or concentrations) of at least one
+    gas, so it is given zero emissions of one gas, CO2. With no emissions,
+    CO2 stays at its pre-industrial concentration, and its forcing (which
+    depends only on the concentration's departure from pre-industrial) is
+    exactly zero in every year: the forcing given here drives the model
+    alone. FaIR's default inputs hold all 52 of its gases, each zero in the
+    same way, so the warming is identical to the last bit; but then every
+    gas's cycle is integrated for every ERF member, which took almost all
+    of the run time.
     """
+    # Work in float64, whatever the forcing's precision
     forcing = np.asarray(forcing, dtype=float)
+    # The years, as an array
     years = np.asarray(years)
+    # The sizes of the forcing: years, ERF members, forcing variables
     n_years, n_members, n_vars = forcing.shape
     # FaIR sorts its scenarios by name, and returns them in that order. So
     # the ERF members are renamed with zero-padded numbers, which sort in the
     # order given: FaIR's output then lines up with the input's e axis.
     members_renamed = [f'member_{e:06d}' for e in range(n_members)]
+    # The parameter sets, in the order they appear in the table: the p axis
     parameter_set_names = params.columns.get_level_values(0).unique()
+    # The table of parameter sets, with only the sets it holds in its column
+    # index (a selection from a larger table keeps the others' names, and
+    # FaIR counts the sets from the index)
+    params = params.copy()
+    params.columns = params.columns.remove_unused_levels()
 
+    # The one gas FaIR is given, and its gas cycle parameters, in FaIR's
+    # format
+    gases = ['carbon_dioxide']
+    gas_parameters = fair.get_gas_parameter_defaults(choose_gases=gases)
+    # Zero emissions of that gas for every ERF member, every year
+    emissions_in = fair.return_empty_emissions(
+        df_to_copy=False, start_year=years.min(), end_year=years.max(),
+        timestep=1, scen_names=members_renamed, gases_in=gases)
+    # FaIR's forcing table: one column per ERF member, in the order of
+    # members_renamed, filled in below for each variable
+    forcing_in = fair.return_empty_forcing(
+        df_to_copy=False, start_year=years.min(), end_year=years.max(),
+        timestep=1, scen_names=members_renamed)
+
+    # The modelled warming, filled in one forcing variable at a time
     T_mod = np.empty((len(parameter_set_names), n_members, n_years, n_vars))
-    for p, parameter_set_name in enumerate(parameter_set_names):
-        # One parameter set, with only that set in the column index: FaIR
-        # counts the sets from the index's levels.
-        params_one_set = params[parameter_set_name].copy()
-        params_one_set.columns = pd.MultiIndex.from_product(
-            [[parameter_set_name], params_one_set.columns])
-        for v in range(n_vars):
-            # FaIR won't run without emissions or concentrations, so give
-            # it zero emissions; the forcing drives the model.
-            emissions_in = fair.return_empty_emissions(
-                df_to_copy=False, start_year=years.min(),
-                end_year=years.max(), timestep=1, scen_names=members_renamed)
-            forcing_in = fair.return_empty_forcing(
-                df_to_copy=False, start_year=years.min(),
-                end_year=years.max(), timestep=1, scen_names=members_renamed)
-            for e, member in enumerate(members_renamed):
-                forcing_in[member] = forcing[:, e, v]
-            output = fair.run_FaIR(emissions_in=emissions_in,
-                                   forcing_in=forcing_in,
-                                   thermal_parameters=params_one_set,
-                                   show_run_info=False)
-            # Warming (years, members): one column per member, as there is
-            # one parameter set
-            T_mod[p, :, :, v] = output['T'].to_numpy().T
+    for v in range(n_vars):
+        # This variable's forcing for every ERF member: (t, e), whose columns
+        # line up with the table's
+        forcing_in.loc[:, :] = forcing[:, :, v]
+        # Run every ERF member with every parameter set
+        output = fair.run_FaIR(emissions_in=emissions_in,
+                               forcing_in=forcing_in,
+                               gas_parameters=gas_parameters,
+                               thermal_parameters=params,
+                               show_run_info=False)
+        # Warming (years, columns), one column per (ERF member, parameter
+        # set); FaIR orders the parameter sets by name, so take each by name
+        warming = output['T']
+        for p, parameter_set_name in enumerate(parameter_set_names):
+            # This parameter set's warming, one column per ERF member:
+            # (t, e)
+            warming_one_set = warming.xs(
+                parameter_set_name, axis=1, level='Thermal set').to_numpy()
+            # Members first, as T_mod's axes: (e, t)
+            T_mod[p, :, :, v] = warming_one_set.T
     return T_mod
