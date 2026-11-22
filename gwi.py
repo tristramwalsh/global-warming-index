@@ -15,6 +15,7 @@ import pandas as pd
 
 import src.method.attribution as attribution
 import src.method.emulators as emulators
+import src.method.members as members
 import src.method.regression as regression
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
@@ -65,28 +66,9 @@ def GWI_faster(
     # for each instance of the function call.
     n = (len(ens_list_Obs) * len(ens_list_PiC) * len(ens_list_ERF) * 1)
 
-    # Include residuals and totals for sum total and anthropogenic warming in
-    # the same array as attributed results. +1 each for Ant, TOT, Res,
-    # InternalVariability, ObservedTemperatures
-    # NOTE: the order in dimension is:
-    # vars_list = ['GHG', 'Nat', 'OHF', 'Ant', 'Tot', 'Res']
-    # TODO: rewrite the above.
-    # Add the list of variables that we diagnose after the multi-variable 
-    # regression. If we aren't directly regressing 'Ant', then we need to
-    # include it in the extra_vars list. If we are not, then we need to include
-    # 'Ant' in the variables list.
-    extra_vars = variables.extra_vars(regress_vars)
-
-    # Create empty output array, with dimensions: (years, variables, samples)
-    # We want to output all variables in var_list_ERF (which might include
-    # sub-vars) plus extra_vars.
-    # NOTE: var_list_ERF includes regress_vars.
-    # We need to maintain a consistent order for output_vars to index into
-    # temp_Att_Results later. Define the order: var_list_ERF then extra_vars
-    # (excluding those already in var_list_ERF)
-    # NOTE: extra_vars should not include variables already in var_list_ERF,
-    # as extra_vars are the higher-level aggregates above the regression vars
-    # and the residual. The check here is just extra safety.
+    # The variables along the results array's variable axis: the forcing
+    # variables (which may include sub-variables), then the variables
+    # diagnosed after the regression (Ant, Tot, Res) that are not among them.
     output_vars = attribution.attribution_output_vars(df_forc, regress_vars)
 
     shape = (end_trunc - start_trunc + 1,  # number of years (after truncation)
@@ -106,21 +88,11 @@ def GWI_faster(
             f'but was given somewhere of shape {out.shape} to write it.')
     else:
         temp_Att_Results = out
-    # coef_Reg_Results = np.zeros((len(variables) + int(inc_reg_const), n))
 
-    # slice df_temp_obs dataframe to include years *inclusively* between
-    # start_trunc and end_trunc
-    df_temp_Obs_trunc = df_temp_Obs.loc[start_trunc:end_trunc]
-
-    # slice df_temp_PiC dataframe to include years *inclusively* between
-    # start_trunc and end_trunc
-    PiC_Yrs = df_temp_PiC.index.to_numpy()
-    df_temp_PiC_trunc = df_temp_PiC.loc[start_trunc:end_trunc]
-    # Get full forcings, and truncated years timeseries
-    temp_Yrs = df_temp_Obs.index.to_numpy()  # Full temperature years
-
-    trunc_Yrs = df_temp_Obs_trunc.index.to_numpy()  # Truncation years
-    forc_Yrs = df_forc.index.to_numpy()  # Full forcing years
+    # The years of each input
+    forc_Yrs = df_forc.index.to_numpy()  # forcing
+    temp_Yrs = df_temp_Obs.index.to_numpy()  # observed GMT
+    PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
 
     # Stage A: the modelled warming from each forcing variable alone, for
     # every ERF member, with the one parameter set model_choice. The adapter
@@ -175,125 +147,43 @@ def GWI_faster(
     # Every fit at once: coefs.obs (e, o, k), coefs.pic (e, c, k)
     coefs = regression.ols(X, Y_obs, Y_pic)
 
-    i = 0
+    # Stage C: rebuild every member (e, o, c) of this parameter set from the
+    # pieces, and write it into the results array.
+
+    # Which forcing years are in the output (the truncation years)
+    in_trunc_forc = (forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc)
+    # The modelled warming over those years, with a parameter-set axis of
+    # length 1 added in front: (t, v, e) -> (p, e, t, v)
+    T_mod_trunc = temp_Mod_array_all_years[in_trunc_forc].transpose(
+        2, 0, 1)[np.newaxis]
+    # The scaling factors, with the same parameter-set axis added:
+    # obs (p, e, o, k) and pic (p, e, c, k)
+    coefs = regression.Coefficients(obs=coefs.obs[np.newaxis],
+                                    pic=coefs.pic[np.newaxis])
+    # The observed members over the output years, NaN in years after the
+    # observations end: (t, o)
+    T_obs_trunc = df_temp_Obs[ens_list_Obs].reindex(
+        np.arange(start_trunc, end_trunc + 1)).to_numpy()
+
+    # The members for one ERF member: every (o, c) pair, with c varying
+    # fastest, the order of the results array's member axis
+    n_obs, n_pic = len(ens_list_Obs), len(ens_list_PiC)
+    o_index = np.repeat(np.arange(n_obs), n_pic)
+    c_index = np.tile(np.arange(n_pic), n_obs)
+    # The parameter-set index: always 0, the only one here
+    p_index = np.zeros(n_obs * n_pic, dtype=int)
+    # One ERF member at a time, to keep the memory small
     for ens in range(len(ens_list_ERF)):
-        # Select just the one ensemble member:
-        temp_Mod_array_all_years_ens = temp_Mod_array_all_years[:, :, ens]
+        # This ERF member's index, for each of its members
+        e_index = np.full(n_obs * n_pic, ens)
+        # Its block of the member axis: members ens·o·c to (ens+1)·o·c
+        block = slice(ens * n_obs * n_pic, (ens + 1) * n_obs * n_pic)
+        # Rebuild its members, and write them into their block
+        temp_Att_Results[:, :, block] = members.rebuild(
+            T_mod_trunc, coefs, T_obs_trunc,
+            (p_index, e_index, o_index, c_index),
+            var_list_ERF, regress_vars, inc_reg_const, output_vars)
 
-        # This ERF member's scaling factors from the observed members,
-        # transposed to (regressors, GMT members) for the code below
-        coef_Obs_Results = coefs.obs[ens].T
-        # ... and from the piControl segments: (regressors, segments)
-        coef_PiC_Results = coefs.pic[ens].T
-
-        # Combine regression coefficients from observations and piControl
-
-        # Cut the full-length temperatures (that were calculated from ERF) down
-        # to the truncation length.
-        yr_mask = ((forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc))
-        temp_Mod_trunc_yrs_ens = temp_Mod_array_all_years_ens[yr_mask, :]
-
-        # Get the mapping from variable to regression variable
-        scaling_map = variables.map_var_to_regression_aggregate(
-            var_list_ERF, regress_vars)
-
-        # Now combine the coeffieicnts with the truncated model outputs:
-        for c_k in range(coef_Obs_Results.shape[1]):
-            for c_l in range(coef_PiC_Results.shape[1]):
-                # Regression coefficients
-                coef_Reg = (coef_Obs_Results[:, c_k] +
-                            coef_PiC_Results[:, c_l])
-
-                # Attributed warming for each component
-                # We need to scale each variable in temp_Mod_trunc_yrs_ens by
-                # the appropriate coefficient.
-
-                # Construct scaling vector for all variables in var_list_ERF
-                var_list_ERF_reg_ancestor = [
-                    scaling_map[v] for v in var_list_ERF]
-                var_list_ERF_reg_coef = [
-                    coef_Reg[regress_vars.index(ancestor)]
-                    for ancestor in var_list_ERF_reg_ancestor
-                    ]
-
-                temp_Att = temp_Mod_trunc_yrs_ens * var_list_ERF_reg_coef
-
-                # Extract T_Obs and T_PiC data for this c_i, c_j combo.
-                temp_Obs_kl = df_temp_Obs_trunc[ens_list_Obs[c_k]
-                                                ].to_numpy()
-                # temp_PiC_kl = df_temp_PiC[ens_list_PiC[c_l]
-                #                           ].to_numpy()
-
-                # Save outputs from the calculation:
-                # Regression coefficients
-                # coef_Reg_Results[:, i] = coef_Reg
-
-                # Attributed warming for each component.
-                # Now map temp_Att (which has variable dimension corresponding
-                # to var_list_ERF) to temp_Att_Results (which has variable
-                # dimension corresponding to output_vars)
-
-                for var in var_list_ERF:
-                    temp_Att_Results[:, output_vars.index(var), i] = \
-                        temp_Att[:, output_vars.index(var)]
-
-                # # Actual piControl IV sample that used for this c_k, c_l
-                # temp_Att_Results[:, -2, i] = temp_PiC_kl
-                # # The temp_Obs (dependent var) for this c_k, c_l
-                # temp_Att_Results[:, -1, i] = temp_Obs_kl
-
-                # TOTAL WARMING
-                # The total fitted warming: the sum of the regressed
-                # variables (not their sub-variables, which would count them
-                # twice), plus the constant term if there is one. The
-                # residual below needs it whatever is regressed.
-                reg_indices_in_output = [
-                    output_vars.index(v) for v in regress_vars]
-                temp_Tot = temp_Att_Results[:, reg_indices_in_output, i
-                                            ].sum(axis=1)
-                if inc_reg_const:
-                    temp_Tot += coef_Reg[-1]
-                # Tot is written as a variable of its own only when it is
-                # diagnosed, i.e. above the regressed variables in the
-                # aggregation. When Tot is itself the regressed variable, its
-                # column already holds the attributed warming (without the
-                # constant, like every regressed variable's column).
-                if 'Tot' in extra_vars:
-                    temp_Att_Results[:, output_vars.index('Tot'), i] = temp_Tot
-
-                # RESIDUAL WARMING
-                if 'Res' in extra_vars:
-                    # the len() check catches cases where ERFs are longer than
-                    # temperature at the later end of the timeseries which
-                    # can happen when the truncation end is set to a later date
-                    # then the end of the observations. 
-                    temp_Att_Results[:len(temp_Obs_kl), output_vars.index('Res'), i] = (temp_Obs_kl - temp_Tot[:len(temp_Obs_kl)])
-                    # This next line replaces the empty numpy values from when
-                    # temp_Att_Results is crated with nans. (Empty numpy values
-                    # are random, which could be misleading in the output.)
-                    temp_Att_Results[len(temp_Obs_kl):, output_vars.index('Res'), i] = np.nan
-
-                # ANTROPOGENIC WARMING
-                if 'Ant' in extra_vars:
-                    # Ant = GHG + OHF. Find indices in output_vars, assuming
-                    # it exists.
-                    temp_Ant = (
-                        temp_Att_Results[:, output_vars.index('GHG'), i] +
-                        temp_Att_Results[:, output_vars.index('OHF'), i]
-                    )
-                    temp_Att_Results[:, output_vars.index('Ant'), i] = temp_Ant
-
-                # Visual display of progress through calculation ##############
-                # Turned off for now to avoid cluttering the slurm output,
-                # which seems not to be able to do carriage return.
-                # if i % 1000 == 0:
-                #     percentage = int((i+1)/n*100)
-                #     loading_bar = (percentage // 5*'.' +
-                #                    (20 - percentage // 5)*' ')
-                #     print(f'calculating {loading_bar} {percentage}%',
-                #           end='\r')
-                i += 1
-                # #############################################################
     return temp_Att_Results, output_vars
 
 
