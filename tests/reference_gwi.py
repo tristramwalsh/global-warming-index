@@ -305,17 +305,28 @@ def engine_gwi(inputs):
         df_params=df_params,
         inc_pi_offset=inputs['preindustrial'] is not None,
         start_pi=start_pi, end_pi=end_pi)
-    # Stages B and C
-    return gwi.attribute(
+    # The forcing years: T_mod's t axis
+    forc_Yrs = inputs['df_forc'].index.to_numpy()
+    # Stage B: the scaling factors
+    coefs = gwi.constrain(
         T_mod=T_mod,
         forcing_vars=forcing_vars,
-        forc_Yrs=inputs['df_forc'].index.to_numpy(),
+        forc_Yrs=forc_Yrs,
         df_temp_Obs=inputs['df_temp_Obs'],
         df_temp_PiC=inputs['df_temp_PiC'],
+        regress_vars=inputs['regress_vars'],
+        inc_reg_const=inputs['inc_reg_const'],
+        start_regress=inputs['regress'][0], end_regress=inputs['regress'][1])
+    # Stage C, the sample: every member, built
+    return gwi.build_sample(
+        T_mod=T_mod,
+        forcing_vars=forcing_vars,
+        forc_Yrs=forc_Yrs,
+        coefs=coefs,
+        df_temp_Obs=inputs['df_temp_Obs'],
         member_index=member_index,
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
-        start_regress=inputs['regress'][0], end_regress=inputs['regress'][1],
         start_trunc=inputs['trunc'][0], end_trunc=inputs['trunc'][1])
 
 

@@ -77,23 +77,18 @@ def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
     return T_mod, forcing_vars
 
 
-def attribute(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
-              member_index, regress_vars, inc_reg_const,
-              start_regress, end_regress, start_trunc, end_trunc):
-    """Attribute the observed warming: every ensemble member's attributed
-    warming, by stages B and C of the method, from stage A's modelled
-    warming (see modelled_warming):
+def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
+              regress_vars, inc_reg_const, start_regress, end_regress):
+    """Stage B: constrain the modelled warming by the observations. The
+    scaling factors that fit each (parameter set, ERF member)'s modelled
+    warming to each observed member, and to each piControl segment:
 
-        Stage A  T_mod[p, e, t, v]   the modelled warming from each forcing
-                                     variable alone (emulators)
-        Stage B  β_obs[p, e, o, k]   the scaling factors that fit it to each
-                 β_pic[p, e, c, k]   observed member and to each piControl
-                                     segment (regression)
-        Stage C  the attributed warming of the members (p, e, o, c) chosen
-                 (sampling), rebuilt from the pieces (members)
+        β_obs[p, e, o, k]   fit to observed member o
+        β_pic[p, e, c, k]   fit to piControl segment c
 
-    Stage B runs on every member of every source given; only stage C
-    depends on which members were chosen.
+    A member (p, e, o, c)'s scaling factors are β_obs[p, e, o] +
+    β_pic[p, e, c] (see src/method/members.py). Every member of every
+    source is fitted, whichever members are later chosen.
 
     The axes:
 
@@ -106,45 +101,28 @@ def attribute(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
         k  regressor: one per regressed variable, plus one for the constant
            term if it is used
 
-    T_mod: array (p, e, t, v), from modelled_warming
+    T_mod: array (p, e, t, v), stage A's modelled warming (see
+        modelled_warming)
     forcing_vars: the names along its v axis
     forc_Yrs: the years along its t axis
     df_temp_Obs: every observed GMT member (columns, in the order of the o
         axis), indexed by year
     df_temp_PiC: every piControl segment (columns, in the order of the c
         axis), indexed by the same years
-    member_index: the members to rebuild, (p, e, o, c): four integer arrays
-        of length N, positions along those axes, e.g. from a sampling design
-        (see src/method/sampling.py); member n goes to position n of the
-        results' member axis
     regress_vars: the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
     inc_reg_const: whether the regression has a constant term
-    start_regress, end_regress: the regression years
-    start_trunc, end_trunc: the output years
-    (Every year range includes both its ends.)
-    Returns (temp_Att_Results, output_vars): every member's attributed
-    warming over the output years, an array (t, variables, N) in float32,
-    and the names along its variable axis.
+    start_regress, end_regress: the regression years (both included)
+    Returns regression.Coefficients: obs (p, e, o, k) and pic (p, e, c, k).
     """
-    # Every member of the observed and piControl sources, in order: the o
-    # and c axes
-    ens_list_Obs = df_temp_Obs.columns.to_list()
-    ens_list_PiC = df_temp_PiC.columns.to_list()
-    # The variables along the results array's variable axis: the forcing
-    # variables, then the diagnosed variables (Ant, Tot, Res) that are not
-    # among them
-    output_vars = attribution.attribution_output_vars(forcing_vars,
-                                                      regress_vars)
-
     # The years of the observations
     temp_Yrs = df_temp_Obs.index.to_numpy()  # observed GMT
     PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
 
-    # Stage B: the scaling factors. Every observed GMT member, and every
-    # piControl segment, is fitted onto each (parameter set, ERF member)'s
-    # modelled warming, all in one batched solve. The regressors X are the
-    # regressed variables (plus a column of ones, if a constant is used)
-    # over the regression years: one matrix (t, k) per (p, e).
+    # Every observed GMT member, and every piControl segment, is fitted onto
+    # each (parameter set, ERF member)'s modelled warming, all in one batched
+    # solve. The regressors X are the regressed variables (plus a column of
+    # ones, if a constant is used) over the regression years: one matrix
+    # (t, k) per (p, e).
 
     # Where each regressed variable sits on the variable axis
     reg_indices = [forcing_vars.index(var) for var in regress_vars]
@@ -158,15 +136,55 @@ def attribute(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
         # Add a column of ones to every matrix, for the constant: k + 1
         X = np.concatenate([X, np.ones(X.shape[:-1] + (1,))], axis=-1)
     # The observed GMT members over the regression years: (t, o)
-    Y_obs = df_temp_Obs[ens_list_Obs].to_numpy()[
+    Y_obs = df_temp_Obs.to_numpy()[
         (temp_Yrs >= start_regress) & (temp_Yrs <= end_regress)]
     # The piControl segments over the regression years: (t, c)
-    Y_pic = df_temp_PiC[ens_list_PiC].to_numpy()[
+    Y_pic = df_temp_PiC.to_numpy()[
         (PiC_Yrs >= start_regress) & (PiC_Yrs <= end_regress)]
     # Every fit at once: coefs.obs (p, e, o, k), coefs.pic (p, e, c, k)
     coefs = regression.ols(X, Y_obs, Y_pic)
+    return coefs
 
-    # Stage C: rebuild each chosen member from the pieces.
+
+def build_sample(T_mod, forcing_vars, forc_Yrs, coefs, df_temp_Obs,
+                 member_index, regress_vars, inc_reg_const, start_trunc,
+                 end_trunc):
+    """Stage C: build the sample, the attributed warming of every member
+    drawn from the full ensemble (by a sampling design, see
+    src/method/sampling.py), into the results array. Each member is rebuilt
+    from the pieces, stage A's modelled warming and stage B's scaling
+    factors (see src/method/members.py).
+
+    The sample is what every output summarises. A subsample is a selection
+    from it, e.g. members picked from it to be written out individually.
+
+    The axes are as for constrain.
+
+    T_mod: array (p, e, t, v), stage A's modelled warming (see
+        modelled_warming)
+    forcing_vars: the names along its v axis
+    forc_Yrs: the years along its t axis
+    coefs: regression.Coefficients from constrain: obs (p, e, o, k) and pic
+        (p, e, c, k)
+    df_temp_Obs: every observed GMT member (columns, in the order of the o
+        axis), indexed by year: for each member's residual
+    member_index: the members to rebuild, (p, e, o, c): four integer arrays
+        of length N, positions along those axes, e.g. from a sampling design
+        (see src/method/sampling.py); member n goes to position n of the
+        results' member axis
+    regress_vars: the regressed variables, in the order of the k axis
+    inc_reg_const: whether the regression has a constant term (the last
+        regressor)
+    start_trunc, end_trunc: the output years (both included)
+    Returns (temp_Att_Results, output_vars): every member's attributed
+    warming over the output years, an array (t, variables, N) in float32,
+    and the names along its variable axis.
+    """
+    # The variables along the results array's variable axis: the forcing
+    # variables, then the diagnosed variables (Ant, Tot, Res) that are not
+    # among them
+    output_vars = attribution.attribution_output_vars(forcing_vars,
+                                                      regress_vars)
 
     # Which forcing years are in the output (the truncation years)
     in_trunc_forc = (forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc)
@@ -174,7 +192,7 @@ def attribute(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
     T_mod_trunc = T_mod[:, :, in_trunc_forc, :]
     # The observed members over the output years, NaN in years after the
     # observations end: (t, o)
-    T_obs_trunc = df_temp_Obs[ens_list_Obs].reindex(
+    T_obs_trunc = df_temp_Obs.reindex(
         np.arange(start_trunc, end_trunc + 1)).to_numpy()
     # The results array, after checking it fits in memory: (t, variables, N).
     # float32 halves its memory against float64; its precision, about 7
@@ -796,7 +814,7 @@ if __name__ == "__main__":
         replace=False)
     print(f'Internal variability ensembles pruned: {len(pic_drawn)}')
 
-    # The members to rebuild: every combination of the drawn members (the
+    # The sample's members: every combination of the drawn members (the
     # cube design), as four arrays of positions (p, e, o, c), each (N,)
     member_index = sampling.cube(params_drawn, erf_drawn, obs_drawn,
                                  pic_drawn)
@@ -816,7 +834,7 @@ if __name__ == "__main__":
           f'({_n_sub / _n_all:.2%} of all possible combinations)')
 
     T1a = dt.datetime.now()
-    # Stage A, once, for both the attribution and the priors: the modelled
+    # Stage A, once, for the attribution and the priors: the modelled
     # warming for every parameter set and ERF member, (p, e, t, v)
     T_mod, forcing_vars = modelled_warming(
         df_forc=df_forc,
@@ -825,18 +843,30 @@ if __name__ == "__main__":
         start_pi=start_pi,
         end_pi=end_pi,
     )
-    # Attribute every member: stages B and C (see attribute)
-    temp_Att_Results, vars_list = attribute(
+    # Stage B, once: the scaling factors of every (parameter set, ERF
+    # member) against every observed member and piControl segment
+    coefs = constrain(
         T_mod=T_mod,
         forcing_vars=forcing_vars,
         forc_Yrs=df_forc.index.to_numpy(),
         df_temp_Obs=df_temp_Obs,
         df_temp_PiC=df_temp_PiC,
-        member_index=member_index,
         regress_vars=regress_vars,
         inc_reg_const=inc_reg_const,
         start_regress=start_regress,
         end_regress=end_regress,
+    )
+    # Stage C, the sample: the attributed warming of every drawn member,
+    # (t, variables, N), and the names along its variable axis
+    temp_Att_Results, vars_list = build_sample(
+        T_mod=T_mod,
+        forcing_vars=forcing_vars,
+        forc_Yrs=df_forc.index.to_numpy(),
+        coefs=coefs,
+        df_temp_Obs=df_temp_Obs,
+        member_index=member_index,
+        regress_vars=regress_vars,
+        inc_reg_const=inc_reg_const,
         start_trunc=start_trunc,
         end_trunc=end_trunc,
     )
