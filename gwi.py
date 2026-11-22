@@ -4,9 +4,6 @@ import os
 import sys
 
 import datetime as dt
-import functools
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -17,6 +14,7 @@ import src.method.attribution as attribution
 import src.method.emulators as emulators
 import src.method.members as members
 import src.method.regression as regression
+import src.method.sampling as sampling
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
@@ -30,64 +28,60 @@ import models.AR5_IR.AR5_IR as AR5_IR
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
-def GWI_faster(
-        model_choice, inc_reg_const, inc_pi_offset,
-        df_forc, df_params, df_temp_PiC, df_temp_Obs,
-        start_trunc, end_trunc, start_pi, end_pi,
-        start_regress, end_regress, regress_vars, out=None):
-    """Calculate the global warming index (GWI).
+def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
+              inc_reg_const, inc_pi_offset, start_pi, end_pi,
+              start_regress, end_regress, start_trunc, end_trunc):
+    """Attribute the observed warming: every ensemble member's attributed
+    warming, by the three stages of the method:
 
-    If `out` is given, results are written into it instead of into a newly
-    allocated array. That is how the parallel run avoids copying: `out` is
-    one parameterisation's slice of a single array shared by all the worker
-    processes, so nothing has to be handed back. See
-    compute_resources.shared_results_array.
+        Stage A  T_mod[p, e, t, v]   the modelled warming from each forcing
+                                     variable alone (emulators)
+        Stage B  β_obs[p, e, o, k]   the scaling factors that fit it to each
+                 β_pic[p, e, c, k]   observed member and to each piControl
+                                     segment (regression)
+        Stage C  the members (p, e, o, c) to rebuild (sampling), and their
+                 attributed warming, rebuilt from the pieces (members)
+
+    The axes:
+
+        p  FaIR parameter set
+        e  ERF ensemble member
+        o  observed GMT member
+        c  piControl segment
+        t  year
+        v  forcing variable (e.g. GHG, Nat, OHF, and any sub-variables)
+        k  regressor: one per regressed variable, plus one for the constant
+           term if it is used
+
+    df_forc: forcing, columns (variable, ensemble), for the ERF members used
+    df_params: FaIR thermal parameter sets, columns (set name, parameter),
+        in the order wanted along p
+    df_temp_Obs: the observed GMT members used (columns), indexed by year
+    df_temp_PiC: the piControl segments used (columns), indexed by the same
+        years
+    regress_vars: the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
+    inc_reg_const: whether the regression has a constant term
+    inc_pi_offset: whether to express the modelled warming relative to its
+        mean over the pre-industrial years, start_pi to end_pi
+    start_regress, end_regress: the regression years
+    start_trunc, end_trunc: the output years
+    (Every year range includes both its ends.)
+    Returns (temp_Att_Results, output_vars): every member's attributed
+    warming over the output years, an array (t, variables, N) in float32,
+    and the names along its variable axis.
     """
-    """Parallelise over FaIR parameterisations, exploit vectorisation of
-    FaIR model by running all forcings at once through it, and separate
-    regression against observations and piControl to add rather than multiply
-    linear regressions' computational time."""
-
-    # Preparing lists to ensure that order of variables and ensemble members
-    # are consistent across the different dataframes. I'm pretty sure that
-    # pandas keeps column order consistent, but this is just extra safety
+    # The forcing variables, sorted: the v axis
     var_list_ERF = sorted(df_forc.columns.get_level_values(
         "variable").unique().to_list())
+    # The members of each source, in order: the e, o and c axes
     ens_list_ERF = df_forc.columns.get_level_values(
         "ensemble").unique().to_list()
     ens_list_Obs = df_temp_Obs.columns.to_list()
     ens_list_PiC = df_temp_PiC.columns.to_list()
-
-    # Prepare results #########################################################
-    # Total sub-ensemble size: multiple number of ensemble members for each of:
-    # HadCRUT sub-ensemble * piControl sub-ensemble * ERF sub-ensemble
-    # Specify only 1 for the number of FaIR paramaterisations, as we are
-    # parallelising across the parameterisations, and therefore only have one
-    # for each instance of the function call.
-    n = (len(ens_list_Obs) * len(ens_list_PiC) * len(ens_list_ERF) * 1)
-
     # The variables along the results array's variable axis: the forcing
-    # variables (which may include sub-variables), then the variables
-    # diagnosed after the regression (Ant, Tot, Res) that are not among them.
+    # variables, then the diagnosed variables (Ant, Tot, Res) that are not
+    # among them
     output_vars = attribution.attribution_output_vars(df_forc, regress_vars)
-
-    shape = (end_trunc - start_trunc + 1,  # number of years (after truncation)
-             len(output_vars),  # variables dimension
-             n)  # samples
-    if out is None:
-        temp_Att_Results = np.empty(
-            shape,
-            dtype=np.float32  # make the array smaller in memory
-            )
-    elif out.shape != shape:
-        # The caller sized the shared array from the same inputs, so a
-        # mismatch means those inputs disagree with what this emulation
-        # actually produces. Stop rather than write into the wrong columns.
-        raise ValueError(
-            f'Emulation of {model_choice} produces an array of shape {shape}, '
-            f'but was given somewhere of shape {out.shape} to write it.')
-    else:
-        temp_Att_Results = out
 
     # The years of each input
     forc_Yrs = df_forc.index.to_numpy()  # forcing
@@ -95,46 +89,38 @@ def GWI_faster(
     PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
 
     # Stage A: the modelled warming from each forcing variable alone, for
-    # every ERF member, with the one parameter set model_choice. The adapter
-    # runs every parameter set in the table it is given, in the table's
-    # order, and returns them along the first axis (p) of T_mod, shape
-    # (p, e, t, v). Given only model_choice's columns, it runs just that set:
-    # p has length 1, and T_mod[0] is the warming with parameter set
-    # model_choice.
-    params_this_set = df_params[[model_choice]]
+    # every parameter set and ERF member: (p, e, t, v)
     T_mod = emulators.run_fair_v2_alpha(
         emulators.forcing_array(df_forc, var_list_ERF, ens_list_ERF),
-        forc_Yrs, params_this_set)
-    # Take that one parameter set, and reorder the axes from (e, t, v) to
-    # the (t, v, e) the code below expects: (years, variables, ERF members).
-    temp_Mod_array_all_years = T_mod[0].transpose(1, 2, 0)
+        forc_Yrs, df_params)
 
     # Express the modelled warming relative to its pre-industrial mean, if
-    # asked to: each ERF member and variable relative to its own mean over
-    # the pre-industrial years (both included).
+    # asked to: each (parameter set, ERF member, variable) relative to its
+    # own mean over the pre-industrial years
     if inc_pi_offset:
         # Which forcing years are pre-industrial
         in_pi = (forc_Yrs >= start_pi) & (forc_Yrs <= end_pi)
-        # Subtract each (variable, ERF member)'s mean over those years:
-        # (t, v, e) minus (v, e), broadcast over the years
-        temp_Mod_array_all_years = (
-            temp_Mod_array_all_years -
-            temp_Mod_array_all_years[in_pi].mean(axis=0))
+        # The modelled warming over those years: (p, e, t_pi, v)
+        T_mod_pi = T_mod[:, :, in_pi, :]
+        # Its mean over the years: (p, e, 1, v)
+        T_mod_pi_mean = T_mod_pi.mean(axis=2, keepdims=True)
+        # Subtract it, broadcast over the years: (p, e, t, v)
+        T_mod = T_mod - T_mod_pi_mean
 
     # Stage B: the scaling factors. Every observed GMT member, and every
-    # piControl segment, is fitted onto each ERF member's modelled warming,
-    # all in one batched solve. The regressors X are the regressed variables
-    # (plus a column of ones, if a constant is used) over the regression
-    # years, for each ERF member: shape (e, t, k).
+    # piControl segment, is fitted onto each (parameter set, ERF member)'s
+    # modelled warming, all in one batched solve. The regressors X are the
+    # regressed variables (plus a column of ones, if a constant is used)
+    # over the regression years: one matrix (t, k) per (p, e).
 
     # Where each regressed variable sits on the variable axis
     reg_indices = [var_list_ERF.index(var) for var in regress_vars]
     # Which forcing years are in the regression
     in_regress_forc = (forc_Yrs >= start_regress) & (forc_Yrs <= end_regress)
-    # The regressed variables over the regression years: (t, k, e)
-    X = temp_Mod_array_all_years[in_regress_forc][:, reg_indices, :]
-    # Put the ERF members first, one regressor matrix each: (e, t, k)
-    X = X.transpose(2, 0, 1)
+    # The modelled warming over the regression years: (p, e, t, v)
+    T_mod_regress = T_mod[:, :, in_regress_forc, :]
+    # Its regressed variables: (p, e, t, k)
+    X = T_mod_regress[..., reg_indices]
     if inc_reg_const:
         # Add a column of ones to every matrix, for the constant: k + 1
         X = np.concatenate([X, np.ones(X.shape[:-1] + (1,))], axis=-1)
@@ -144,77 +130,40 @@ def GWI_faster(
     # The piControl segments over the regression years: (t, c)
     Y_pic = df_temp_PiC[ens_list_PiC].to_numpy()[
         (PiC_Yrs >= start_regress) & (PiC_Yrs <= end_regress)]
-    # Every fit at once: coefs.obs (e, o, k), coefs.pic (e, c, k)
+    # Every fit at once: coefs.obs (p, e, o, k), coefs.pic (p, e, c, k)
     coefs = regression.ols(X, Y_obs, Y_pic)
 
-    # Stage C: rebuild every member (e, o, c) of this parameter set from the
-    # pieces, and write it into the results array.
+    # Stage C: choose the members, and rebuild each one from the pieces.
 
     # Which forcing years are in the output (the truncation years)
     in_trunc_forc = (forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc)
-    # The modelled warming over those years, with a parameter-set axis of
-    # length 1 added in front: (t, v, e) -> (p, e, t, v)
-    T_mod_trunc = temp_Mod_array_all_years[in_trunc_forc].transpose(
-        2, 0, 1)[np.newaxis]
-    # The scaling factors, with the same parameter-set axis added:
-    # obs (p, e, o, k) and pic (p, e, c, k)
-    coefs = regression.Coefficients(obs=coefs.obs[np.newaxis],
-                                    pic=coefs.pic[np.newaxis])
+    # The modelled warming over those years: (p, e, t, v)
+    T_mod_trunc = T_mod[:, :, in_trunc_forc, :]
     # The observed members over the output years, NaN in years after the
     # observations end: (t, o)
     T_obs_trunc = df_temp_Obs[ens_list_Obs].reindex(
         np.arange(start_trunc, end_trunc + 1)).to_numpy()
-
-    # The members for one ERF member: every (o, c) pair, with c varying
-    # fastest, the order of the results array's member axis
-    n_obs, n_pic = len(ens_list_Obs), len(ens_list_PiC)
-    o_index = np.repeat(np.arange(n_obs), n_pic)
-    c_index = np.tile(np.arange(n_pic), n_obs)
-    # The parameter-set index: always 0, the only one here
-    p_index = np.zeros(n_obs * n_pic, dtype=int)
-    # One ERF member at a time, to keep the memory small
-    for ens in range(len(ens_list_ERF)):
-        # This ERF member's index, for each of its members
-        e_index = np.full(n_obs * n_pic, ens)
-        # Its block of the member axis: members ens·o·c to (ens+1)·o·c
-        block = slice(ens * n_obs * n_pic, (ens + 1) * n_obs * n_pic)
-        # Rebuild its members, and write them into their block
-        temp_Att_Results[:, :, block] = members.rebuild(
-            T_mod_trunc, coefs, T_obs_trunc,
-            (p_index, e_index, o_index, c_index),
-            var_list_ERF, regress_vars, inc_reg_const, output_vars)
+    # The members: every combination of the parameter sets, ERF members,
+    # observed members and piControl segments given (the cube design), as
+    # four index arrays (p, e, o, c), each of length N
+    member_index = sampling.cube(T_mod.shape[0], len(ens_list_ERF),
+                                 len(ens_list_Obs), len(ens_list_PiC))
+    # The results array, after checking it fits in memory: (t, variables, N).
+    # float32 halves its memory against float64; its precision, about 7
+    # significant digits (~1e-7 °C on warming of order 1 °C), is far finer
+    # than any output reports
+    temp_Att_Results = compute_resources.results_array(
+        shape=(end_trunc - start_trunc + 1,  # years, after truncation
+               len(output_vars),  # attributed warming variables
+               len(member_index[0])),  # members
+        dtype=np.float32)
+    # Rebuild every member into it, in blocks, over the job's CPUs
+    members.rebuild_into(temp_Att_Results, T_mod_trunc, coefs, T_obs_trunc,
+                         member_index, var_list_ERF, regress_vars,
+                         inc_reg_const, output_vars,
+                         n_threads=compute_resources.n_workers())
 
     return temp_Att_Results, output_vars
-
-
-# The three things below are filled in further down, in the main block, just
-# before the worker processes are created. The workers inherit them as they
-# are forked, which is how each one reaches the shared results array without
-# anything being sent to it.
-emulation_models = None      # the FaIR parameterisations, in order
-emulation_settings = None    # the arguments every emulation shares
-emulation_results = None     # the array they all write into
-
-
-def emulate_one_model(model_number):
-    """Run one FaIR parameterisation, in a worker process.
-
-    The emulations are laid out side by side along the ensemble axis of the
-    shared results array, in the order of `emulation_models`: the first
-    parameterisation fills the first block of columns, the second fills the
-    next, and so on. This function works out which columns belong to
-    `model_number` and hands that slice of the array to GWI_faster to fill.
-
-    `model_number` is the only thing the parent sends; everything large was
-    inherited when this process was forked. Nothing is returned, because the
-    results are already in the array the parent is holding.
-    """
-    n_per_model = emulation_results.shape[2] // len(emulation_models)
-    my_columns = slice(model_number * n_per_model,
-                       (model_number + 1) * n_per_model)
-    GWI_faster(emulation_models[model_number],
-               out=emulation_results[:, :, my_columns],
-               **emulation_settings)
 
 
 ###############################################################################
@@ -234,8 +183,10 @@ if __name__ == "__main__":
         np.concatenate((np.sort(np.ravel(sigmas)), [50]), axis=0)
         )
 
-    # model_choice = 'AR5_IR'
-    model_choice = 'FaIR_V2'
+    # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
+    # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
+    # emulator_choice = 'AR5_IR'
+    emulator_choice = 'FaIR_V2'
 
     # Use command line arguments instead of interactivity, so that we can
     # run the script using nohup and later slurm.
@@ -700,7 +651,7 @@ if __name__ == "__main__":
     print(f'Calculate and save priors: {calculate_priors_output}')
     print(f'Include pre-industrial offset: {inc_pi_offset}')
     print(f'Include constant term in regression: {inc_reg_const}')
-    print(f'Using model: {model_choice}')
+    print(f'Using model: {emulator_choice}')
     print(f'Output folder: {results_root}/'
           f'{"" if output_tag else "  (no tag set)"}')
 
@@ -728,7 +679,7 @@ if __name__ == "__main__":
     ###########################################################################
 
     # Set model parameters ####################################################
-    if model_choice == 'AR5_IR':
+    if emulator_choice == 'AR5_IR':
         # We only use a[10], a[11], a[15], a[16]
         # Defaults:
         # AR5 thermal sensitivity coeffs
@@ -742,7 +693,7 @@ if __name__ == "__main__":
                           [126, 267, 193, 132, 289, 200, 317, 197,
                            184, 280, 698, 286, 285, 164, 150, 218]])
 
-    elif model_choice == 'FaIR_V2':
+    elif emulator_choice == 'FaIR_V2':
         # The original location of the FaIR tunings is here
         # CMIP6_param_csv = ('models/FaIR_V2/FaIRv2_0_0_alpha1/fair/util/' +
         #                    'parameter-sets/CMIP6_climresp.csv')
@@ -802,13 +753,15 @@ if __name__ == "__main__":
     # 2. Select ALL samples of the model parameters, no sub-sampling.
     print('FaIR Parameters: '
           f'{len(CMIP6_param_df.columns.levels[0].unique())}')
-    if model_choice == 'AR5_IR':
+    if emulator_choice == 'AR5_IR':
         params_subset = Geoff[:, :min(samples, Geoff.shape[1])]
-    elif model_choice == 'FaIR_V2':
-        params_subset = CMIP6_param_df  # No sub-sampling
-        # List the names of the CMIP6 models to be emulated. This list is used
-        # to parallelise the GWI calculation across the different models.
-        models = CMIP6_param_df.columns.levels[0].unique().to_list()
+    elif emulator_choice == 'FaIR_V2':
+        # Every parameter set, no sub-sampling, sorted by name: the order of
+        # the p axis, and so of the blocks along the results' member axis
+        params_subset = CMIP6_param_df.sort_index(
+            axis=1, level=0, sort_remaining=False)
+        # The names of the CMIP6 models whose parameter sets are used
+        models = params_subset.columns.get_level_values(0).unique().to_list()
 
     # 3. Select random samples of the temperature data
     print(f'Temperature ensembles all: {df_temp_Obs.shape[1]}')
@@ -842,109 +795,30 @@ if __name__ == "__main__":
     print(f'Sub-sampled ensemble size: {_n_sub:,} '
           f'({_n_sub / _n_all:.2%} of all possible combinations)')
 
-    # Parallelise GWI calculation, with each thread corresponding to a
-    # single (model) parameterisation for FaIR.
-    #
-    # Executor.map is a drop-in for Pool.imap here: it yields results in the
-    # order of `models` as they arrive, so the ensemble axis is laid out
-    # identically and results are unchanged.
-    #
-    # THE POINT: if the Monte Carlo ensemble is too big to fit in the job's
-    # memory, runs using Executor.map fail within minutes with a clear
-    # out-of-memory error, instead of silently hanging until the scheduler's
-    # time limit kills it hours later, which is what Pool.imap does.
-    #
-    # Why the pool type decides that: the emulation below is the peak-memory
-    # stage of the whole run, so when a job is too big it is these workers
-    # that the kernel's OOM killer takes, not the parent process. mp.Pool
-    # cannot recover from a worker dying. It quietly starts a replacement but
-    # never fails the task the dead worker was holding, so that result never
-    # arrives and map()/imap() waits for it forever -- burning the entire
-    # walltime allocation at zero CPU, while still looking like a healthy
-    # running job in squeue. ProcessPoolExecutor watches its workers and
-    # raises BrokenProcessPool instead.
-    #
-    # Every emulation writes its ensemble members into one array that all the
-    # workers share, rather than handing a block back for the parent to
-    # collect. Sharing is what keeps the memory down -- returning a block
-    # means copying it out of the worker and rebuilding it in the parent --
-    # and it is also why nothing needs joining together afterwards. See
-    # compute_resources.shared_results_array for the full explanation.
-    #
-    # The array's shape is worked out here, before the workers exist, from
-    # the same inputs the emulations are given.
-    vars_list = attribution.attribution_output_vars(forc_subset, regress_vars)
-    n_per_model = attribution.ensemble_members_per_model(
-        forc_subset, df_temp_Obs_subset, df_temp_PiC_subset)
-    temp_Att_Results = compute_resources.shared_results_array(
-        shape=(end_trunc - start_trunc + 1,     # years, after truncation
-               len(vars_list),                  # attributed warming variables
-               n_per_model * len(models)),      # ensemble members
-        dtype=np.float32)
-
-    # Settings shared by every emulation, and the array they all write into.
-    # These are module-level so that the workers inherit them when they are
-    # forked below; passing them as arguments would send a copy to each
-    # worker, which for the results array is precisely what we are avoiding.
-    emulation_settings = dict(
-        inc_reg_const=inc_reg_const,
-        inc_pi_offset=inc_pi_offset,
+    # Attribute every member: stages A, B and C (see attribute)
+    T1a = dt.datetime.now()
+    temp_Att_Results, vars_list = attribute(
         df_forc=forc_subset,
         df_params=params_subset,
-        df_temp_PiC=df_temp_PiC_subset,
         df_temp_Obs=df_temp_Obs_subset,
-        start_trunc=start_trunc,
-        end_trunc=end_trunc,
+        df_temp_PiC=df_temp_PiC_subset,
+        regress_vars=regress_vars,
+        inc_reg_const=inc_reg_const,
+        inc_pi_offset=inc_pi_offset,
         start_pi=start_pi,
         end_pi=end_pi,
         start_regress=start_regress,
         end_regress=end_regress,
-        regress_vars=regress_vars,
+        start_trunc=start_trunc,
+        end_trunc=end_trunc,
     )
-    emulation_models = models
-    emulation_results = temp_Att_Results
-
-    run_log.log_section('Timeseries')
-    print('Calculating GWI (parallelised)', end=' ')
-    T1a = dt.datetime.now()
-    # 'fork' is what lets the workers inherit the shared array. It is already
-    # the default on Linux; naming it here means this keeps working if that
-    # default ever changes.
-    with ProcessPoolExecutor(compute_resources.n_workers(),
-                             mp_context=mp.get_context('fork')) as p:
-        # list() is what makes any failure in a worker surface here.
-        list(p.map(emulate_one_model, range(len(models))))
-
     T1b = dt.datetime.now()
-    print(f'... took {T1b - T1a}')
-    # There is no longer a separate concatenation step to time, but T2a is
-    # read below as the start marker for the PRIORS stage.
+    run_log.log_section('Timeseries')
+    print(f'Calculating GWI ... took {T1b - T1a}')
+    # T2a is read below as the start marker for the PRIORS stage.
     T2a = T1b
-
-    # Reminder: temp_Att_Results has shape (years, vars_list, n (ensembles members))
+    # The number of members, for the output file names
     n = temp_Att_Results.shape[2]
-
-    # FILTER RESULTS ######################################################
-    # For diagnosing: filter out results with particular regression
-    # coefficients.
-    # If you only want to study subsets of the results based on certain
-    # constraints apply a mask here. The below mask is set to look at
-    # results for different values of the coefficients.
-    # Note to self about masking: coef_Reg_Results is the array of all
-    # regression coefficients, with shape (4, n), where n is total number
-    # of samplings. We select slice indices (forcing coefficients) we're
-    # interested in basing the condition on:
-    # AER is index 0, GHGs index 1, NAT index 2, Const index 3
-    # Then choose whether you want any or all or the coefficients to meet
-    # the condition (in this case being less than zero)
-    mask_switch = False
-    if mask_switch:
-        coef_mask = np.all(coef_Reg_Results[[0, 2], :] <= 0, axis=0)
-        # mask = np.any(coef_Reg_Results[[0], :] <= 0.0, axis=0)
-
-        temp_Att_Results = temp_Att_Results[:, :, coef_mask]
-        coef_Reg_Results = coef_Reg_Results[:, coef_mask]
-        print('Shape of masked attribution results:', temp_Att_Results.shape)
 
 
     # CALCULATE PRIOR WARMING #################################################
@@ -975,23 +849,10 @@ if __name__ == "__main__":
             df_forc_priors, year_committed_to, year_committed_from)
 
     if calculate_priors_output:
-        print('Calculating PRIORS (parallelised)', end=' ')
-        # ProcessPoolExecutor rather than mp.Pool for the same reason as the
-        # emulation pool above: an ensemble too big for the job's memory fails
-        # here with a clear out-of-memory error, rather than hanging until the
-        # scheduler's time limit. Executor.map returns a lazy iterator rather
-        # than a list, so it is consumed into one here to keep
-        # np.concatenate's input unchanged.
-        with ProcessPoolExecutor(compute_resources.n_workers()) as p:
-            # print('Partialising Function')
-            partial_priors = functools.partial(
-                attribution.model_prior_warming,
-                df_params=params_subset,
-                df_forc=df_forc_priors)
-            results = list(p.map(partial_priors, models))
-
-        # Combine results from all models into one array
-        temp_Priors = np.concatenate(results, axis=2)
+        print('Calculating PRIORS', end=' ')
+        # The modelled warming from every forcing variable, for every
+        # parameter set and every ERF member: (t, v, p · e)
+        temp_Priors = attribution.prior_warming(params_subset, df_forc_priors)
         T2b = dt.datetime.now()
         print(f'... took {T2b - T2a}')
     else:

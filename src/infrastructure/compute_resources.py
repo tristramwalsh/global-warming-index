@@ -1,8 +1,7 @@
-"""CPUs, memory and Slurm: how many workers to use, the shared results
-array, threaded percentiles, and reporting what a run costs.
+"""CPUs, memory and Slurm: how many workers to use, the results array,
+threaded percentiles, and reporting what a run costs.
 """
 import functools
-import mmap
 import os
 import re
 import shutil
@@ -95,62 +94,28 @@ def n_workers():
     return n_available
 
 
-def shared_results_array(shape, dtype=np.float32):
-    """Return an empty array that forked worker processes can write into.
+def results_array(shape, dtype=np.float32):
+    """Return an empty array for the attribution results, after checking
+    that it can fit in the job's memory, and reporting what it will cost.
 
-    Why this exists
-    ---------------
-    A worker process normally has its own private memory, so anything it
-    hands back to the parent has to be copied: packed up in the worker, sent
-    down a pipe, and rebuilt in the parent. For a moment the same numbers
-    exist twice. With one worker per FaIR parameterisation, all finishing at
-    roughly the same time, that copying is the single largest memory cost of
-    a GWI run. Measured on a 4 GB result: 4.0x its size when each worker
-    returned its own block and the parent joined them with np.concatenate,
-    3.5x when the parent wrote the returned blocks into a pre-made array,
-    and 1.0x using this.
-
-    How it works
-    ------------
-    The array is placed in memory the operating system marks as shareable,
-    so when the parent forks a worker, the worker sees the very same memory
-    rather than a private copy of it. Anything a worker writes is
-    immediately visible to the parent and to every other worker. Nothing is
-    sent down a pipe and workers need not return anything at all.
-
-    Two conditions, both of which the caller must arrange:
-
-      1. Create the array BEFORE creating the worker processes. Workers
-         inherit it as they are forked; an array made afterwards is not
-         shared.
-      2. Start the workers with the 'fork' method, which is the Linux
-         default but is worth stating explicitly, e.g.
-         ProcessPoolExecutor(n, mp_context=mp.get_context('fork')).
-
-    Each worker should write only to its own part of the array. Two workers
-    writing to the same elements would race, exactly as two threads would.
-
-    The memory holds no filename and belongs to no process in particular:
-    the operating system reclaims it once the parent and all its workers
-    have exited, including if they are killed outright. So there is nothing
-    to clean up and nothing that can be left behind on the node.
+    The memory is only charged to the job as the array is written, so the
+    check (see _check_and_report_memory) is what turns a run too big for its
+    allocation into an immediate, readable error, rather than the operating
+    system killing it minutes later.
     """
+    # The array's size in bytes
     n_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
+    # Stop now if it can't fit, and log the expected cost
     _check_and_report_memory(n_bytes, shape)
-    # mmap(-1, ...) asks the OS for anonymous shared memory: no file and no
-    # name. The request itself is cheap -- the pages are only charged to the
-    # job as they are written -- but it can still fail outright if the array
-    # is larger than the whole machine, since shareable memory is backed by
-    # the node's RAM. Hence both this and the check above.
     try:
-        buffer = mmap.mmap(-1, n_bytes)
-    except OSError as err:
+        # The array itself, unfilled
+        return np.empty(shape, dtype=dtype)
+    except MemoryError as err:
         raise MemoryError(
             f'Could not reserve {n_bytes / 1024**3:.1f} GiB for the results '
-            f'of this run. That is more memory than this compute node has in '
-            f'total, so no memory request would make it fit; lower the '
-            f'number of samples, or use a larger node.') from err
-    return np.ndarray(shape, dtype=dtype, buffer=buffer)
+            f'of this run. That is more memory than this machine has '
+            f'available, so lower the number of samples, or use a larger '
+            f'node.') from err
 
 
 def _job_cgroup_value(filename):

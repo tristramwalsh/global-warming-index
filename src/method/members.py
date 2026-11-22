@@ -31,6 +31,8 @@ regressed variables (see variables.extra_vars): when Tot is itself
 regressed, its column is its own T_att, without the constant.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 import src.method.variables as variables
@@ -103,3 +105,66 @@ def rebuild(T_mod, coefs, T_obs, member_index, forcing_vars, regress_vars,
     # member o: (t, N), NaN where there are no observations
     out[:, output_vars.index('Res'), :] = T_obs[years][:, o] - total.T
     return out
+
+
+def rebuild_into(out, T_mod, coefs, T_obs, member_index, forcing_vars,
+                 regress_vars, inc_reg_const, output_vars, n_threads=1,
+                 bytes_per_block=2**23):
+    """Rebuild every member into `out`, in blocks of members, over threads.
+
+    out: array (t, variables, N), to fill: the results array
+    member_index: (p, e, o, c), four integer arrays of length N, e.g. from a
+        sampling design; member n is written to out[:, :, n]
+    T_mod, coefs, T_obs, forcing_vars, regress_vars, inc_reg_const,
+        output_vars: as for `rebuild`
+    n_threads: how many threads rebuild member blocks at once (e.g. the
+        job's CPUs)
+    bytes_per_block: the memory of one member block's modelled warming
+        (every year and forcing variable of its members, in T_mod's
+        precision), which
+        sets how many members each block holds; default 8 MiB
+
+    A member block is a run of consecutive members, out[:, :, start:stop]:
+    a slice along the member axis only, holding every year and variable.
+    Each thread rebuilds one member block at a time, with `rebuild`, and
+    writes it straight into its columns of `out`. While it works it holds
+    about 3.5 × bytes_per_block (the block's modelled warming, its
+    attributed warming, and their output), so the rebuild needs about
+    3.5 × n_threads × bytes_per_block on top of `out`: about 0.8 GiB on 28
+    threads. The block size doesn't depend on the memory or the CPUs
+    available. 8 MiB was the fastest of 1 MiB to 1 GiB on 28 threads: much
+    smaller blocks spend more of their time in Python overhead, and much
+    larger ones run slower and need more memory (32 MiB took 20% longer and
+    four times the memory).
+
+    The results don't depend on the block size or on the number of threads.
+    Threads, not processes: the rebuild is numpy array operations, which
+    release Python's lock while they run, and every thread can write
+    straight into `out` without copying it.
+    """
+    # How many members there are
+    n_members = len(member_index[0])
+    # The memory of one member's modelled warming: (t, v), in T_mod's
+    # precision (itemsize is the bytes per number: 8 for float64)
+    n_years, n_forcing_vars = T_mod.shape[-2:]
+    bytes_per_member = n_years * n_forcing_vars * T_mod.itemsize
+    # How many members fit in a block (at least one)
+    members_per_block = max(1, bytes_per_block // bytes_per_member)
+    # The member blocks, as slices along the member axis
+    block_starts = range(0, n_members, members_per_block)
+    member_blocks = [slice(start, min(start + members_per_block, n_members))
+                     for start in block_starts]
+
+    def rebuild_member_block(member_block):
+        # This block's members: four index arrays
+        block_index = tuple(index[member_block] for index in member_index)
+        # Rebuild them, and write them into their columns: (t, variables,
+        # members in the block)
+        out[:, :, member_block] = rebuild(
+            T_mod, coefs, T_obs, block_index, forcing_vars, regress_vars,
+            inc_reg_const, output_vars)
+
+    # Rebuild every member block; list() makes any error in a thread
+    # surface here
+    with ThreadPoolExecutor(n_threads) as pool:
+        list(pool.map(rebuild_member_block, member_blocks))

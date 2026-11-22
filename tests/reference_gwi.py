@@ -286,23 +286,21 @@ def engine_gwi(inputs):
     """
     import gwi  # gwi.py's main block doesn't run on import
     start_pi, end_pi = inputs['preindustrial'] or (None, None)
-    blocks = []
-    for model in inputs['models']:
-        results, output_vars = gwi.GWI_faster(
-            model,
-            inc_reg_const=inputs['inc_reg_const'],
-            inc_pi_offset=inputs['preindustrial'] is not None,
-            df_forc=inputs['df_forc'],
-            df_params=inputs['df_params'],
-            df_temp_PiC=inputs['df_temp_PiC'],
-            df_temp_Obs=inputs['df_temp_Obs'],
-            start_trunc=inputs['trunc'][0], end_trunc=inputs['trunc'][1],
-            start_pi=start_pi, end_pi=end_pi,
-            start_regress=inputs['regress'][0],
-            end_regress=inputs['regress'][1],
-            regress_vars=inputs['regress_vars'])
-        blocks.append(results)
-    return np.concatenate(blocks, axis=2), output_vars
+    # The parameter sets used, in the reference's order
+    df_params = pd.concat(
+        {model: inputs['df_params'][model] for model in inputs['models']},
+        axis=1)
+    return gwi.attribute(
+        df_forc=inputs['df_forc'],
+        df_params=df_params,
+        df_temp_Obs=inputs['df_temp_Obs'],
+        df_temp_PiC=inputs['df_temp_PiC'],
+        regress_vars=inputs['regress_vars'],
+        inc_reg_const=inputs['inc_reg_const'],
+        inc_pi_offset=inputs['preindustrial'] is not None,
+        start_pi=start_pi, end_pi=end_pi,
+        start_regress=inputs['regress'][0], end_regress=inputs['regress'][1],
+        start_trunc=inputs['trunc'][0], end_trunc=inputs['trunc'][1])
 
 
 ###############################################################################
