@@ -99,8 +99,12 @@ RECIPE_SEED=
 # Select the reference period for the temperature datasets
 # The selected period offset applies to FaIR outputs, GMT Observations,
 # and piControl internal variability.
+# Both years are included, as in IPCC and WMO usage: 1850-1900 is the 51
+# years from 1850 to 1900, and 1981-2010 the 30 years from 1981 to 2010.
+# 1850-1900 is the IPCC's approximation of pre-industrial levels: "the
+# 51-year period 1850-1900" (IPCC SR1.5, Chapter 1, Section 1.2.1).
 # Note that 'n' can be used to disable this preprocessing offset.
-# e.g. 1850-1900
+# e.g. 1850-1900   (pre-industrial, as defined by the IPCC)
 # e.g. 1981-2010
 RECIPE_PREINDUSTRIAL_ERA=1850-1900
 

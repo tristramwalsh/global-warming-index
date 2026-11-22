@@ -211,9 +211,9 @@ def _load_gmt(gmt_id, preindustrial):
 
 
 @functools.lru_cache(maxsize=None)
-def _load_pic(n_yrs, preindustrial):
+def _load_pic(years, preindustrial):
     start_pi, end_pi = preindustrial if preindustrial else (None, None)
-    df = datasets.load_PiC('CMIP6', n_yrs, start_pi, end_pi)
+    df = datasets.load_PiC('CMIP6', list(years), start_pi, end_pi)
     return datasets.filter_PiControl(df, [1, 3, 30])
 
 
@@ -254,12 +254,10 @@ def tiny_inputs(erf_id='IGCC-2025', gmt_id='HadCRUT-2025',
     df_temp_Obs = _load_gmt(gmt_id, preindustrial)
     df_temp_Obs = df_temp_Obs[pick(df_temp_Obs.columns, n_gmt)].copy()
 
-    # As gwi.py: segments as long as the GMT record, indexed by year from the
-    # start of the truncation
-    n_yrs = _load_gmt(gmt_id, preindustrial).shape[0]
-    df_temp_PiC = _load_pic(n_yrs, preindustrial)
+    # As gwi.py: segments as long as the GMT record, indexed by its years
+    gmt_years = tuple(_load_gmt(gmt_id, preindustrial).index)
+    df_temp_PiC = _load_pic(gmt_years, preindustrial)
     df_temp_PiC = df_temp_PiC[pick(df_temp_PiC.columns, n_pic)].copy()
-    df_temp_PiC.index = np.arange(n_yrs) + trunc[0]
 
     df_params = _load_params()
     models = pick(df_params.columns.levels[0].unique(), n_params)

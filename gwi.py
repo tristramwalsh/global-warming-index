@@ -606,6 +606,7 @@ if __name__ == "__main__":
 
     # Define pre-industrial period for temperature offset.
     # The average of this period is used as the offset, as standard in IPCC.
+    # Both years are included: 1850-1900 is 51 years (IPCC SR1.5, Ch. 1).
     # This offset is applied to:
     # 1. Modelled output temperatures from FaIR
     # 2. Observed/Reference GMT dataset (df_temp_Obs)
@@ -951,7 +952,6 @@ if __name__ == "__main__":
     # TEMPERATURE
     df_temp_Obs = datasets.load_GMT(
         gmt_id, ensemble_members['GMT'], start_pi, end_pi)
-    n_yrs = df_temp_Obs.shape[0]
     # Obtain the maximum regressable years from the dataframe.
     temp_Yrs = np.array(df_temp_Obs.index)
 
@@ -1021,9 +1021,9 @@ if __name__ == "__main__":
 
     # CMIP6 PI-CONTROL
     timeframes = [1, 3, 30]
-    df_temp_PiC = datasets.load_PiC(picontrol_id, n_yrs, start_pi, end_pi)
+    # Segments as long as the GMT record, indexed by its years
+    df_temp_PiC = datasets.load_PiC(picontrol_id, temp_Yrs, start_pi, end_pi)
     df_temp_PiC = datasets.filter_PiControl(df_temp_PiC, timeframes)
-    df_temp_PiC.set_index(np.arange(n_yrs)+start_trunc, inplace=True)
     # NOTE: For 1850-2022, we get 183 realisations for piControl
     # NOTE: For 1850-2023, we get 181 realisations for piControl
 

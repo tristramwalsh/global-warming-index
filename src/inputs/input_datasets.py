@@ -863,24 +863,35 @@ def preindustrial_baseline(df_temp, start_pi, end_pi):
     return df_temp
 
 
-def load_PiC(picontrol_id, n_yrs, start_pi, end_pi):
-    """Load piControl temperatures, in n_yrs-long slices.
+def load_PiC(picontrol_id, years, start_pi, end_pi):
+    """Load piControl temperatures, in segments as long as the GMT record.
 
     picontrol_id: e.g. 'CMIP6' (the only one for now)
-    n_yrs: slice length, the number of years of GMT data, e.g. 176
-    start_pi, end_pi: e.g. 1850, 1900; None for no offset
+    years: the years of the GMT data, e.g. 1850 to 2025. Each segment is
+        this long, and is indexed by these years.
+    start_pi, end_pi: e.g. 1850, 1900, both included; None for no offset
     """
     # Load with the dataset's loader
     if picontrol_id == 'CMIP6':
-        return load_PiC_CMIP6(n_yrs, start_pi, end_pi)
+        return load_PiC_CMIP6(years, start_pi, end_pi)
     else:
         raise ValueError(
             f'No piControl loader for {picontrol_id!r}.')
 
 
-def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
-    """Slice the CMIP6 piControl simulations (.MAG files) into n_yrs-long
-    segments, overlapping by half, one column per segment."""
+def load_PiC_CMIP6(years, start_pi, end_pi):
+    """Slice the CMIP6 piControl simulations (.MAG files) into segments as
+    long as `years`, overlapping by half, one column per segment.
+
+    Each segment stands in for internal variability over `years`, and is
+    indexed by them. With a pre-industrial period, each segment is offset by
+    its mean over the pre-industrial years, start_pi to end_pi with both
+    included, as the modelled and observed temperatures are.
+    """
+    years = np.asarray(years)
+    n_yrs = len(years)
+    if start_pi is not None and end_pi is not None:
+        in_pi = (years >= start_pi) & (years <= end_pi)
     # Create list of all .MAG files recursively inside the directory
     # data/piControl/GMT/CMIP6. These files are simply as
     # extracted from zip
@@ -918,12 +929,12 @@ def load_PiC_CMIP6(n_yrs, start_pi, end_pi):
             # print(s*(n_yrs//2), s*(n_yrs//2)+n_yrs)
             temp_s = temp[s*(n_yrs//2):s*(n_yrs//2)+n_yrs]
             if start_pi is not None and end_pi is not None:
-                temp_s = temp_s - temp_s[:(end_pi-start_pi)].mean()
+                temp_s = temp_s - temp_s[in_pi].mean()
             dict_temp[
                 f'{model_name}_slice-{s*(n_yrs//2)}:{s*(n_yrs//2)+n_yrs}'
                 ] = temp_s
 
-    return pd.DataFrame(dict_temp)
+    return pd.DataFrame(dict_temp, index=years)
 
 
 def filter_PiControl(df, timeframes):
@@ -966,4 +977,4 @@ def filter_PiControl(df, timeframes):
         if _cond:
             dict_temp_PiC[ens] = temp
 
-    return pd.DataFrame(dict_temp_PiC)
+    return pd.DataFrame(dict_temp_PiC, index=df.index)
