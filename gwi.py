@@ -292,24 +292,22 @@ def GWI_faster(
                 # temp_Att_Results[:, -1, i] = temp_Obs_kl
 
                 # TOTAL WARMING
-                # Sum of all attributed warming components?
-                # Or sum of regression variables?
-                # Usually Tot is sum of GHG + OHF + Nat (or Ant + Nat).
-                # If we have sub-variables, we shouldn't double count.
-                # We should sum the regression variables (or their equivalents).
-                # Tot only needs calculating whern it is higher in the
-                # aggregation than the other components - ie. is an extra_var.
+                # The total fitted warming: the sum of the regressed
+                # variables (not their sub-variables, which would count them
+                # twice), plus the constant term if there is one. The
+                # residual below needs it whatever is regressed.
+                reg_indices_in_output = [
+                    output_vars.index(v) for v in regress_vars]
+                temp_Tot = temp_Att_Results[:, reg_indices_in_output, i
+                                            ].sum(axis=1)
+                if inc_reg_const:
+                    temp_Tot += coef_Reg[-1]
+                # Tot is written as a variable of its own only when it is
+                # diagnosed, i.e. above the regressed variables in the
+                # aggregation. When Tot is itself the regressed variable, its
+                # column already holds the attributed warming (without the
+                # constant, like every regressed variable's column).
                 if 'Tot' in extra_vars:
-                    # Sum the regression variables
-                    reg_indices_in_output = [
-                        output_vars.index(v) for v in regress_vars]
-                    temp_Tot = temp_Att_Results[:, reg_indices_in_output, i
-                                                ].sum(axis=1)
-
-                    # Add the constant term if it exists
-                    if inc_reg_const:
-                        temp_Tot += coef_Reg[-1]
-
                     temp_Att_Results[:, output_vars.index('Tot'), i] = temp_Tot
 
                 # RESIDUAL WARMING
