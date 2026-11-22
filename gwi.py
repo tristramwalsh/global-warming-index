@@ -18,7 +18,6 @@ import src.method.sampling as sampling
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
-import src.method.variables as variables
 import src.method.warming_definitions as warming_definitions
 import src.inputs.input_datasets as datasets
 
@@ -28,11 +27,62 @@ import models.AR5_IR.AR5_IR as AR5_IR
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
-def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
-              regress_vars, inc_reg_const, inc_pi_offset, start_pi, end_pi,
+def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
+    """Stage A: the modelled warming from each forcing variable alone,
+
+        T_mod[p, e, t, v]
+
+    for every FaIR parameter set p, every ERF member e, every forcing year t
+    and every forcing variable v. Both the attribution (stages B and C) and
+    the priors are built from it.
+
+    df_forc: forcing, columns (variable, ensemble), for every ERF member,
+        in the order of the e axis
+    df_params: FaIR thermal parameter sets, columns (set name, parameter),
+        in the order of the p axis
+    inc_pi_offset: whether to express the modelled warming relative to its
+        mean over the pre-industrial years, start_pi to end_pi (both ends
+        included); without it, it is relative to the first forcing year
+    Returns (T_mod, forcing_vars): T_mod is an array (p, e, t, v) over the
+    forcing years (df_forc's index), and forcing_vars the names along v,
+    sorted.
+    """
+    # The forcing variables, sorted: the v axis
+    forcing_vars = sorted(df_forc.columns.get_level_values(
+        "variable").unique().to_list())
+    # Every ERF member, in order: the e axis
+    erf_members = df_forc.columns.get_level_values(
+        "ensemble").unique().to_list()
+    # The forcing years: the t axis
+    forc_Yrs = df_forc.index.to_numpy()
+
+    # The modelled warming, for every parameter set and every ERF member:
+    # (p, e, t, v)
+    T_mod = emulators.run_fair_v2_alpha(
+        emulators.forcing_array(df_forc, forcing_vars, erf_members),
+        forc_Yrs, df_params)
+
+    # Express it relative to its pre-industrial mean, if asked to: each
+    # (parameter set, ERF member, variable) relative to its own mean over
+    # the pre-industrial years
+    if inc_pi_offset:
+        # Which forcing years are pre-industrial
+        in_pi = (forc_Yrs >= start_pi) & (forc_Yrs <= end_pi)
+        # The modelled warming over those years: (p, e, t_pi, v)
+        T_mod_pi = T_mod[:, :, in_pi, :]
+        # Its mean over the years: (p, e, 1, v)
+        T_mod_pi_mean = T_mod_pi.mean(axis=2, keepdims=True)
+        # Subtract it, broadcast over the years: (p, e, t, v)
+        T_mod = T_mod - T_mod_pi_mean
+    return T_mod, forcing_vars
+
+
+def attribute(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
+              member_index, regress_vars, inc_reg_const,
               start_regress, end_regress, start_trunc, end_trunc):
     """Attribute the observed warming: every ensemble member's attributed
-    warming, by the three stages of the method:
+    warming, by stages B and C of the method, from stage A's modelled
+    warming (see modelled_warming):
 
         Stage A  T_mod[p, e, t, v]   the modelled warming from each forcing
                                      variable alone (emulators)
@@ -42,7 +92,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
         Stage C  the attributed warming of the members (p, e, o, c) chosen
                  (sampling), rebuilt from the pieces (members)
 
-    Stages A and B run on every member of every source given; only stage C
+    Stage B runs on every member of every source given; only stage C
     depends on which members were chosen.
 
     The axes:
@@ -56,10 +106,9 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
         k  regressor: one per regressed variable, plus one for the constant
            term if it is used
 
-    df_forc: forcing, columns (variable, ensemble), for every ERF member,
-        in the order of the e axis
-    df_params: FaIR thermal parameter sets, columns (set name, parameter),
-        in the order of the p axis
+    T_mod: array (p, e, t, v), from modelled_warming
+    forcing_vars: the names along its v axis
+    forc_Yrs: the years along its t axis
     df_temp_Obs: every observed GMT member (columns, in the order of the o
         axis), indexed by year
     df_temp_PiC: every piControl segment (columns, in the order of the c
@@ -70,8 +119,6 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
         results' member axis
     regress_vars: the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
     inc_reg_const: whether the regression has a constant term
-    inc_pi_offset: whether to express the modelled warming relative to its
-        mean over the pre-industrial years, start_pi to end_pi
     start_regress, end_regress: the regression years
     start_trunc, end_trunc: the output years
     (Every year range includes both its ends.)
@@ -79,42 +126,19 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
     warming over the output years, an array (t, variables, N) in float32,
     and the names along its variable axis.
     """
-    # The forcing variables, sorted: the v axis
-    var_list_ERF = sorted(df_forc.columns.get_level_values(
-        "variable").unique().to_list())
-    # Every member of each source, in order: the e, o and c axes
-    ens_list_ERF = df_forc.columns.get_level_values(
-        "ensemble").unique().to_list()
+    # Every member of the observed and piControl sources, in order: the o
+    # and c axes
     ens_list_Obs = df_temp_Obs.columns.to_list()
     ens_list_PiC = df_temp_PiC.columns.to_list()
     # The variables along the results array's variable axis: the forcing
     # variables, then the diagnosed variables (Ant, Tot, Res) that are not
     # among them
-    output_vars = attribution.attribution_output_vars(df_forc, regress_vars)
+    output_vars = attribution.attribution_output_vars(forcing_vars,
+                                                      regress_vars)
 
-    # The years of each input
-    forc_Yrs = df_forc.index.to_numpy()  # forcing
+    # The years of the observations
     temp_Yrs = df_temp_Obs.index.to_numpy()  # observed GMT
     PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
-
-    # Stage A: the modelled warming from each forcing variable alone, for
-    # every parameter set and every ERF member: (p, e, t, v)
-    T_mod = emulators.run_fair_v2_alpha(
-        emulators.forcing_array(df_forc, var_list_ERF, ens_list_ERF),
-        forc_Yrs, df_params)
-
-    # Express the modelled warming relative to its pre-industrial mean, if
-    # asked to: each (parameter set, ERF member, variable) relative to its
-    # own mean over the pre-industrial years
-    if inc_pi_offset:
-        # Which forcing years are pre-industrial
-        in_pi = (forc_Yrs >= start_pi) & (forc_Yrs <= end_pi)
-        # The modelled warming over those years: (p, e, t_pi, v)
-        T_mod_pi = T_mod[:, :, in_pi, :]
-        # Its mean over the years: (p, e, 1, v)
-        T_mod_pi_mean = T_mod_pi.mean(axis=2, keepdims=True)
-        # Subtract it, broadcast over the years: (p, e, t, v)
-        T_mod = T_mod - T_mod_pi_mean
 
     # Stage B: the scaling factors. Every observed GMT member, and every
     # piControl segment, is fitted onto each (parameter set, ERF member)'s
@@ -123,7 +147,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
     # over the regression years: one matrix (t, k) per (p, e).
 
     # Where each regressed variable sits on the variable axis
-    reg_indices = [var_list_ERF.index(var) for var in regress_vars]
+    reg_indices = [forcing_vars.index(var) for var in regress_vars]
     # Which forcing years are in the regression
     in_regress_forc = (forc_Yrs >= start_regress) & (forc_Yrs <= end_regress)
     # The modelled warming over the regression years: (p, e, t, v)
@@ -163,7 +187,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
         dtype=np.float32)
     # Rebuild every member into it, in blocks, over the job's CPUs
     members.rebuild_into(temp_Att_Results, T_mod_trunc, coefs, T_obs_trunc,
-                         member_index, var_list_ERF, regress_vars,
+                         member_index, forcing_vars, regress_vars,
                          inc_reg_const, output_vars,
                          n_threads=compute_resources.n_workers())
 
@@ -802,19 +826,26 @@ if __name__ == "__main__":
     print(f'Sub-sampled ensemble size: {_n_sub:,} '
           f'({_n_sub / _n_all:.2%} of all possible combinations)')
 
-    # Attribute every member: stages A, B and C (see attribute)
     T1a = dt.datetime.now()
-    temp_Att_Results, vars_list = attribute(
+    # Stage A, once, for both the attribution and the priors: the modelled
+    # warming for every parameter set and ERF member, (p, e, t, v)
+    T_mod, forcing_vars = modelled_warming(
         df_forc=df_forc,
         df_params=params_subset,
+        inc_pi_offset=inc_pi_offset,
+        start_pi=start_pi,
+        end_pi=end_pi,
+    )
+    # Attribute every member: stages B and C (see attribute)
+    temp_Att_Results, vars_list = attribute(
+        T_mod=T_mod,
+        forcing_vars=forcing_vars,
+        forc_Yrs=df_forc.index.to_numpy(),
         df_temp_Obs=df_temp_Obs,
         df_temp_PiC=df_temp_PiC,
         member_index=member_index,
         regress_vars=regress_vars,
         inc_reg_const=inc_reg_const,
-        inc_pi_offset=inc_pi_offset,
-        start_pi=start_pi,
-        end_pi=end_pi,
         start_regress=start_regress,
         end_regress=end_regress,
         start_trunc=start_trunc,
@@ -829,40 +860,32 @@ if __name__ == "__main__":
     n = temp_Att_Results.shape[2]
 
 
-    # CALCULATE PRIOR WARMING #################################################
-    # NOTE: the ERF loading below is required even when the priors themselves
-    # are not calculated, because df_forc_priors also feeds the ERF percentiles
-    # output further down (which IS consumed by the post-processing).
-
-    # Set new variable selection for priors calculation
-    prior_vars = regress_vars.copy()
-    # Add aggregate variables for prior calculation
-    prior_vars.extend(variables.extra_vars(regress_vars))
-    # Remove 'Res' from prior vars if present (it is added in extra_vars)
-    if 'Res' in prior_vars:
-        prior_vars.remove('Res')
-
-    # Load in the forcings for the prior calculation, specifying sub-variables
-    df_forc_priors = datasets.load_ERF(
-        erf_id, prior_vars, ensemble_members['ERF'],
-        include_sub_vars=include_sub_vars)
-    # This is a two level column MultiIndex dataframe, with levels
-    # 'variable' and 'ensemble'.
-    prior_vars_all = sorted(
-        df_forc_priors.columns.get_level_values("variable").unique().to_list())
-
-    if year_committed_to:
-        # Ensure that the ERF data goes up to the committed year.
-        df_forc_priors = datasets.extend_ERF_to_committed_year(
-            df_forc_priors, year_committed_to, year_committed_from)
+    # PRIOR WARMING ###########################################################
+    # The prior warming is stage A's modelled warming itself, T_mod: the
+    # warming before the observational constraint (every scaling factor 1),
+    # so it needs no calculation of its own. Its summary is taken over every
+    # (parameter set, ERF member) pair, each counted once: the prior of the
+    # full ensemble, which may differ from the pairs the attribution's
+    # members use, which depend on the sampling design and its size.
 
     if calculate_priors_output:
-        print('Calculating PRIORS', end=' ')
-        # The modelled warming from every forcing variable, for every
-        # parameter set and every ERF member: (t, v, p · e)
-        temp_Priors = attribution.prior_warming(params_subset, df_forc_priors)
+        print('Adding the aggregate variables to the PRIORS', end=' ')
+        # Every forcing variable plus the aggregates (Ant, Tot), as the
+        # attribution's outputs hold them: (p, e, t, v'), and the names
+        # along v', sorted
+        T_prior, prior_vars_all = attribution.add_aggregate_variables(
+            T_mod, forcing_vars, regress_vars)
         T2b = dt.datetime.now()
         print(f'... took {T2b - T2a}')
+        # How many (parameter set, ERF member) pairs there are, and how many
+        # the attribution's members use (each pair as one number, p · E + e)
+        n_erf = T_mod.shape[1]
+        n_pairs = T_mod.shape[0] * n_erf
+        pairs_used = np.unique(member_index[0] * n_erf + member_index[1])
+        print(f'The priors are every (parameter set, ERF member) pair, '
+              f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
+              f'which may differ from the pairs the attribution samples: its '
+              f'members use {len(pairs_used):,} of them.')
     else:
         print('Skipping PRIORS (--calculate-priors-output=n)')
         # T2b is read further down as the start marker for the GWI percentile
@@ -933,8 +956,11 @@ if __name__ == "__main__":
 
     if calculate_priors_output:
         print('Calculating percentiles for priors', end=' ')
-        priors_timeseries_array = compute_resources.percentile_threaded(
-            temp_Priors, sigmas_all, axis=2)
+        T_prior_start = dt.datetime.now()
+        # The percentiles over every parameter set and ERF member:
+        # (n_sigmas, years, v'), laid out as for the GWI
+        priors_timeseries_array = np.percentile(
+            T_prior, sigmas_all, axis=(0, 1))
         dict_Results_priors = {
             (var, sigma):
             priors_timeseries_array[
@@ -942,8 +968,7 @@ if __name__ == "__main__":
             for var in prior_vars_all for sigma in sigmas_all
         }
         df_Results_priors = pd.DataFrame(
-            dict_Results_priors, index=df_forc_priors.index.to_numpy()
-            )
+            dict_Results_priors, index=df_forc.index.to_numpy())
         df_Results_priors.columns.names = ['variable', 'percentile']
         df_Results_priors.index.name = 'Year'
         priors_filename = (
@@ -956,23 +981,27 @@ if __name__ == "__main__":
         # filename), but note this is intended behaviour to avoid unnecessary
         # duplication of identical datasets.
         df_Results_priors.to_csv(priors_filename)
+        print(f'... took {dt.datetime.now() - T_prior_start}')
 
     print('Calculating percentiles for ERF', end=' ')
-    erf_vars = sorted(
-        df_forc_priors.columns.get_level_values('variable').unique())
-    # Calculate percentiles for each variable and stack into a 3D array
-    # (n_sigmas, years, n_vars), to keep consistent with GWI and Priors logic.
-    erf_timeseries_array = np.stack([
-        np.percentile(df_forc_priors[v].to_numpy(), sigmas_all, axis=1)
-        for v in erf_vars
-    ], axis=2)
+    # The forcing of every variable, for every ERF member: (t, e, v)
+    erf_all = emulators.forcing_array(
+        df_forc, forcing_vars,
+        df_forc.columns.get_level_values('ensemble').unique())
+    # ... plus the aggregates (Ant, Tot), as sums of their parts, as for the
+    # priors: (t, e, v'), and the names along v', sorted
+    erf_all, erf_vars = attribution.add_aggregate_variables(
+        erf_all, forcing_vars, regress_vars)
+    # The percentiles over the ERF members: (n_sigmas, years, v'), laid out
+    # as for the GWI and the priors
+    erf_timeseries_array = np.percentile(erf_all, sigmas_all, axis=1)
     dict_Results_ERF = {
         (var, sigma):
         erf_timeseries_array[sigmas_all.index(sigma), :, erf_vars.index(var)]
         for var in erf_vars for sigma in sigmas_all
     }
     df_Results_ERF = pd.DataFrame(
-        dict_Results_ERF, index=df_forc_priors.index.to_numpy())
+        dict_Results_ERF, index=df_forc.index.to_numpy())
     df_Results_ERF.columns.names = ['variable', 'percentile']
     df_Results_ERF.index.name = 'Year'
 

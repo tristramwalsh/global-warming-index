@@ -299,16 +299,22 @@ def engine_gwi(inputs):
         np.arange(len(inputs['models'])), np.arange(n_erf),
         np.arange(inputs['df_temp_Obs'].shape[1]),
         np.arange(inputs['df_temp_PiC'].shape[1]))
-    return gwi.attribute(
+    # Stage A, for every parameter set and ERF member: (p, e, t, v)
+    T_mod, forcing_vars = gwi.modelled_warming(
         df_forc=inputs['df_forc'],
         df_params=df_params,
+        inc_pi_offset=inputs['preindustrial'] is not None,
+        start_pi=start_pi, end_pi=end_pi)
+    # Stages B and C
+    return gwi.attribute(
+        T_mod=T_mod,
+        forcing_vars=forcing_vars,
+        forc_Yrs=inputs['df_forc'].index.to_numpy(),
         df_temp_Obs=inputs['df_temp_Obs'],
         df_temp_PiC=inputs['df_temp_PiC'],
         member_index=member_index,
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
-        inc_pi_offset=inputs['preindustrial'] is not None,
-        start_pi=start_pi, end_pi=end_pi,
         start_regress=inputs['regress'][0], end_regress=inputs['regress'][1],
         start_trunc=inputs['trunc'][0], end_trunc=inputs['trunc'][1])
 
