@@ -109,7 +109,7 @@ def rebuild(T_mod, coefs, T_obs, member_index, forcing_vars, regress_vars,
 
 def rebuild_into(out, T_mod, coefs, T_obs, member_index, forcing_vars,
                  regress_vars, inc_reg_const, output_vars, n_threads=1,
-                 bytes_per_block=2**23):
+                 bytes_per_block=2**21):
     """Rebuild every member into `out`, in blocks of members, over threads.
 
     out: array (t, variables, N), to fill: the results array
@@ -121,8 +121,8 @@ def rebuild_into(out, T_mod, coefs, T_obs, member_index, forcing_vars,
         job's CPUs)
     bytes_per_block: the memory of one member block's modelled warming
         (every year and forcing variable of its members, in T_mod's
-        precision), which
-        sets how many members each block holds; default 8 MiB
+        precision), which sets how many members each block holds; default
+        2 MiB
 
     A member block is a run of consecutive members, out[:, :, start:stop]:
     a slice along the member axis only, holding every year and variable.
@@ -130,12 +130,14 @@ def rebuild_into(out, T_mod, coefs, T_obs, member_index, forcing_vars,
     writes it straight into its columns of `out`. While it works it holds
     about 3.5 × bytes_per_block (the block's modelled warming, its
     attributed warming, and their output), so the rebuild needs about
-    3.5 × n_threads × bytes_per_block on top of `out`: about 0.8 GiB on 28
+    3.5 × n_threads × bytes_per_block on top of `out`: about 0.2 GiB on 28
     threads. The block size doesn't depend on the memory or the CPUs
-    available. 8 MiB was the fastest of 1 MiB to 1 GiB on 28 threads: much
-    smaller blocks spend more of their time in Python overhead, and much
-    larger ones run slower and need more memory (32 MiB took 20% longer and
-    four times the memory).
+    available. Measured on 28 threads (on shared nodes, so ±15%): blocks of
+    1 to 16 MiB are within ~20% of each other, and which is fastest shifts
+    with the number of members; 2 MiB was within ~10% of the fastest both
+    at 0.9 and at 6 million members. Blocks of 32 MiB and more are slower
+    (32 MiB took 20–30% longer) and need far more memory; much smaller
+    blocks, below ~1 MiB, spend more of their time in Python overhead.
 
     The results don't depend on the block size or on the number of threads.
     Threads, not processes: the rebuild is numpy array operations, which

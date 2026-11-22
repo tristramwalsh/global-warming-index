@@ -28,8 +28,8 @@ import models.AR5_IR.AR5_IR as AR5_IR
 ###############################################################################
 # DEFINE FUNCTIONS ############################################################
 ###############################################################################
-def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
-              inc_reg_const, inc_pi_offset, start_pi, end_pi,
+def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, member_index,
+              regress_vars, inc_reg_const, inc_pi_offset, start_pi, end_pi,
               start_regress, end_regress, start_trunc, end_trunc):
     """Attribute the observed warming: every ensemble member's attributed
     warming, by the three stages of the method:
@@ -39,8 +39,11 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
         Stage B  β_obs[p, e, o, k]   the scaling factors that fit it to each
                  β_pic[p, e, c, k]   observed member and to each piControl
                                      segment (regression)
-        Stage C  the members (p, e, o, c) to rebuild (sampling), and their
-                 attributed warming, rebuilt from the pieces (members)
+        Stage C  the attributed warming of the members (p, e, o, c) chosen
+                 (sampling), rebuilt from the pieces (members)
+
+    Stages A and B run on every member of every source given; only stage C
+    depends on which members were chosen.
 
     The axes:
 
@@ -53,12 +56,18 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
         k  regressor: one per regressed variable, plus one for the constant
            term if it is used
 
-    df_forc: forcing, columns (variable, ensemble), for the ERF members used
+    df_forc: forcing, columns (variable, ensemble), for every ERF member,
+        in the order of the e axis
     df_params: FaIR thermal parameter sets, columns (set name, parameter),
-        in the order wanted along p
-    df_temp_Obs: the observed GMT members used (columns), indexed by year
-    df_temp_PiC: the piControl segments used (columns), indexed by the same
-        years
+        in the order of the p axis
+    df_temp_Obs: every observed GMT member (columns, in the order of the o
+        axis), indexed by year
+    df_temp_PiC: every piControl segment (columns, in the order of the c
+        axis), indexed by the same years
+    member_index: the members to rebuild, (p, e, o, c): four integer arrays
+        of length N, positions along those axes, e.g. from a sampling design
+        (see src/method/sampling.py); member n goes to position n of the
+        results' member axis
     regress_vars: the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
     inc_reg_const: whether the regression has a constant term
     inc_pi_offset: whether to express the modelled warming relative to its
@@ -73,7 +82,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
     # The forcing variables, sorted: the v axis
     var_list_ERF = sorted(df_forc.columns.get_level_values(
         "variable").unique().to_list())
-    # The members of each source, in order: the e, o and c axes
+    # Every member of each source, in order: the e, o and c axes
     ens_list_ERF = df_forc.columns.get_level_values(
         "ensemble").unique().to_list()
     ens_list_Obs = df_temp_Obs.columns.to_list()
@@ -89,7 +98,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
     PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
 
     # Stage A: the modelled warming from each forcing variable alone, for
-    # every parameter set and ERF member: (p, e, t, v)
+    # every parameter set and every ERF member: (p, e, t, v)
     T_mod = emulators.run_fair_v2_alpha(
         emulators.forcing_array(df_forc, var_list_ERF, ens_list_ERF),
         forc_Yrs, df_params)
@@ -133,7 +142,7 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
     # Every fit at once: coefs.obs (p, e, o, k), coefs.pic (p, e, c, k)
     coefs = regression.ols(X, Y_obs, Y_pic)
 
-    # Stage C: choose the members, and rebuild each one from the pieces.
+    # Stage C: rebuild each chosen member from the pieces.
 
     # Which forcing years are in the output (the truncation years)
     in_trunc_forc = (forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc)
@@ -143,11 +152,6 @@ def attribute(df_forc, df_params, df_temp_Obs, df_temp_PiC, regress_vars,
     # observations end: (t, o)
     T_obs_trunc = df_temp_Obs[ens_list_Obs].reindex(
         np.arange(start_trunc, end_trunc + 1)).to_numpy()
-    # The members: every combination of the parameter sets, ERF members,
-    # observed members and piControl segments given (the cube design), as
-    # four index arrays (p, e, o, c), each of length N
-    member_index = sampling.cube(T_mod.shape[0], len(ens_list_ERF),
-                                 len(ens_list_Obs), len(ens_list_PiC))
     # The results array, after checking it fits in memory: (t, variables, N).
     # float32 halves its memory against float64; its precision, about 7
     # significant digits (~1e-7 °C on warming of order 1 °C), is far finer
@@ -723,34 +727,32 @@ if __name__ == "__main__":
 
     # Seed the random sampling, if asked to. All three draws below (forcing,
     # temperature and internal variability members) use numpy's global
-    # random state -- pandas' .sample() does too when given no random_state
-    # -- and they are the only random draws in a run, so seeding here, just
-    # before them, makes the whole run reproducible.
+    # random state, and they are the only random draws in a run, so seeding
+    # here, just before them, makes the whole run reproducible.
     if seed is not None:
         np.random.seed(seed)
 
-    # 1. Select random samples of the forcing data
+    # The draws choose which members are rebuilt (stage C). Stages A and B
+    # run on every member of every source, whatever is drawn. Each draw
+    # gives positions along its source's axis, in the order drawn:
+    # np.random.choice(n, k, replace=False) is the draw the legacy code made
+    # (np.random.choice on the ERF members' names, and DataFrame.sample on
+    # the GMT members and piControl segments, which draw positions the same
+    # way), so the same seed draws the same members, in the same order.
+
     run_log.log_notes()
-
     run_log.log_section('Ensemble sampling')
-    print('Forcing ensemble all: ' +
-          f'{len(df_forc.columns.get_level_values("ensemble").unique())}')
-    # Select a random subset of the ensemble names from the forcing data.
-    forc_sample = np.random.choice(
-        df_forc.columns.get_level_values("ensemble").unique(),
-        min(samples,
-            len(df_forc.columns.get_level_values("ensemble").unique())),
-        replace=False)
-    # print('forc_sample:', forc_sample)
-    # select all variables for first column level, and forc_sample for
-    # second column level
-    forc_subset = df_forc.loc[:, (slice(None), forc_sample)]
-    # print(forc_subset)
-    # forc_subset = df_forc.xs(tuple(forc_sample), axis=1, level=1)
-    _nf = len(forc_subset.columns.get_level_values("ensemble").unique())
-    print(f'Forcing ensemble pruned: {_nf}')
 
-    # 2. Select ALL samples of the model parameters, no sub-sampling.
+    # 1. A random subset of the ERF members
+    # Every ERF member, in the order of the forcing's columns: the e axis
+    erf_members = df_forc.columns.get_level_values('ensemble').unique()
+    print(f'Forcing ensemble all: {len(erf_members)}')
+    # The positions drawn along the e axis: (up to samples,)
+    erf_drawn = np.random.choice(
+        len(erf_members), min(samples, len(erf_members)), replace=False)
+    print(f'Forcing ensemble pruned: {len(erf_drawn)}')
+
+    # 2. Every parameter set, no sub-sampling.
     print('FaIR Parameters: '
           f'{len(CMIP6_param_df.columns.levels[0].unique())}')
     if emulator_choice == 'AR5_IR':
@@ -762,23 +764,33 @@ if __name__ == "__main__":
             axis=1, level=0, sort_remaining=False)
         # The names of the CMIP6 models whose parameter sets are used
         models = params_subset.columns.get_level_values(0).unique().to_list()
+    # Every position along the p axis: (P,)
+    params_drawn = np.arange(len(models))
 
-    # 3. Select random samples of the temperature data
+    # 3. A random subset of the observed GMT members
     print(f'Temperature ensembles all: {df_temp_Obs.shape[1]}')
-    df_temp_Obs_subset = df_temp_Obs.sample(
-        n=min(samples, df_temp_Obs.shape[1]), axis=1)
-    print(f'Temperature ensembles pruned: {df_temp_Obs_subset.shape[1]}')
+    # The positions drawn along the o axis: (up to samples,)
+    obs_drawn = np.random.choice(
+        df_temp_Obs.shape[1], min(samples, df_temp_Obs.shape[1]),
+        replace=False)
+    print(f'Temperature ensembles pruned: {len(obs_drawn)}')
 
-    # 4. Select random samples of the internal variability
+    # 4. A random subset of the piControl segments
     print(f'Internal variability ensembles all: {df_temp_PiC.shape[1]}')
-    df_temp_PiC_subset = df_temp_PiC.sample(
-        n=min(samples, df_temp_PiC.shape[1]), axis=1)
-    print('Internal variability ensembles pruned: '
-          f'{df_temp_PiC_subset.shape[1]}')
+    # The positions drawn along the c axis: (up to samples,)
+    pic_drawn = np.random.choice(
+        df_temp_PiC.shape[1], min(samples, df_temp_PiC.shape[1]),
+        replace=False)
+    print(f'Internal variability ensembles pruned: {len(pic_drawn)}')
+
+    # The members to rebuild: every combination of the drawn members (the
+    # cube design), as four arrays of positions (p, e, o, c), each (N,)
+    member_index = sampling.cube(params_drawn, erf_drawn, obs_drawn,
+                                 pic_drawn)
 
     # Print the total available ensemble size
     _n_all = (
-        len(df_forc.columns.get_level_values("ensemble").unique()) *
+        len(erf_members) *
         len(CMIP6_param_df.columns.levels[0].unique()) *
         df_temp_Obs.shape[1] *
         df_temp_PiC.shape[1]
@@ -786,22 +798,18 @@ if __name__ == "__main__":
     print(f'Max available ensemble: {_n_all:,}')
 
     # Print the randomly subsampled ensemble size
-    _n_sub = (
-        _nf *  # number of forcing ensembles
-        len(CMIP6_param_df.columns.levels[0].unique()) *
-        df_temp_Obs_subset.shape[1] *
-        df_temp_PiC_subset.shape[1]
-    )
+    _n_sub = len(member_index[0])
     print(f'Sub-sampled ensemble size: {_n_sub:,} '
           f'({_n_sub / _n_all:.2%} of all possible combinations)')
 
     # Attribute every member: stages A, B and C (see attribute)
     T1a = dt.datetime.now()
     temp_Att_Results, vars_list = attribute(
-        df_forc=forc_subset,
+        df_forc=df_forc,
         df_params=params_subset,
-        df_temp_Obs=df_temp_Obs_subset,
-        df_temp_PiC=df_temp_PiC_subset,
+        df_temp_Obs=df_temp_Obs,
+        df_temp_PiC=df_temp_PiC,
+        member_index=member_index,
         regress_vars=regress_vars,
         inc_reg_const=inc_reg_const,
         inc_pi_offset=inc_pi_offset,

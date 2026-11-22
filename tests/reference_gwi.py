@@ -53,6 +53,7 @@ sys.path.insert(0, str(REPO))
 
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair  # noqa: E402
 import src.inputs.input_datasets as datasets  # noqa: E402
+import src.method.sampling as sampling  # noqa: E402
 from src.method.variables import SUB_VAR_MAPPING  # noqa: E402
 
 # The variables each regression diagnoses after the fit. The regressed
@@ -290,11 +291,20 @@ def engine_gwi(inputs):
     df_params = pd.concat(
         {model: inputs['df_params'][model] for model in inputs['models']},
         axis=1)
+    # Every member of every source, in the reference's order (the full
+    # grid): four arrays of positions (p, e, o, c)
+    n_erf = len(inputs['df_forc'].columns.get_level_values(
+        'ensemble').unique())
+    member_index = sampling.cube(
+        np.arange(len(inputs['models'])), np.arange(n_erf),
+        np.arange(inputs['df_temp_Obs'].shape[1]),
+        np.arange(inputs['df_temp_PiC'].shape[1]))
     return gwi.attribute(
         df_forc=inputs['df_forc'],
         df_params=df_params,
         df_temp_Obs=inputs['df_temp_Obs'],
         df_temp_PiC=inputs['df_temp_PiC'],
+        member_index=member_index,
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
         inc_pi_offset=inputs['preindustrial'] is not None,
