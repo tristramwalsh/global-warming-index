@@ -321,8 +321,8 @@ CONFIGURATIONS = {
         dict(regress_vars=('Tot',), include_sub_vars=True),
     'historical-only regression ending 1990':
         dict(regress=(1850, 1990), trunc=(1850, 2025)),
-    # (No offset at all, --preindustrial-era=n, leaves no piControl segments:
-    # see plans/ENGINE_PLAN.md, Phase 0.4 findings.)
+    'no pre-industrial offset, with the regression constant':
+        dict(preindustrial=None, inc_reg_const=True),
     'a different pre-industrial period (1981-2010), with the constant':
         dict(preindustrial=(1981, 2010), inc_reg_const=True),
     'simulated large ensemble (one ERF member)':

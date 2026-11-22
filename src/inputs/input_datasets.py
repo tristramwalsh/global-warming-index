@@ -869,7 +869,8 @@ def load_PiC(picontrol_id, years, start_pi, end_pi):
     picontrol_id: e.g. 'CMIP6' (the only one for now)
     years: the years of the GMT data, e.g. 1850 to 2025. Each segment is
         this long, and is indexed by these years.
-    start_pi, end_pi: e.g. 1850, 1900, both included; None for no offset
+    start_pi, end_pi: e.g. 1850, 1900, both included; None for no
+        pre-industrial offset (each segment is then offset by its own mean)
     """
     # Load with the dataset's loader
     if picontrol_id == 'CMIP6':
@@ -884,14 +885,24 @@ def load_PiC_CMIP6(years, start_pi, end_pi):
     long as `years`, overlapping by half, one column per segment.
 
     Each segment stands in for internal variability over `years`, and is
-    indexed by them. With a pre-industrial period, each segment is offset by
-    its mean over the pre-industrial years, start_pi to end_pi with both
-    included, as the modelled and observed temperatures are.
+    indexed by them. Internal variability is a fluctuation about zero, so
+    each segment is always made an anomaly, even when the other temperatures
+    are not:
+    - With a pre-industrial period, a segment is offset by its mean over the
+      pre-industrial years, start_pi to end_pi with both included, as the
+      modelled and observed temperatures are.
+    - Without one (start_pi and end_pi None), the observations and the model
+      keep their own levels (e.g. absolute temperatures, around 14 °C), and a
+      regression constant takes up the difference. A segment is then offset
+      by its own mean. Left in absolute temperature, every segment would
+      fail filter_PiControl, which assumes anomalies.
     """
     years = np.asarray(years)
     n_yrs = len(years)
     if start_pi is not None and end_pi is not None:
         in_pi = (years >= start_pi) & (years <= end_pi)
+    else:
+        in_pi = np.ones(n_yrs, dtype=bool)  # the whole segment
     # Create list of all .MAG files recursively inside the directory
     # data/piControl/GMT/CMIP6. These files are simply as
     # extracted from zip
@@ -928,8 +939,7 @@ def load_PiC_CMIP6(years, start_pi, end_pi):
         for s in range(segments):
             # print(s*(n_yrs//2), s*(n_yrs//2)+n_yrs)
             temp_s = temp[s*(n_yrs//2):s*(n_yrs//2)+n_yrs]
-            if start_pi is not None and end_pi is not None:
-                temp_s = temp_s - temp_s[in_pi].mean()
+            temp_s = temp_s - temp_s[in_pi].mean()
             dict_temp[
                 f'{model_name}_slice-{s*(n_yrs//2)}:{s*(n_yrs//2)+n_yrs}'
                 ] = temp_s

@@ -103,7 +103,12 @@ RECIPE_SEED=
 # years from 1850 to 1900, and 1981-2010 the 30 years from 1981 to 2010.
 # 1850-1900 is the IPCC's approximation of pre-industrial levels: "the
 # 51-year period 1850-1900" (IPCC SR1.5, Chapter 1, Section 1.2.1).
-# Note that 'n' can be used to disable this preprocessing offset.
+# Note that 'n' can be used to disable this preprocessing offset: the FaIR
+# outputs and GMT observations then keep their own levels (e.g. absolute
+# temperatures, around 14 degrees C), so include the regression constant
+# (RECIPE_INCLUDE_REG_CONST=y) to take up the difference. The piControl
+# segments are always anomalies (internal variability is a fluctuation about
+# zero): without this offset, each is offset by its own mean.
 # e.g. 1850-1900   (pre-industrial, as defined by the IPCC)
 # e.g. 1981-2010
 RECIPE_PREINDUSTRIAL_ERA=1850-1900
