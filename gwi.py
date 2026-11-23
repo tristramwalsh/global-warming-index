@@ -200,9 +200,6 @@ if __name__ == "__main__":
     # 2016-2025 for 2025; the rate is the line's slope, in °C per year (AR6
     # WGI, Ch. 3, Table 3.1)
     AR6_RATE_YEARS = 10
-    # The first year whose rate the rates CSV gives; the last is the final
-    # output year
-    FIRST_RATE_YEAR = 1950
 
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
@@ -1005,11 +1002,10 @@ if __name__ == "__main__":
     print(f'... took {T3b - T3a}')
 
     # HEADLINE RESULTS ########################################################
-    # TODO: Update this.
-    # NOTE: Currently, the headline results are calculated for two periods:
-    # 1. The same years as the most recent IPCC reports (2017, and 2010-2019)
-    # 2. The end of the truncation period, NOT the end of the regressed range.
-    # The preferred range dependes on usage context, and can be changed later.
+    # Each warming definition's timeseries is written in full; the headlines
+    # CSV gathers every definition's rows at the headline years (e.g. the
+    # last output year, and the IPCC assessment years: see
+    # warming_definitions.generate_headline_years)
 
     if headline_toggles:
         run_log.log_section(f'Headlines ({headline_years})')
@@ -1028,7 +1024,10 @@ if __name__ == "__main__":
         if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
             hl_years_annual.append(2017)
 
-        dfs = [df_Results.loc[[y]] for y in hl_years_annual]
+        # The annual timeseries' rows at the headline years, labelled by the
+        # year itself
+        dfs = [summaries.headline_rows(df_Results, hl_years_annual,
+                                       hl_years_annual)]
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1038,7 +1037,7 @@ if __name__ == "__main__":
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # The value at the middle of each headline year of the line fitted
         # through its last SR15_TREND_YEARS annual means, the year included
-        # (see SR15_TREND_YEARS and summaries.sr15_headline_table)
+        # (see SR15_TREND_YEARS and summaries.sr15_timeseries_table)
         print('Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
@@ -1056,11 +1055,17 @@ if __name__ == "__main__":
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-        # Each headline year's row: every member's SR1.5 value, rebuilt from
-        # T_mod and T_obs with the definition applied over the year's window
+        # The SR1.5 timeseries: every output year whose window fits
+        df_SR15 = summaries.sr15_timeseries_table(
+            sample, SIGMAS, start_trunc, end_trunc, SR15_TREND_YEARS)
+        results_layout.write_csv(
+            df_SR15, f'{results_folder}{output_path}' +
+            f'GWI_results_timeseries-SR15_{variation}.csv')
+        # Its rows at the headline years, for the headlines CSV
         if hl_years_annual:
-            dfs.append(summaries.sr15_headline_table(
-                sample, SIGMAS, hl_years_annual, SR15_TREND_YEARS))
+            dfs.append(summaries.headline_rows(
+                df_SR15, hl_years_annual,
+                [f'{year} (SR15 definition)' for year in hl_years_annual]))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1076,12 +1081,6 @@ if __name__ == "__main__":
             hl_years_decadal.append(2019)
 
         print('Calculating AR6-definition temps', end=' ')
-        # if ((2010 in trunc_Yrs) and (2019 in trunc_Yrs) and (end_regress != 2019)):
-        #     # The final condition is to avoid duplicate calculations when
-        #     # the end_regress is 2019.
-        #     years_headlines = [[2010, 2019], [end_regress-9, end_regress]]
-        # else:
-        #     years_headlines = [[end_regress-9, end_regress]]
 
         for year in hl_years_decadal:
             # The window's first year (see AR6_MEAN_YEARS)
@@ -1094,11 +1093,18 @@ if __name__ == "__main__":
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-        # Each window's row: every member's mean, rebuilt from T_mod and
-        # T_obs averaged over the window
+        # The AR6 timeseries: every output year whose window fits
+        df_AR6 = summaries.ar6_timeseries_table(
+            sample, SIGMAS, start_trunc, end_trunc, AR6_MEAN_YEARS)
+        results_layout.write_csv(
+            df_AR6, f'{results_folder}{output_path}' +
+            f'GWI_results_timeseries-AR6_{variation}.csv')
+        # Its rows at the headline years, for the headlines CSV
         if hl_years_decadal:
-            dfs.append(summaries.ar6_headline_table(
-                sample, SIGMAS, hl_years_decadal, AR6_MEAN_YEARS))
+            dfs.append(summaries.headline_rows(
+                df_AR6, hl_years_decadal,
+                [f'{year - (AR6_MEAN_YEARS - 1)}-{year}'
+                 for year in hl_years_decadal]))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1129,11 +1135,19 @@ if __name__ == "__main__":
                 print('Calculating CGWL-definition temps', end=' ')
                 hl_years_cgwl.append(year)
 
-        # Each window's row: every member's mean, rebuilt from T_mod and
-        # T_obs averaged over the window
+        # The CGWL timeseries: every output year whose window fits
+        df_CGWL = summaries.cgwl_timeseries_table(
+            sample, SIGMAS, start_trunc, end_trunc, CGWL_MEAN_YEARS)
+        results_layout.write_csv(
+            df_CGWL, f'{results_folder}{output_path}' +
+            f'GWI_results_timeseries-CGWL_{variation}.csv')
+        # Its rows at the headline years, for the headlines CSV
+        half = (CGWL_MEAN_YEARS - 1) // 2
         if hl_years_cgwl:
-            dfs.append(summaries.cgwl_headline_table(
-                sample, SIGMAS, hl_years_cgwl, CGWL_MEAN_YEARS))
+            dfs.append(summaries.headline_rows(
+                df_CGWL, hl_years_cgwl,
+                [f'{year - half}-{year + half} (CGWL definition)'
+                 for year in hl_years_cgwl]))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1198,7 +1212,6 @@ if __name__ == "__main__":
                     # observed members)
                     temp_Obs_SR15_recent = df_temp_Obs.loc[
                         first_year:year].to_numpy()
-                    # print(temp_Obs_SR15_recent)
 
                     # Vectorised for consistency with the attributed SR15
                     # temps above: both paths must use the same estimator, or
@@ -1299,19 +1312,11 @@ if __name__ == "__main__":
         T7 = dt.datetime.now()
         run_log.log_section('Warming rates')
         print('Calculating AR6-definition attributed warming rates', end=' ')
-        # The first rate's trend starts AR6_RATE_YEARS - 1 years before it,
-        # which must be an output year
-        if FIRST_RATE_YEAR - (AR6_RATE_YEARS - 1) not in trunc_Yrs:
-            raise ValueError(
-                f'The AR6 rate definition requires the years '
-                f'{FIRST_RATE_YEAR - (AR6_RATE_YEARS - 1)} and {end_trunc} '
-                f'to be in the truncation years: '
-                f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-        # Every year's rate, FIRST_RATE_YEAR to the last output year: every
+        # Every output year's rate, from the first whose window fits: every
         # member's slope, rebuilt from the slopes of T_mod and T_obs over
         # each year's window
         df_rates = summaries.ar6_rate_table(
-            sample, SIGMAS, FIRST_RATE_YEAR, end_trunc, AR6_RATE_YEARS)
+            sample, SIGMAS, start_trunc, end_trunc, AR6_RATE_YEARS)
         results_layout.write_csv(
             df_rates,
             f'{results_folder}{output_path}' +

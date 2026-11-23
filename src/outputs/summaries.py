@@ -31,15 +31,18 @@ How the functions connect:
     windowed_definition_table         both of the above, for any definition
                                       linear in time, over a list of
                                       windows, in blocks
-    gwi_timeseries_table              the GWI_results_timeseries CSV: the
-                                      annual value, in windows of one year
-    sr15_headline_table,              the SR1.5, AR6 and CGWL rows of the
-    ar6_headline_table,               GWI_results_headlines CSV (which gwi.py
-    cgwl_headline_table               joins with the annual rows, taken from
-                                      the timeseries), and the
-    ar6_rate_table                    GWI_results_rates CSV: each names its
-                                      windows, labels and definition, and
-                                      calls windowed_definition_table
+    definition_timeseries_table       a definition's value in every output
+                                      year whose window lies within the
+                                      output years
+    gwi_timeseries_table,             each definition's timeseries CSV
+    sr15_timeseries_table,            (GWI_results_timeseries, -SR15, -AR6,
+    ar6_timeseries_table,             -CGWL) and the GWI_results_rates CSV:
+    cgwl_timeseries_table,            each names its window and definition
+    ar6_rate_table
+    headline_rows                     a timeseries' rows at the headline
+                                      years, labelled for the
+                                      GWI_results_headlines CSV, which gwi.py
+                                      joins from every definition
 
 The arrays' axes are named as in src/method/members.py: t year (or window
 of years), and N the members; `variables` is the axis along
@@ -202,19 +205,50 @@ def windowed_definition_table(sample, sigmas, definition, windows, labels):
                                     sample.output_vars, labels)
 
 
-def sr15_headline_table(sample, sigmas, headline_years, trend_years):
-    """The SR1.5-definition rows of the GWI_results_headlines CSV: the
-    warming in each headline year as the value, at the middle of that year,
-    of the least-squares line through its last trend_years annual means, the
-    year itself included (IPCC SR1.5, Ch. 1, §1.2.1).
+def definition_timeseries_table(sample, sigmas, definition,
+                                first_output_year, last_output_year,
+                                years_before, years_after):
+    """A definition's timeseries: its percentiles in every output year
+    whose window lies within the output years.
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    headline_years: the years to give, e.g. [2017, 2025]
+    definition: a warming definition linear in time (see
+        windowed_definition_table)
+    first_output_year, last_output_year: the output years (both included)
+    years_before, years_after: each year's window, from years_before
+        years before it to years_after years after it
+    Returns a DataFrame indexed by year ('Year').
+    """
+    # The years whose windows lie within the output years
+    years = np.arange(first_output_year + years_before,
+                      last_output_year - years_after + 1)
+    # Stop if there are none
+    if len(years) == 0:
+        raise ValueError(
+            f'No year from {first_output_year} to {last_output_year} has '
+            f'its whole window ({years_before} years before it to '
+            f'{years_after} after) within those years.')
+    # Each year's window
+    windows = [(year - years_before, year + years_after) for year in years]
+    # The ensemble's value in each window, and its percentiles
+    return windowed_definition_table(sample, sigmas, definition, windows,
+                                     years)
+
+
+def sr15_timeseries_table(sample, sigmas, first_output_year,
+                          last_output_year, trend_years):
+    """The table of the GWI_results_timeseries-SR15 CSV: in every output
+    year whose window fits, the warming as the value, at the middle of that
+    year, of the least-squares line through its last trend_years annual
+    means, the year itself included (IPCC SR1.5, Ch. 1, §1.2.1).
+
+    sample: members.Sample
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    first_output_year, last_output_year: the output years (both included)
     trend_years: how many annual means the line is fitted through, e.g.
         gwi.py's SR15_TREND_YEARS (which explains the choice)
-    Returns a DataFrame with a row for each year, labelled '<year> (SR15
-    definition)'.
+    Returns a DataFrame indexed by year ('Year').
 
     E.g. for 2025 with trend_years = 15: the annual means of 2011 to 2025
     inclusive, 15 years of data (1 January 2011 to 31 December 2025), with
@@ -222,91 +256,107 @@ def sr15_headline_table(sample, sigmas, headline_years, trend_years):
     warming_definitions.final_value_of_trend_vectorised). That equals the
     mean of the line extended over the 29 years 2011 to 2039.
     """
-    # Each year's window: the year and the trend_years - 1 before it
-    windows = [(year - (trend_years - 1), year) for year in headline_years]
-    labels = [f'{year} (SR15 definition)' for year in headline_years]
     # The value of each member's fitted line at the end of each window
-    return windowed_definition_table(
+    return definition_timeseries_table(
         sample, sigmas, warming_definitions.final_value_of_trend_vectorised,
-        windows, labels)
+        first_output_year, last_output_year,
+        years_before=trend_years - 1, years_after=0)
 
 
-def ar6_headline_table(sample, sigmas, headline_years, mean_years):
-    """The AR6-definition rows of the GWI_results_headlines CSV: the
-    warming over the mean_years years ending in each headline year, the mean
-    of their annual means (IPCC AR6 WGI's decadal means).
+def ar6_timeseries_table(sample, sigmas, first_output_year,
+                         last_output_year, mean_years):
+    """The table of the GWI_results_timeseries-AR6 CSV: in every output
+    year whose window fits, the warming over the mean_years years ending in
+    it, the mean of their annual means (IPCC AR6 WGI's decadal means).
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    headline_years: the windows' last years, e.g. [2019, 2025]
+    first_output_year, last_output_year: the output years (both included)
     mean_years: how many annual means each window averages, e.g. gwi.py's
         AR6_MEAN_YEARS
-    Returns a DataFrame with a row for each window, labelled '<first
-    year>-<last year>'.
+    Returns a DataFrame indexed by year ('Year'), each year being its
+    window's last.
 
     E.g. for 2025 with mean_years = 10: the mean of the annual means of 2016
     to 2025 inclusive, 10 years of data (1 January 2016 to 31 December
-    2025), labelled '2016-2025'.
+    2025).
     """
-    # Each window: the year and the mean_years - 1 before it
-    windows = [(year - (mean_years - 1), year) for year in headline_years]
-    labels = [f'{first}-{last}' for first, last in windows]
     # Each member's mean over each window
-    return windowed_definition_table(
-        sample, sigmas, warming_definitions.mean_over_years, windows, labels)
+    return definition_timeseries_table(
+        sample, sigmas, warming_definitions.mean_over_years,
+        first_output_year, last_output_year,
+        years_before=mean_years - 1, years_after=0)
 
 
-def cgwl_headline_table(sample, sigmas, headline_years, mean_years):
-    """The CGWL-definition rows of the GWI_results_headlines CSV: the
-    current global warming level (Betts et al., 2023) in each headline
-    year, the mean of mean_years annual means centred on that year,
+def cgwl_timeseries_table(sample, sigmas, first_output_year,
+                          last_output_year, mean_years):
+    """The table of the GWI_results_timeseries-CGWL CSV: in every output
+    year whose window fits, the current global warming level (Betts et al.,
+    2023), the mean of mean_years annual means centred on that year,
     (mean_years - 1) / 2 either side of it.
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    headline_years: the years to give, e.g. [2025]; each window must lie
-        within the sample's years, so after the observations it uses the
-        projected forcing
+    first_output_year, last_output_year: the output years (both included);
+        so the series stops (mean_years - 1) / 2 years before the last,
+        which, after the observations end, uses the projected forcing
     mean_years: how many annual means each window averages, an odd
         number, e.g. gwi.py's CGWL_MEAN_YEARS (which explains the choice)
-    Returns a DataFrame with a row for each year, labelled '<first
-    year>-<last year> (CGWL definition)'.
+    Returns a DataFrame indexed by year ('Year'), each year being its
+    window's centre.
 
     E.g. for 2025 with mean_years = 19: the mean of the annual means of 2016
     to 2034 inclusive, 19 years of data (1 January 2016 to 31 December
-    2034), centred on mid-2025, labelled '2016-2034 (CGWL definition)'.
+    2034), centred on mid-2025.
     """
     # Each window: (mean_years - 1) / 2 years either side of the year
     half = (mean_years - 1) // 2
-    windows = [(year - half, year + half) for year in headline_years]
-    labels = [f'{first}-{last} (CGWL definition)' for first, last in windows]
     # Each member's mean over each window
-    return windowed_definition_table(
-        sample, sigmas, warming_definitions.mean_over_years, windows, labels)
+    return definition_timeseries_table(
+        sample, sigmas, warming_definitions.mean_over_years,
+        first_output_year, last_output_year,
+        years_before=half, years_after=half)
 
 
-def ar6_rate_table(sample, sigmas, first_year, last_year, trend_years):
-    """The table of the GWI_results_rates CSV: in every year from
-    first_year to last_year, the AR6-definition warming rate, the slope (°C
-    per year) of the least-squares line through that year's last
-    trend_years annual means, the year itself included (IPCC AR6 WGI, Ch.
-    3, Table 3.1).
+def ar6_rate_table(sample, sigmas, first_output_year, last_output_year,
+                   trend_years):
+    """The table of the GWI_results_rates CSV: in every output year whose
+    window fits, the AR6-definition warming rate, the slope (°C per year)
+    of the least-squares line through that year's last trend_years annual
+    means, the year itself included (IPCC AR6 WGI, Ch. 3, Table 3.1).
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    first_year, last_year: the years whose rates to give (both included)
+    first_output_year, last_output_year: the output years (both included)
     trend_years: how many annual means each line is fitted through, e.g.
         gwi.py's AR6_RATE_YEARS
     Returns a DataFrame with a row for each year, labelled '<first year of
     its trend>-<year> (AR6 rate definition)', e.g. '2016-2025 (AR6 rate
-    definition)'.
+    definition)', as the rates CSV has always been.
     """
-    # Each year's window: the year and the trend_years - 1 before it
-    years = range(first_year, last_year + 1)
-    windows = [(year - (trend_years - 1), year) for year in years]
-    labels = [f'{first}-{last} (AR6 rate definition)'
-              for first, last in windows]
     # The slope of each member's fitted line through each window
-    return windowed_definition_table(
-        sample, sigmas, warming_definitions.rate_func_vectorised, windows,
-        labels)
+    rates = definition_timeseries_table(
+        sample, sigmas, warming_definitions.rate_func_vectorised,
+        first_output_year, last_output_year,
+        years_before=trend_years - 1, years_after=0)
+    # Each row labelled by its trend's years
+    labels = [f'{year - (trend_years - 1)}-{year} (AR6 rate definition)'
+              for year in rates.index]
+    return headline_rows(rates, rates.index, labels)
+
+
+def headline_rows(timeseries, headline_years, labels):
+    """A definition's timeseries at the headline years, labelled as the
+    GWI_results_headlines CSV labels them.
+
+    timeseries: a DataFrame indexed by year, e.g. from sr15_timeseries_table
+    headline_years: the years to take, each in timeseries' index
+    labels: the rows' names, one per year, e.g. '2016-2025' or '2025 (SR15
+        definition)'
+    Returns a DataFrame with those rows, indexed by the labels ('Year').
+    """
+    # The headline years' rows
+    rows = timeseries.loc[list(headline_years)].copy()
+    # ... named by their labels
+    rows.index = pd.Index(labels, name='Year')
+    return rows

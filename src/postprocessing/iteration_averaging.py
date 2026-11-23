@@ -9,13 +9,28 @@ import src.postprocessing.results_layout as results_layout
 import src.method.warming_definitions as warming_definitions
 
 
+# The GWI result types gwi.py writes, as in their file names,
+# GWI_results_<type>_<...>.csv: the timeseries of each warming definition,
+# the headlines and the rates
+RESULT_TYPES = ('timeseries', 'timeseries-SR15', 'timeseries-AR6',
+                'timeseries-CGWL', 'headlines', 'rates')
+
+
+def is_result_type(file_name, result_type):
+    """Whether a results file is of the given type: its name starts with
+    GWI_results_<type>_."""
+    return file_name.startswith(f'GWI_results_{result_type}_')
+
+
 def range_result_types(base_path):
     """List the result types that have iteration files in one directory.
 
-    Returns the subset of ('timeseries', 'headlines', 'rates') for which
-    base_path -- one regressed-years directory under ITERATIONS_FOLDER --
-    holds at least one file, or [] if the directory does not exist. The
-    directory is listed once, and that one listing answers for all three.
+    Returns the subset of RESULT_TYPES for which base_path -- one
+    regressed-years directory under ITERATIONS_FOLDER -- holds at least one
+    file, or [] if the directory does not exist. The directory is listed
+    once, and that one listing answers for every type. A file is of a type
+    when its name starts with GWI_results_<type>_, so 'timeseries' doesn't
+    also match the timeseries-SR15 files.
 
     In the pipeline: calculate_iteration_averages runs it in a pool, once for
     every regressed-years directory of every scenario, ensemble selection and
@@ -41,10 +56,10 @@ def range_result_types(base_path):
         return []
 
     # any() consumes the generator lazily, so for each result type it stops
-    # at the first file name containing it rather than testing every name.
+    # at the first file name of that type rather than testing every name.
     return [
-        result_type for result_type in ('timeseries', 'headlines', 'rates')
-        if any(result_type in f for f in files)
+        result_type for result_type in RESULT_TYPES
+        if any(is_result_type(f, result_type) for f in files)
         ]
 
 
@@ -204,7 +219,7 @@ def load_iteration_dfs(regressed_years, result_type, scenario,
 
     iteration_files = [
         f for f in os.listdir(base_path)
-        if result_type in f
+        if is_result_type(f, result_type)
     ]
 
     if len(iteration_files) == 0:
