@@ -43,6 +43,10 @@ How the functions connect:
                                       years, labelled for the
                                       GWI_results_headlines CSV, which gwi.py
                                       joins from every definition
+    observed_timeseries_table         a definition's timeseries for the
+                                      observed temperatures: percentiles
+                                      across the observed members, no
+                                      rebuild (Obs_results_timeseries-*)
 
 The arrays' axes are named as in src/method/members.py: t year (or window
 of years), and N the members; `variables` is the axis along
@@ -356,3 +360,45 @@ def headline_rows(timeseries, headline_years, labels):
     # ... named by their labels
     rows.index = pd.Index(labels, name='Year')
     return rows
+
+
+def observed_timeseries_table(df_obs, sigmas, definition, years_before,
+                              years_after):
+    """A warming definition's timeseries for the observed temperatures: its
+    percentiles across the observed members, in every year whose window
+    lies within the observed years.
+
+    df_obs: DataFrame, the observed members' temperatures, indexed by
+        consecutive years, one column per member, (t, o)
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    definition: a warming definition, a function of an array along its
+        first axis, the years, e.g. warming_definitions.mean_over_years
+    years_before, years_after: each year's window, from years_before years
+        before it to years_after years after it
+    Returns a DataFrame indexed by year ('Year'), with a column for each
+    ('Obs', percentile), as the Obs_results_headlines CSV lays them out.
+
+    The observations need no rebuild: the definition is applied to each
+    observed member directly, and the percentiles taken across the members.
+    """
+    # The observed years
+    first_obs_year, last_obs_year = df_obs.index[0], df_obs.index[-1]
+    # The years whose windows lie within them: (t,)
+    years = np.arange(first_obs_year + years_before,
+                      last_obs_year - years_after + 1)
+    # Each observed member's value of the definition in each year's window:
+    # one (o,) array per year, stacked: (t, o)
+    values = np.stack([
+        definition(df_obs.loc[year - years_before:
+                              year + years_after].to_numpy())
+        for year in years])
+    # Their percentiles across the members: (sigmas, t)
+    percentiles = np.percentile(values, sigmas, axis=1)
+    # One CSV column per percentile, each along the years
+    columns = {('Obs', sigma): percentiles[sigmas.index(sigma)]
+               for sigma in sigmas}
+    # The table, one CSV row per year
+    table = pd.DataFrame(columns, index=years)
+    table.columns.names = ['variable', 'percentile']
+    table.index.name = 'Year'
+    return table

@@ -1190,154 +1190,76 @@ if __name__ == "__main__":
             f'{results_folder}{output_path}' +
             f'GWI_results_headlines_{variation}.csv')
 
-    # OBSERVATIONS HEADLINE RESULTS ###########################################
-    if definitions:
-        run_log.log_section(f'Headlines for observations ({headline_years})')
+    # OBSERVATIONS: EVERY DEFINITION ##########################################
+    # The warming definitions applied to the observed temperatures, every
+    # member, with percentiles across them: no rebuild. Each definition's
+    # timeseries is the same for every regression, so it is filed with the
+    # observations themselves; its rows at the headline years go into this
+    # regression's observed headlines CSV, as before. The timeseries CSVs are
+    # written for the definitions the recipe asks for; the headlines take all
+    # five, whatever the recipe asks for: they cost almost nothing, and runs
+    # with different definitions share the observed headlines file (it
+    # doesn't depend on the regressed variables), so each must write the
+    # same contents.
+    run_log.log_section(f'Definitions for observations ({headline_years})')
+    # Each definition: its file name, its function, the years before and
+    # after each year that its window takes, and its headline label
+    half_cgwl = (CGWL_MEAN_YEARS - 1) // 2
+    observed_definitions = {
+        'annual': ('ANNUAL', warming_definitions.annual_value, 0, 0,
+                   lambda year: year),
+        'SR1.5': ('SR15', warming_definitions.final_value_of_trend_vectorised,
+                  SR15_TREND_YEARS - 1, 0,
+                  lambda year: f'{year} (SR15 definition)'),
+        'AR6': ('AR6', warming_definitions.mean_over_years,
+                AR6_MEAN_YEARS - 1, 0,
+                lambda year: f'{year - (AR6_MEAN_YEARS - 1)}-{year}'),
+        'CGWL': ('CGWL', warming_definitions.mean_over_years,
+                 half_cgwl, half_cgwl,
+                 lambda year: (f'{year - half_cgwl}-{year + half_cgwl} '
+                               '(CGWL definition)')),
+        'rates': ('RATES', warming_definitions.rate_func_vectorised,
+                  AR6_RATE_YEARS - 1, 0,
+                  lambda year: (f'{year - (AR6_RATE_YEARS - 1)}-{year} '
+                                '(AR6 rate definition)')),
+    }
+    # The IGCC headline years add 2017 (annual and SR1.5) and 2019 (AR6),
+    # as for the attributed warming
+    igcc_years = {'annual': [2017], 'SR1.5': [2017], 'AR6': [2019]}
 
-        dfs_obs = []
-
-        if 'annual' in definitions:
-            print('Reading annual mean definition temps (Obs)', end=' ')
-
-            hl_years_annual = [y for y in hl_years
-                               if y in df_temp_Obs.index]
-            if ((headline_years == 'IGCC') and
-                (2017 not in hl_years_annual) and
-                (2017 in df_temp_Obs.index)
-                ):
-                hl_years_annual.append(2017)
-
-            for year in hl_years_annual:
-                temp_Obs_annual = df_temp_Obs.loc[year].to_numpy()
-                obs_headline_array = np.percentile(temp_Obs_annual, SIGMAS)
-
-                dict_Results_obs = {
-                    ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
-                    for sigma in SIGMAS
-                }
-
-                df_headlines_obs_i = pd.DataFrame(
-                    dict_Results_obs, index=[year])
-                df_headlines_obs_i.columns.names = ['variable', 'percentile']
-                df_headlines_obs_i.index.name = 'Year'
-                dfs_obs.append(df_headlines_obs_i)
-            print('... done')
-
-        if 'SR1.5' in definitions:
-            print('Calculating SR15-definition temps (Obs)', end=' ')
-
-            hl_years_annual = [y for y in hl_years
-                               if y in df_temp_Obs.index]
-            if ((headline_years == 'IGCC') and
-                (2017 not in hl_years_annual) and
-                (2017 in df_temp_Obs.index)
-                ):
-                hl_years_annual.append(2017)
-
-            for year in hl_years_annual:
-                # The trend's first year (see SR15_TREND_YEARS)
-                first_year = year - (SR15_TREND_YEARS - 1)
-                if ((year in df_temp_Obs.index) and
-                        (first_year in df_temp_Obs.index)):
-                    # The SR15_TREND_YEARS annual means, first_year to year
-                    # (pandas' .loc includes both ends): (SR15_TREND_YEARS,
-                    # observed members)
-                    temp_Obs_SR15_recent = df_temp_Obs.loc[
-                        first_year:year].to_numpy()
-
-                    # Vectorised for consistency with the attributed SR15
-                    # temps above: both paths must use the same estimator, or
-                    # they would disagree at the ~1e-7 rounding level.
-                    results = (
-                        warming_definitions.final_value_of_trend_vectorised(
-                            temp_Obs_SR15_recent))
-
-                    obs_headline_array = np.percentile(results, SIGMAS)
-
-                    dict_Results_obs = {
-                        ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
-                        for sigma in SIGMAS
-                    }
-
-                    df_headlines_obs_i = pd.DataFrame(
-                        dict_Results_obs, index=[f'{year} (SR15 definition)'])
-                    df_headlines_obs_i.columns.names = ['variable', 'percentile']
-                    df_headlines_obs_i.index.name = 'Year'
-                    dfs_obs.append(df_headlines_obs_i)
-            print('... done')
-
-        if 'AR6' in definitions:
-            print('Calculating AR6-definition temps (Obs)', end=' ')
-
-            # The headline years whose whole window is observed
-            hl_years_decadal = [y for y in hl_years
-                                if ((y in df_temp_Obs.index) and
-                                    (y - (AR6_MEAN_YEARS - 1)
-                                     in df_temp_Obs.index))]
-            if ((headline_years == 'IGCC') and
-                (2019 not in hl_years_decadal) and
-                (2019 in df_temp_Obs.index) and
-                (2019 - (AR6_MEAN_YEARS - 1) in df_temp_Obs.index)):
-
-                hl_years_decadal.append(2019)
-
-            for year in hl_years_decadal:
-                # The window's first year (see AR6_MEAN_YEARS)
-                first_year = year - (AR6_MEAN_YEARS - 1)
-                # Each observed member's mean over the window (pandas' .loc
-                # includes both ends): (observed members,)
-                temp_Obs_AR6 = df_temp_Obs.loc[first_year:year].mean(axis=0
-                                                                     ).to_numpy()
-
-                obs_headline_array = np.percentile(temp_Obs_AR6, SIGMAS)
-
-                dict_Results_obs = {
-                    ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
-                    for sigma in SIGMAS
-                }
-
-                df_headlines_obs_i = pd.DataFrame(
-                    dict_Results_obs, index=[f'{first_year}-{year}'])
-                df_headlines_obs_i.columns.names = ['variable', 'percentile']
-                df_headlines_obs_i.index.name = 'Year'
-                dfs_obs.append(df_headlines_obs_i)
-            print('... done')
-
-        if 'CGWL' in definitions:
-            print('Calculating CGWL-definition temps (Obs)', end=' ')
-
-            for year in hl_years:
-                # The window's first and last years (see CGWL_MEAN_YEARS)
-                first_year = year - (CGWL_MEAN_YEARS - 1) // 2
-                last_year = year + (CGWL_MEAN_YEARS - 1) // 2
-                if ((first_year in df_temp_Obs.index) and
-                        (last_year in df_temp_Obs.index)):
-                    # Each observed member's mean over the window (pandas'
-                    # .loc includes both ends): (observed members,)
-                    temp_Obs_CGWL = df_temp_Obs.loc[
-                        first_year:last_year].mean(axis=0).to_numpy()
-
-                    obs_headline_array = np.percentile(temp_Obs_CGWL, SIGMAS)
-
-                    dict_Results_obs = {
-                        ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
-                        for sigma in SIGMAS
-                    }
-
-                    df_headlines_obs_i = pd.DataFrame(
-                        dict_Results_obs,
-                        index=[f'{first_year}-{last_year} (CGWL definition)'])
-                    df_headlines_obs_i.columns.names = ['variable', 'percentile']
-                    df_headlines_obs_i.index.name = 'Year'
-                    dfs_obs.append(df_headlines_obs_i)
-            print('... done')
-
-        if dfs_obs:
-            df_headlines_obs = pd.concat(dfs_obs, axis=0)
+    dfs_obs = []
+    for name in observed_definitions:
+        file_name, definition, years_before, years_after, label = (
+            observed_definitions[name])
+        print(f'Calculating {name}-definition temps (Obs)', end=' ')
+        # The definition's timeseries for the observations
+        df_obs_timeseries = summaries.observed_timeseries_table(
+            df_temp_Obs, SIGMAS, definition, years_before, years_after)
+        # ... written if the recipe asks for the definition
+        if name in definitions:
             results_layout.write_csv(
-                df_headlines_obs,
-                f'{results_folder_obs}{out_path_obs}' +
-                f'Obs_results_headlines_{variation_obs}.csv')
+                df_obs_timeseries,
+                f'{results_folder_obs}{out_path_obs_timeseries}' +
+                f'Obs_results_timeseries-{file_name}_{variation_obs}.csv')
+        # The headline years it has a value for (its whole window observed)
+        obs_years = list(hl_years)
+        if headline_years == 'IGCC':
+            obs_years += [y for y in igcc_years.get(name, [])
+                          if y not in obs_years]
+        obs_years = [y for y in obs_years if y in df_obs_timeseries.index]
+        # Its rows at those years, for the observed headlines CSV
+        if obs_years:
+            dfs_obs.append(summaries.headline_rows(
+                df_obs_timeseries, obs_years,
+                [label(year) for year in obs_years]))
+        print('... done')
+
+    if dfs_obs:
+        df_headlines_obs = pd.concat(dfs_obs, axis=0)
+        results_layout.write_csv(
+            df_headlines_obs,
+            f'{results_folder_obs}{out_path_obs}' +
+            f'Obs_results_headlines_{variation_obs}.csv')
 
 
     # What the run actually cost, to sit alongside the 'Memory usage
