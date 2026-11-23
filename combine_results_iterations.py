@@ -274,7 +274,8 @@ def overarching_base_result_plotter(
 
                 ###############################################################
                 # 3. Plot Priors Timeseries
-                if results_reading.priors_available(priors_dfs, scen, ens):
+                if results_reading.priors_available(priors_dfs, scen, ens,
+                                                    reg_vars):
                     print('        Plotting figure_timeseries for PRIORS')
                     figures_base.figure_priors_timeseries(
                         scen, ens, reg_vars, priors_dfs, obs_dfs,  params)

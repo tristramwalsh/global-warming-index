@@ -407,7 +407,8 @@ def figure_constrained_warming(
     else:
         start_regress = 'VAR'
 
-    has_priors = results_reading.priors_available(priors_dfs, scen, ens)
+    has_priors = results_reading.priors_available(priors_dfs, scen, ens,
+                                                  reg_vars)
 
     print('      Creating constrained results')
     # Calculate how the expected final year of the timeseries changes
@@ -445,7 +446,7 @@ def figure_constrained_warming(
     # figure), otherwise from df_constrained itself, which carries the same
     # variables.
     if has_priors:
-        plot_vars_priors = priors_dfs[scen][ens][
+        plot_vars_priors = priors_dfs[scen][ens][reg_vars][
             'timeseries'].columns.get_level_values(0).unique().to_list()
     else:
         plot_vars_priors = df_constrained.columns.get_level_values(
@@ -484,12 +485,11 @@ def figure_constrained_warming(
 
     for vv in (plot_vars_priors if has_priors else []):
         # Plot the multi-method assessed results for the 2010-2019 period
-        med_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
-                                                            (vv, '50')]
-        min_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
-                                                            (vv, '5')]
-        max_prior = priors_dfs[scen][ens]['timeseries'].loc[constrained_year,
-                                                            (vv, '95')]
+        # This selection's prior warming
+        df_prior = priors_dfs[scen][ens][reg_vars]['timeseries']
+        med_prior = df_prior.loc[constrained_year, (vv, '50')]
+        min_prior = df_prior.loc[constrained_year, (vv, '5')]
+        max_prior = df_prior.loc[constrained_year, (vv, '95')]
 
         ax2.fill_between(
             [params['plot_vars'].index(vv),

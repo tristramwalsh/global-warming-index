@@ -927,7 +927,8 @@ def figure_priors_timeseries(
 ):
     """Plot timeseries for PRIOR warming."""
     figure_plume_timeseries(
-        priors_dfs[scen][ens]['timeseries'], obs_dfs[scen][ens]['timeseries'],
+        priors_dfs[scen][ens][reg_vars]['timeseries'],
+        obs_dfs[scen][ens]['timeseries'],
         scen, ens, reg_vars, params,
         title='Prior Warming Timeseries', ylabel=None, start_year=1850,
         folder='priors', file_prefix='Prior_Timeseries')
@@ -939,7 +940,7 @@ def figure_erf_timeseries(
 ):
     """Plot timeseries for ERF."""
     figure_plume_timeseries(
-        erf_dfs[scen][ens]['timeseries'], None,
+        erf_dfs[scen][ens][reg_vars]['timeseries'], None,
         scen, ens, reg_vars, params,
         title='Effective Radiative Forcing Timeseries',
         ylabel='Effective Radiative Forcing (W m⁻²)', start_year=1750,

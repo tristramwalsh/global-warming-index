@@ -494,17 +494,21 @@ if __name__ == "__main__":
         f'VARIABLES--{"-".join(regress_vars)}/' +
         f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
     )
-    # Prior (unconstrained) warming
+    # Prior (unconstrained) warming, under the regressed variables like the
+    # GWI's: its variables are the forcing variables they give, so runs with
+    # different regressed variables mustn't share a file
     output_path_priors = (
         f'ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
+        f'VARIABLES--{"-".join(regress_vars)}/'
     )
-    # ERF percentiles
+    # ERF percentiles, likewise under the regressed variables
     output_path_erfs = (
         f'ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
+        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
+        f'VARIABLES--{"-".join(regress_vars)}/'
     )
     # Observation headlines, for the headline years of this regression
     out_path_obs = (
@@ -909,6 +913,7 @@ if __name__ == "__main__":
     variation_priors = (
         f'ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
+        f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{full_prior_size}_'
     )
     full_erf_size = (
@@ -917,6 +922,7 @@ if __name__ == "__main__":
     variation_erfs = (
         f'ERF--{erf_id}_GMT--{gmt_id}_' +
         f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
+        f'VARIABLES--{"-".join(regress_vars)}_' +
         f'ENSEMBLE-SIZE--{full_erf_size}_'
     )
     full_obs_size = (df_temp_Obs.shape[1])

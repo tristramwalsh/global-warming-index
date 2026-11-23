@@ -174,24 +174,6 @@ def load_gwi_priors_erf_obs():
             erf_files[scenario].update({ensemble_selection: {}})
             obs_files[scenario].update({ensemble_selection: {}})
 
-            # Load priors files
-            _path_prior_dir = (f'{results_layout.PRIORS_FOLDER}/' +
-                               f'{scenario}/' +
-                               f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            _path_erf_dir = (f'{results_layout.ERFS_FOLDER}/' +
-                             f'{scenario}/' +
-                             f'ENSEMBLE-MEMBER--{ensemble_selection}/')
-            if os.path.exists(_path_prior_dir):
-                for f in os.listdir(_path_prior_dir):
-                    if f.startswith('PRIOR_results_timeseries_'):
-                        priors_files[scenario][ensemble_selection][
-                            'timeseries'] = os.path.join(_path_prior_dir, f)
-            if os.path.exists(_path_erf_dir):
-                for f in os.listdir(_path_erf_dir):
-                    if f.startswith('ERF_results_timeseries_'):
-                        erf_files[scenario][ensemble_selection][
-                            'timeseries'] = os.path.join(_path_erf_dir, f)
-
             _path = (f'{results_layout.AGGREGATED_FOLDER}/' +
                      f'{scenario}/' +
                      f'ENSEMBLE-MEMBER--{ensemble_selection}/')
@@ -202,6 +184,34 @@ def load_gwi_priors_erf_obs():
             for regressed_vars in regressed_variables_all:
                 results_files[scenario][ensemble_selection].update(
                     {regressed_vars: {}})
+                priors_files[scenario][ensemble_selection].update(
+                    {regressed_vars: {}})
+                erf_files[scenario][ensemble_selection].update(
+                    {regressed_vars: {}})
+
+                # The priors and ERF files, under the same regressed
+                # variables (their variables are the forcing variables those
+                # give)
+                _path_prior_dir = (f'{results_layout.PRIORS_FOLDER}/' +
+                                   f'{scenario}/' +
+                                   f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
+                                   f'VARIABLES--{regressed_vars}/')
+                _path_erf_dir = (f'{results_layout.ERFS_FOLDER}/' +
+                                 f'{scenario}/' +
+                                 f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
+                                 f'VARIABLES--{regressed_vars}/')
+                if os.path.exists(_path_prior_dir):
+                    for f in os.listdir(_path_prior_dir):
+                        if f.startswith('PRIOR_results_timeseries_'):
+                            priors_files[scenario][ensemble_selection][
+                                regressed_vars]['timeseries'] = (
+                                    os.path.join(_path_prior_dir, f))
+                if os.path.exists(_path_erf_dir):
+                    for f in os.listdir(_path_erf_dir):
+                        if f.startswith('ERF_results_timeseries_'):
+                            erf_files[scenario][ensemble_selection][
+                                regressed_vars]['timeseries'] = (
+                                    os.path.join(_path_erf_dir, f))
 
                 _path = (f'{results_layout.AGGREGATED_FOLDER}/' +
                          f'{scenario}/' +
@@ -430,8 +440,9 @@ def headline_var_available(df, period, var, context=''):
         "(eg a truncation range extending beyond the observations).")
 
 
-def priors_available(priors_dfs, scen, ens):
-    """Whether prior warming results exist for this scenario/ensemble.
+def priors_available(priors_dfs, scen, ens, reg_vars):
+    """Whether prior warming results exist for this scenario, ensemble
+    selection and set of regressed variables.
 
     gwi.py always writes the prior dataset now, but results written before
     (when it had a --calculate-priors-output option) may lack it. The priors
@@ -441,4 +452,5 @@ def priors_available(priors_dfs, scen, ens):
     Checks the value rather than just the key, because load_nested_dfs maps a
     path that no longer exists to None.
     """
-    return priors_dfs.get(scen, {}).get(ens, {}).get('timeseries') is not None
+    return (priors_dfs.get(scen, {}).get(ens, {}).get(reg_vars, {})
+            .get('timeseries') is not None)
