@@ -2,15 +2,16 @@
 
 The axes are named as everywhere in the engine:
 
-    p  FaIR parameter set
-    e  ERF ensemble member
-    o  observed GMT member
-    c  piControl segment
+    p  FaIR parameter set           P of them
+    e  ERF ensemble member          E
+    o  observed GMT member          O
+    c  piControl segment            C
 
-A member is one choice of each source of uncertainty, (p, e, o, c). A design
-returns the members to rebuild as four integer index arrays of the same
-length N: member n is (p[n], e[n], o[n], c[n]), and its position n is its
-place along the results array's member axis.
+A member is one choice of each source of uncertainty: one position along
+each axis. A design returns the members to rebuild as their member index:
+four integer arrays of the same length N, (p, e, o, c), member n being
+(p[n], e[n], o[n], c[n]); n is its place along the member axis (see
+src/method/members.py).
 """
 
 import numpy as np
@@ -23,9 +24,9 @@ def cube(params, erf, obs, pic):
         integer positions along its axis (p, e, o and c), in the order
         wanted: e.g. np.arange(P) for every parameter set, or a random draw
         of positions for the ERF members
-    Returns (p, e, o, c), four integer arrays of length
-    N = len(params) · len(erf) · len(obs) · len(pic): member n is
-    (p[n], e[n], o[n], c[n]), positions along the full axes.
+    Returns the member index, (p, e, o, c): four integer arrays of length
+    N = len(params) · len(erf) · len(obs) · len(pic), positions along the
+    whole axes, member n being (p[n], e[n], o[n], c[n]).
 
     The members are ordered with the parameter sets varying slowest and the
     piControl segments fastest, each source in the order given:
@@ -33,9 +34,9 @@ def cube(params, erf, obs, pic):
         n = ((i · E + j) · O + l) · C + m,
         member n = (params[i], erf[j], obs[l], pic[m])
 
-    where E, O and C are the lengths of erf, obs and pic. So the results
-    array's member axis holds one block per parameter set, one sub-block per
-    ERF member within it, and so on.
+    where here E, O and C are the lengths of erf, obs and pic (the drawn
+    members, not the whole axes). So the member axis holds one block per
+    parameter set, one sub-block per ERF member within it, and so on.
 
     The legacy "cube" design draws a random subset of the ERF members, the
     observed members and the piControl segments (each up to --samples

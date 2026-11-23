@@ -53,6 +53,7 @@ sys.path.insert(0, str(REPO))
 
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair  # noqa: E402
 import src.inputs.input_datasets as datasets  # noqa: E402
+import src.method.members as members  # noqa: E402
 import src.method.sampling as sampling  # noqa: E402
 from src.method.variables import SUB_VAR_MAPPING  # noqa: E402
 
@@ -317,17 +318,21 @@ def engine_gwi(inputs):
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
         start_regress=inputs['regress'][0], end_regress=inputs['regress'][1])
-    # Stage C, the sample: every member, built
-    return gwi.build_sample(
+    # The observed members, lined up with the forcing years: (t, o)
+    T_obs = inputs['df_temp_Obs'].reindex(inputs['df_forc'].index).to_numpy()
+    # Stage C, the sample: every member
+    sample = members.Sample(
         T_mod=T_mod,
-        forcing_vars=forcing_vars,
-        forc_Yrs=forc_Yrs,
         coefs=coefs,
-        df_temp_Obs=inputs['df_temp_Obs'],
+        T_obs=T_obs,
         member_index=member_index,
+        forcing_vars=forcing_vars,
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
-        start_trunc=inputs['trunc'][0], end_trunc=inputs['trunc'][1])
+        years=forc_Yrs)
+    # Every member over every output year: (t, variables, N)
+    return (sample.attributed_warming(inputs['trunc'][0], inputs['trunc'][1]),
+            sample.output_vars)
 
 
 ###############################################################################

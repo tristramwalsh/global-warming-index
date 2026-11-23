@@ -19,6 +19,7 @@ import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
 import src.method.warming_definitions as warming_definitions
+import src.outputs.summaries as summaries
 import src.inputs.input_datasets as datasets
 
 import models.AR5_IR.AR5_IR as AR5_IR
@@ -146,72 +147,6 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
     return coefs
 
 
-def build_sample(T_mod, forcing_vars, forc_Yrs, coefs, df_temp_Obs,
-                 member_index, regress_vars, inc_reg_const, start_trunc,
-                 end_trunc):
-    """Stage C: build the sample, the attributed warming of every member
-    drawn from the full ensemble (by a sampling design, see
-    src/method/sampling.py), into the results array. Each member is rebuilt
-    from the pieces, stage A's modelled warming and stage B's scaling
-    factors (see src/method/members.py).
-
-    The sample is what every output summarises. A subsample is a selection
-    from it, e.g. members picked from it to be written out individually.
-
-    The axes are as for constrain.
-
-    T_mod: array (p, e, t, v), stage A's modelled warming (see
-        modelled_warming)
-    forcing_vars: the names along its v axis
-    forc_Yrs: the years along its t axis
-    coefs: regression.Coefficients from constrain: obs (p, e, o, k) and pic
-        (p, e, c, k)
-    df_temp_Obs: every observed GMT member (columns, in the order of the o
-        axis), indexed by year: for each member's residual
-    member_index: the members to rebuild, (p, e, o, c): four integer arrays
-        of length N, positions along those axes, e.g. from a sampling design
-        (see src/method/sampling.py); member n goes to position n of the
-        results' member axis
-    regress_vars: the regressed variables, in the order of the k axis
-    inc_reg_const: whether the regression has a constant term (the last
-        regressor)
-    start_trunc, end_trunc: the output years (both included)
-    Returns (temp_Att_Results, output_vars): every member's attributed
-    warming over the output years, an array (t, variables, N) in float32,
-    and the names along its variable axis.
-    """
-    # The variables along the results array's variable axis: the forcing
-    # variables, then the diagnosed variables (Ant, Tot, Res) that are not
-    # among them
-    output_vars = attribution.attribution_output_vars(forcing_vars,
-                                                      regress_vars)
-
-    # Which forcing years are in the output (the truncation years)
-    in_trunc_forc = (forc_Yrs >= start_trunc) & (forc_Yrs <= end_trunc)
-    # The modelled warming over those years: (p, e, t, v)
-    T_mod_trunc = T_mod[:, :, in_trunc_forc, :]
-    # The observed members over the output years, NaN in years after the
-    # observations end: (t, o)
-    T_obs_trunc = df_temp_Obs.reindex(
-        np.arange(start_trunc, end_trunc + 1)).to_numpy()
-    # The results array, after checking it fits in memory: (t, variables, N).
-    # float32 halves its memory against float64; its precision, about 7
-    # significant digits (~1e-7 °C on warming of order 1 °C), is far finer
-    # than any output reports
-    temp_Att_Results = compute_resources.results_array(
-        shape=(end_trunc - start_trunc + 1,  # years, after truncation
-               len(output_vars),  # attributed warming variables
-               len(member_index[0])),  # members
-        dtype=np.float32)
-    # Rebuild every member into it, in blocks, over the job's CPUs
-    members.rebuild_into(temp_Att_Results, T_mod_trunc, coefs, T_obs_trunc,
-                         member_index, forcing_vars, regress_vars,
-                         inc_reg_const, output_vars,
-                         n_threads=compute_resources.n_workers())
-
-    return temp_Att_Results, output_vars
-
-
 ###############################################################################
 # MAIN CODE BODY ##############################################################
 ###############################################################################
@@ -221,12 +156,14 @@ if __name__ == "__main__":
     time_alpha = dt.datetime.now()
 
     # Percentiles to calculate and use throughout analysis.
-    # sigmas = [[32, 68], [5, 95], [0.3, 99.7]]
+    # SIGMA_RANGES = [[32, 68], [5, 95], [0.3, 99.7]]
     # These are the percentile ranges used in the IPCC likelihood statements:
     # Typically, 17-83 is likely range, and 5-95 is very likely range.
-    sigmas = [[17, 83], [5, 95]]
-    sigmas_all = list(
-        np.concatenate((np.sort(np.ravel(sigmas)), [50]), axis=0)
+    SIGMA_RANGES = [[17, 83], [5, 95]]
+    # Every percentile the outputs give: the ends of the ranges, sorted, then
+    # the median; this order is the order of the CSVs' percentile columns
+    SIGMAS = list(
+        np.concatenate((np.sort(np.ravel(SIGMA_RANGES)), [50]), axis=0)
         )
 
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
@@ -815,7 +752,8 @@ if __name__ == "__main__":
     print(f'Internal variability ensembles pruned: {len(pic_drawn)}')
 
     # The sample's members: every combination of the drawn members (the
-    # cube design), as four arrays of positions (p, e, o, c), each (N,)
+    # cube design), as the member index (p, e, o, c): four arrays of
+    # positions along the whole axes, each (N,)
     member_index = sampling.cube(params_drawn, erf_drawn, obs_drawn,
                                  pic_drawn)
 
@@ -856,20 +794,31 @@ if __name__ == "__main__":
         start_regress=start_regress,
         end_regress=end_regress,
     )
-    # Stage C, the sample: the attributed warming of every drawn member,
-    # (t, variables, N), and the names along its variable axis
-    temp_Att_Results, vars_list = build_sample(
+    # Stage C, the sample: every drawn member, ready to be rebuilt for any
+    # block of years. The observed members are lined up with the forcing
+    # years (stage A's t axis), NaN after the observations end: (t, o)
+    T_obs = df_temp_Obs.reindex(df_forc.index).to_numpy()
+    sample = members.Sample(
         T_mod=T_mod,
-        forcing_vars=forcing_vars,
-        forc_Yrs=df_forc.index.to_numpy(),
         coefs=coefs,
-        df_temp_Obs=df_temp_Obs,
+        T_obs=T_obs,
         member_index=member_index,
+        forcing_vars=forcing_vars,
         regress_vars=regress_vars,
         inc_reg_const=inc_reg_const,
-        start_trunc=start_trunc,
-        end_trunc=end_trunc,
+        years=df_forc.index.to_numpy(),
+        n_threads=compute_resources.n_workers(),
     )
+    # The names along the members' variable axis
+    vars_list = sample.output_vars
+    # Every member over every output year, for the outputs that still take
+    # them all at once (headlines and rates), after checking they fit in
+    # memory: (t, variables, N)
+    temp_Att_Results = compute_resources.results_array(
+        shape=(end_trunc - start_trunc + 1, len(vars_list),
+               sample.n_members),
+        dtype=members.MEMBER_DTYPE)
+    sample.attributed_warming(start_trunc, end_trunc, into=temp_Att_Results)
     T1b = dt.datetime.now()
     run_log.log_section('Timeseries')
     print(f'Calculating GWI ... took {T1b - T1a}')
@@ -900,7 +849,9 @@ if __name__ == "__main__":
     # attribution's members use (each pair as one number, p · E + e)
     n_erf = T_mod.shape[1]
     n_pairs = T_mod.shape[0] * n_erf
-    pairs_used = np.unique(member_index[0] * n_erf + member_index[1])
+    # Each member's parameter set and ERF member: two (N,)
+    p, e = member_index[:2]
+    pairs_used = np.unique(p * n_erf + e)
     print(f'The priors are every (parameter set, ERF member) pair, '
           f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
           f'which may differ from the pairs the attribution samples: its '
@@ -951,16 +902,10 @@ if __name__ == "__main__":
 
     # TIMESERIES RESULTS ######################################################
     print('Calculating percentiles for GWI', end=' ')
-    gwi_timeseries_array = compute_resources.percentile_threaded(
-        temp_Att_Results, sigmas_all, axis=2)
-    dict_Results = {
-        (var, sigma):
-        gwi_timeseries_array[sigmas_all.index(sigma), :, vars_list.index(var)]
-        for var in vars_list for sigma in sigmas_all
-    }
-    df_Results = pd.DataFrame(dict_Results, index=trunc_Yrs)
-    df_Results.columns.names = ['variable', 'percentile']
-    df_Results.index.name = 'Year'
+    # The percentiles of every output year, from the members rebuilt one
+    # block of years at a time
+    df_Results = summaries.gwi_timeseries_table(
+        sample, SIGMAS, start_trunc, end_trunc)
     gwi_filename = (f'{results_folder}{output_path}' +
                     f'GWI_results_timeseries_{variation}.csv')
     results_layout.write_csv(df_Results, gwi_filename)
@@ -973,12 +918,12 @@ if __name__ == "__main__":
     # The percentiles over every parameter set and ERF member:
     # (n_sigmas, years, v'), laid out as for the GWI
     priors_timeseries_array = np.percentile(
-        T_prior, sigmas_all, axis=(0, 1))
+        T_prior, SIGMAS, axis=(0, 1))
     dict_Results_priors = {
         (var, sigma):
         priors_timeseries_array[
-            sigmas_all.index(sigma), :, prior_vars_all.index(var)]
-        for var in prior_vars_all for sigma in sigmas_all
+            SIGMAS.index(sigma), :, prior_vars_all.index(var)]
+        for var in prior_vars_all for sigma in SIGMAS
     }
     df_Results_priors = pd.DataFrame(
         dict_Results_priors, index=df_forc.index.to_numpy())
@@ -1005,11 +950,11 @@ if __name__ == "__main__":
         erf_all, forcing_vars, regress_vars)
     # The percentiles over the ERF members: (n_sigmas, years, v'), laid out
     # as for the GWI and the priors
-    erf_timeseries_array = np.percentile(erf_all, sigmas_all, axis=1)
+    erf_timeseries_array = np.percentile(erf_all, SIGMAS, axis=1)
     dict_Results_ERF = {
         (var, sigma):
-        erf_timeseries_array[sigmas_all.index(sigma), :, erf_vars.index(var)]
-        for var in erf_vars for sigma in sigmas_all
+        erf_timeseries_array[SIGMAS.index(sigma), :, erf_vars.index(var)]
+        for var in erf_vars for sigma in SIGMAS
     }
     df_Results_ERF = pd.DataFrame(
         dict_Results_ERF, index=df_forc.index.to_numpy())
@@ -1091,11 +1036,11 @@ if __name__ == "__main__":
 
             # Obtain statistics
             gwi_headline_array = compute_resources.percentile_threaded(
-                temp_Att_Results_SR15, sigmas_all, axis=1)
+                temp_Att_Results_SR15, SIGMAS, axis=1)
             dict_Results = {
-                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
                                                  vars_list.index(var)]
-                for var in vars_list for sigma in sigmas_all
+                for var in vars_list for sigma in SIGMAS
             }
             df_headlines_i = pd.DataFrame(
                 dict_Results, index=[f'{year} (SR15 definition)'])
@@ -1135,11 +1080,11 @@ if __name__ == "__main__":
 
             # Obtain statistics
             gwi_headline_array = compute_resources.percentile_threaded(
-                temp_Att_Results_AR6, sigmas_all, axis=1)
+                temp_Att_Results_AR6, SIGMAS, axis=1)
             dict_Results = {
-                (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
                                                  vars_list.index(var)]
-                for var in vars_list for sigma in sigmas_all
+                for var in vars_list for sigma in SIGMAS
             }
             df_headlines_i = pd.DataFrame(
                 dict_Results, index=['-'.join([str(year-9), str(year)])])
@@ -1178,11 +1123,11 @@ if __name__ == "__main__":
                     temp_Att_Results[recent_years, :, :].mean(axis=0)
                 # Obtain statistics
                 gwi_headline_array = compute_resources.percentile_threaded(
-                    temp_Att_Results_CGWL, sigmas_all, axis=1)
+                    temp_Att_Results_CGWL, SIGMAS, axis=1)
                 dict_Results = {
-                    (var, sigma): gwi_headline_array[sigmas_all.index(sigma),
+                    (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
                                                     vars_list.index(var)]
-                    for var in vars_list for sigma in sigmas_all
+                    for var in vars_list for sigma in SIGMAS
                 }
                 df_headlines_i = pd.DataFrame(
                     dict_Results, index=[
@@ -1220,11 +1165,11 @@ if __name__ == "__main__":
 
             for year in hl_years_annual:
                 temp_Obs_annual = df_temp_Obs.loc[year].to_numpy()
-                obs_headline_array = np.percentile(temp_Obs_annual, sigmas_all)
+                obs_headline_array = np.percentile(temp_Obs_annual, SIGMAS)
 
                 dict_Results_obs = {
-                    ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
-                    for sigma in sigmas_all
+                    ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
+                    for sigma in SIGMAS
                 }
 
                 df_headlines_obs_i = pd.DataFrame(
@@ -1257,11 +1202,11 @@ if __name__ == "__main__":
                         warming_definitions.final_value_of_trend_vectorised(
                             temp_Obs_SR15_recent))
 
-                    obs_headline_array = np.percentile(results, sigmas_all)
+                    obs_headline_array = np.percentile(results, SIGMAS)
 
                     dict_Results_obs = {
-                        ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
-                        for sigma in sigmas_all
+                        ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
+                        for sigma in SIGMAS
                     }
 
                     df_headlines_obs_i = pd.DataFrame(
@@ -1288,11 +1233,11 @@ if __name__ == "__main__":
                 temp_Obs_AR6 = df_temp_Obs.loc[year-9:year].mean(axis=0
                                                                  ).to_numpy()
 
-                obs_headline_array = np.percentile(temp_Obs_AR6, sigmas_all)
+                obs_headline_array = np.percentile(temp_Obs_AR6, SIGMAS)
 
                 dict_Results_obs = {
-                    ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
-                    for sigma in sigmas_all
+                    ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
+                    for sigma in SIGMAS
                 }
 
                 df_headlines_obs_i = pd.DataFrame(
@@ -1309,11 +1254,11 @@ if __name__ == "__main__":
                 if ((year-9 in df_temp_Obs.index) and (year+10 in df_temp_Obs.index)):
                     temp_Obs_CGWL = df_temp_Obs.loc[year-9:year+10].mean(axis=0).to_numpy()
 
-                    obs_headline_array = np.percentile(temp_Obs_CGWL, sigmas_all)
+                    obs_headline_array = np.percentile(temp_Obs_CGWL, SIGMAS)
 
                     dict_Results_obs = {
-                        ('Obs', sigma): obs_headline_array[sigmas_all.index(sigma)]
-                        for sigma in sigmas_all
+                        ('Obs', sigma): obs_headline_array[SIGMAS.index(sigma)]
+                        for sigma in SIGMAS
                     }
 
                     df_headlines_obs_i = pd.DataFrame(
@@ -1354,11 +1299,11 @@ if __name__ == "__main__":
 
             # Obtain statistics
             gwi_rate_array = compute_resources.percentile_threaded(
-                temp_Rate_Results, sigmas_all, axis=1)
+                temp_Rate_Results, SIGMAS, axis=1)
             dict_Results = {
                 (var, sigma):
-                gwi_rate_array[sigmas_all.index(sigma), vars_list.index(var)]
-                for var in vars_list for sigma in sigmas_all
+                gwi_rate_array[SIGMAS.index(sigma), vars_list.index(var)]
+                for var in vars_list for sigma in SIGMAS
             }
             df_rates_i = pd.DataFrame(
                 dict_Results, index=[f'{year-9}-{year} (AR6 rate definition)'])
