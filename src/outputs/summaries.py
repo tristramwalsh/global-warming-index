@@ -1,23 +1,46 @@
 """Percentile summaries of the sample: the GWI's CSV outputs.
 
-Every summary is a reduction along the member axis: for each year and
-variable, the percentiles of that year's and variable's attributed warming
-across the sample's N members (see src/method/members.py). The members are
-rebuilt one block of years at a time (members.Sample.attributed_warming), so
-the members of every year are never held at once. The summaries don't
-depend on the block size: each year's and variable's percentiles come from
-all N of its members, whichever block the year is in.
+Every summary is a reduction along the member axis: for each year (or
+window of years) and variable, the percentiles across the sample's N
+members (see src/method/members.py). Two kinds:
+- the timeseries: each member's attributed warming, rebuilt one block of
+  years at a time (members.Sample.attributed_warming);
+- the headline definitions and rates, all linear in time (a mean over a
+  window, the end point or slope of a line fitted through it): each
+  member's summary of each window, rebuilt from T_mod and T_obs summarised
+  first, one block of windows at a time
+  (members.Sample.attributed_definition).
+So the members of every year are never held at once, and the summaries
+don't depend on the block size.
 
-The arrays' axes are named as in src/method/members.py: t year, and N the
-members; `variables` is the axis along sample.output_vars, and `sigmas` the
-axis along the percentiles asked for.
+How the functions connect:
+    percentiles_by_year_and_variable  members (t, variables, N) ->
+                                      percentiles (sigmas, t, variables)
+    percentiles_as_csv_table          percentiles -> a DataFrame laid out
+                                      as the CSVs are (a row per year or
+                                      window, a column per (variable,
+                                      percentile))
+    gwi_timeseries_table              the GWI_results_timeseries CSV: both
+                                      of the above, over blocks of years
+    windowed_definition_table         the same for any definition linear in
+                                      time, over a list of windows
+    sr15_headline_table,              the SR1.5, AR6 and CGWL rows of the
+    ar6_headline_table,               GWI_results_headlines CSV (which gwi.py
+    cgwl_headline_table               joins with the annual rows, taken from
+                                      the timeseries), and the
+    ar6_rate_table                    GWI_results_rates CSV: each names its
+                                      windows, labels and definition, and
+                                      calls windowed_definition_table
+
+The arrays' axes are named as in src/method/members.py: t year (or window
+of years), and N the members; `variables` is the axis along
+sample.output_vars, and `sigmas` the axis along the percentiles asked for.
 """
 
 import numpy as np
 import pandas as pd
 
 import src.infrastructure.compute_resources as compute_resources
-import src.method.members as members
 import src.method.warming_definitions as warming_definitions
 
 
@@ -46,45 +69,16 @@ def years_per_block(sample):
     return max(1, sample.n_threads // len(sample.output_vars))
 
 
-def largest_block_bytes(sample, headline_windows, rate_years=None):
-    """The most memory any summary the run gives holds at once, and which
-    one: the rebuilt members it works on, and what it makes from them.
+def block_bytes(sample):
+    """The most memory a summary here holds at once: a block of
+    years_per_block years (or windows) of every member, and the copy the
+    percentiles make of it, 2 × years_per_block × sample.bytes_per_year.
 
     sample: members.Sample
-    headline_windows: the window lengths in years of the headlines the run
-        gives, e.g. gwi.py's SR15_TREND_YEARS and AR6_MEAN_YEARS; empty if
-        it gives none (or only the annual one, which reads the timeseries)
-    rate_years: the rates' window length in years, e.g. gwi.py's
-        AR6_RATE_YEARS; None if the run gives no rates
-    Returns (name, bytes), e.g. ('rates', 4.2e9).
-
-    In units of one year of every member, Y = sample.bytes_per_year, with
-    float64 results w = 2 times larger than MEMBER_DTYPE's, and b years per
-    block (see years_per_block):
-        timeseries  2b Y: a block, and the copy the percentiles make of it
-        headlines   (window + 2w) Y: the longest window, its summary per
-                    member (variables, N), and the percentiles' copy of that
-        rates       (rate_years - 1 + b) Y + 2wb Y: a block with the windows
-                    before it, its slopes, and the percentiles' copy of them
+    The timeseries, the headline definitions and the rates all work in such
+    blocks, so this holds whichever outputs the run gives.
     """
-    # One year of every member's attributed warming
-    year_bytes = sample.bytes_per_year
-    # How much larger a float64 array is than one in MEMBER_DTYPE
-    widen = (np.dtype(np.float64).itemsize /
-             np.dtype(members.MEMBER_DTYPE).itemsize)
-    # How many years each block of the timeseries and the rates holds
-    block_years = years_per_block(sample)
-    # Each summary's most memory at once: the timeseries always, the
-    # headlines and rates if the run gives them
-    blocks = {'timeseries': 2 * block_years * year_bytes}
-    if headline_windows:
-        blocks['headlines'] = (max(headline_windows) + 2 * widen) * year_bytes
-    if rate_years is not None:
-        blocks['rates'] = ((rate_years - 1 + block_years) * year_bytes +
-                           2 * widen * block_years * year_bytes)
-    # The largest of them
-    name = max(blocks, key=blocks.get)
-    return name, int(blocks[name])
+    return 2 * years_per_block(sample) * sample.bytes_per_year
 
 
 def year_blocks(first_year, last_year, years_per_block):
@@ -163,45 +157,71 @@ def gwi_timeseries_table(sample, sigmas, first_year, last_year):
     # Every year's percentiles, the blocks joined along the year axis:
     # (sigmas, t, variables)
     percentiles = np.concatenate(block_percentiles, axis=1)
-    # One CSV column per (variable, percentile), each a timeseries: (t,)
+    # The table, one CSV row per year
+    return percentiles_as_csv_table(percentiles, sigmas, sample.output_vars,
+                                    np.arange(first_year, last_year + 1))
+
+
+def percentiles_as_csv_table(percentiles, sigmas, output_vars, labels):
+    """Percentiles laid out as in the GWI's CSVs: a row for each year (or
+    window), a column for each (variable, percentile).
+
+    percentiles: array (sigmas, t, variables)
+    sigmas: the percentiles taken, e.g. gwi.py's SIGMAS
+    output_vars: the names along the variable axis
+    labels: the rows' names in the CSV's Year column, one per position
+        along t, e.g. the years, or '2016-2025'
+    Returns a DataFrame.
+    """
+    # One CSV column per (variable, percentile), each along t: (t,)
     columns = {
         (var, sigma): percentiles[sigmas.index(sigma), :, v]
-        for v, var in enumerate(sample.output_vars) for sigma in sigmas
+        for v, var in enumerate(output_vars) for sigma in sigmas
     }
-    # The table, one CSV row per year
-    table = pd.DataFrame(columns,
-                         index=np.arange(first_year, last_year + 1))
+    # The table, one CSV row per position along t
+    table = pd.DataFrame(columns, index=labels)
     table.columns.names = ['variable', 'percentile']
     table.index.name = 'Year'
     return table
 
 
-def headline_row(percentiles, sigmas, output_vars, label):
-    """One headline as a one-row table, laid out as in the
-    GWI_results_headlines CSV.
+def windowed_definition_table(sample, sigmas, definition, windows, labels):
+    """The percentiles of a definition linear in time, e.g. the mean over a
+    decade, in each window of years: one CSV row per window.
 
-    percentiles: array (sigmas, variables), the headline's percentiles
-        along the member axis, its variables along output_vars
-    sigmas: the percentiles taken, e.g. gwi.py's SIGMAS
-    output_vars: the names along the variable axis
-    label: the row's name in the CSV's Year column, e.g.
-        '2024 (SR15 definition)'
-    Returns a DataFrame with one row, and a column for each (variable,
-    percentile).
+    sample: members.Sample
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    definition: a function summarising an array along its first axis, the
+        years, and linear (see members.Sample.attributed_definition), e.g.
+        warming_definitions.mean_over_years
+    windows: the windows, (first_year, last_year) pairs, both included
+    labels: the rows' names, one per window
+    Returns a DataFrame (see percentiles_as_csv_table).
+
+    The windows are taken years_per_block at a time: each block rebuilds
+    every member's summary of its windows, (windows, variables, N), and
+    takes their percentiles in one pass over the threads.
     """
-    # One CSV column per (variable, percentile), each a single number
-    columns = {
-        (var, sigma): percentiles[sigmas.index(sigma), v]
-        for v, var in enumerate(output_vars) for sigma in sigmas
-    }
-    # The one-row table
-    row = pd.DataFrame(columns, index=[label])
-    row.columns.names = ['variable', 'percentile']
-    row.index.name = 'Year'
-    return row
+    # How many windows to take at once
+    windows_per_block = years_per_block(sample)
+    # The percentiles of each block of windows: one (sigmas, windows,
+    # variables) array per block
+    block_percentiles = []
+    for start in range(0, len(windows), windows_per_block):
+        # Every member's summary in these windows: (windows, variables, N)
+        members_summary = sample.attributed_definition(
+            definition, windows[start:start + windows_per_block])
+        # Their percentiles: (sigmas, windows, variables)
+        block_percentiles.append(
+            percentiles_by_year_and_variable(members_summary, sigmas))
+    # Every window's percentiles: (sigmas, windows, variables)
+    percentiles = np.concatenate(block_percentiles, axis=1)
+    # The table, one CSV row per window
+    return percentiles_as_csv_table(percentiles, sigmas,
+                                    sample.output_vars, labels)
 
 
-def sr15_headline_rows(sample, sigmas, headline_years, trend_years):
+def sr15_headline_table(sample, sigmas, headline_years, trend_years):
     """The SR1.5-definition rows of the GWI_results_headlines CSV: the
     warming in each headline year as the value, at the middle of that year,
     of the least-squares line through its last trend_years annual means, the
@@ -212,37 +232,25 @@ def sr15_headline_rows(sample, sigmas, headline_years, trend_years):
     headline_years: the years to give, e.g. [2017, 2025]
     trend_years: how many annual means the line is fitted through, e.g.
         gwi.py's SR15_TREND_YEARS (which explains the choice)
-    Returns a list of one-row DataFrames (see headline_row), one per year,
-    labelled '<year> (SR15 definition)'.
+    Returns a DataFrame with a row for each year, labelled '<year> (SR15
+    definition)'.
 
     E.g. for 2025 with trend_years = 15: the annual means of 2011 to 2025
     inclusive, 15 years of data (1 January 2011 to 31 December 2025), with
     points 14 years apart (mid-2011 to mid-2025), read off at mid-2025 (see
     warming_definitions.final_value_of_trend_vectorised). That equals the
     mean of the line extended over the 29 years 2011 to 2039.
-
-    Each year's window of members is rebuilt on its own: (trend_years,
-    variables, N), about 2.0 GiB for 15 years at --samples=60.
     """
-    rows = []
-    for year in headline_years:
-        # Every member's attributed warming over the window, the year and
-        # the trend_years - 1 before it: (trend_years, variables, N)
-        window = sample.attributed_warming(year - (trend_years - 1), year)
-        # Each member's line through the window, along the year axis, at
-        # its final year: (variables, N)
-        trend_end = warming_definitions.final_value_of_trend_vectorised(
-            window)
-        # Its percentiles along the member axis, the variables shared out
-        # over threads: (sigmas, variables)
-        percentiles = compute_resources.percentile_threaded(
-            trend_end, sigmas, axis=1)
-        rows.append(headline_row(percentiles, sigmas, sample.output_vars,
-                                 f'{year} (SR15 definition)'))
-    return rows
+    # Each year's window: the year and the trend_years - 1 before it
+    windows = [(year - (trend_years - 1), year) for year in headline_years]
+    labels = [f'{year} (SR15 definition)' for year in headline_years]
+    # The value of each member's fitted line at the end of each window
+    return windowed_definition_table(
+        sample, sigmas, warming_definitions.final_value_of_trend_vectorised,
+        windows, labels)
 
 
-def ar6_headline_rows(sample, sigmas, headline_years, mean_years):
+def ar6_headline_table(sample, sigmas, headline_years, mean_years):
     """The AR6-definition rows of the GWI_results_headlines CSV: the
     warming over the mean_years years ending in each headline year, the mean
     of their annual means (IPCC AR6 WGI's decadal means).
@@ -252,36 +260,22 @@ def ar6_headline_rows(sample, sigmas, headline_years, mean_years):
     headline_years: the windows' last years, e.g. [2019, 2025]
     mean_years: how many annual means each window averages, e.g. gwi.py's
         AR6_MEAN_YEARS
-    Returns a list of one-row DataFrames (see headline_row), one per
-    window, labelled '<first year>-<last year>'.
+    Returns a DataFrame with a row for each window, labelled '<first
+    year>-<last year>'.
 
     E.g. for 2025 with mean_years = 10: the mean of the annual means of 2016
     to 2025 inclusive, 10 years of data (1 January 2016 to 31 December
     2025), labelled '2016-2025'.
-
-    Each window of members is rebuilt on its own: (mean_years, variables,
-    N), about 1.4 GiB for 10 years at --samples=60.
     """
-    rows = []
-    for year in headline_years:
-        # The window's first year
-        first_year = year - (mean_years - 1)
-        # Every member's attributed warming over the window: (mean_years,
-        # variables, N)
-        window = sample.attributed_warming(first_year, year)
-        # Each member's mean over the window, along the year axis:
-        # (variables, N)
-        window_mean = window.mean(axis=0)
-        # Its percentiles along the member axis, the variables shared out
-        # over threads: (sigmas, variables)
-        percentiles = compute_resources.percentile_threaded(
-            window_mean, sigmas, axis=1)
-        rows.append(headline_row(percentiles, sigmas, sample.output_vars,
-                                 f'{first_year}-{year}'))
-    return rows
+    # Each window: the year and the mean_years - 1 before it
+    windows = [(year - (mean_years - 1), year) for year in headline_years]
+    labels = [f'{first}-{last}' for first, last in windows]
+    # Each member's mean over each window
+    return windowed_definition_table(
+        sample, sigmas, warming_definitions.mean_over_years, windows, labels)
 
 
-def cgwl_headline_rows(sample, sigmas, headline_years, mean_years):
+def cgwl_headline_table(sample, sigmas, headline_years, mean_years):
     """The CGWL-definition rows of the GWI_results_headlines CSV: the
     current global warming level (Betts et al., 2023) in each headline
     year, the mean of mean_years annual means centred on that year,
@@ -294,35 +288,20 @@ def cgwl_headline_rows(sample, sigmas, headline_years, mean_years):
         projected forcing
     mean_years: how many annual means each window averages, an odd
         number, e.g. gwi.py's CGWL_MEAN_YEARS (which explains the choice)
-    Returns a list of one-row DataFrames (see headline_row), one per year,
-    labelled '<first year>-<last year> (CGWL definition)'.
+    Returns a DataFrame with a row for each year, labelled '<first
+    year>-<last year> (CGWL definition)'.
 
     E.g. for 2025 with mean_years = 19: the mean of the annual means of 2016
     to 2034 inclusive, 19 years of data (1 January 2016 to 31 December
     2034), centred on mid-2025, labelled '2016-2034 (CGWL definition)'.
-
-    Each window of members is rebuilt on its own: (mean_years, variables,
-    N), about 2.6 GiB for 19 years at --samples=60.
     """
-    rows = []
-    for year in headline_years:
-        # The window's first and last years
-        first_year = year - (mean_years - 1) // 2
-        last_year = year + (mean_years - 1) // 2
-        # Every member's attributed warming over the window: (mean_years,
-        # variables, N)
-        window = sample.attributed_warming(first_year, last_year)
-        # Each member's mean over the window, along the year axis:
-        # (variables, N)
-        window_mean = window.mean(axis=0)
-        # Its percentiles along the member axis, the variables shared out
-        # over threads: (sigmas, variables)
-        percentiles = compute_resources.percentile_threaded(
-            window_mean, sigmas, axis=1)
-        rows.append(headline_row(
-            percentiles, sigmas, sample.output_vars,
-            f'{first_year}-{last_year} (CGWL definition)'))
-    return rows
+    # Each window: (mean_years - 1) / 2 years either side of the year
+    half = (mean_years - 1) // 2
+    windows = [(year - half, year + half) for year in headline_years]
+    labels = [f'{first}-{last} (CGWL definition)' for first, last in windows]
+    # Each member's mean over each window
+    return windowed_definition_table(
+        sample, sigmas, warming_definitions.mean_over_years, windows, labels)
 
 
 def ar6_rate_table(sample, sigmas, first_year, last_year, trend_years):
@@ -339,47 +318,14 @@ def ar6_rate_table(sample, sigmas, first_year, last_year, trend_years):
         gwi.py's AR6_RATE_YEARS
     Returns a DataFrame with a row for each year, labelled '<first year of
     its trend>-<year> (AR6 rate definition)', e.g. '2016-2025 (AR6 rate
-    definition)', and a column for each (variable, percentile).
-
-    The years are taken in blocks (see years_per_block). Each block
-    rebuilds its years and the trend_years - 1 before them, the overlapping
-    windows of its rates, (trend_years - 1 + years in the block, variables,
-    N), and takes the percentiles of all its rates in one pass over the
-    threads.
+    definition)'.
     """
-    # The percentiles of each block of years: one (sigmas, t, variables)
-    # array per block
-    block_percentiles = []
-    for first, last in year_blocks(first_year, last_year,
-                                   years_per_block(sample)):
-        # Every member's attributed warming from the first window's first
-        # year to the block's last year: (trend_years - 1 + t, variables,
-        # N)
-        members_warming = sample.attributed_warming(
-            first - (trend_years - 1), last)
-        # Each year's rate: the slope along the year axis of each member's
-        # line through its window, the trend_years years ending in it, one
-        # (variables, N) array per year, stacked: (t, variables, N)
-        rates = np.stack([
-            warming_definitions.rate_func_vectorised(
-                members_warming[i:i + trend_years])
-            for i in range(last - first + 1)])
-        # Their percentiles along the member axis: (sigmas, t, variables)
-        block_percentiles.append(
-            percentiles_by_year_and_variable(rates, sigmas))
-    # Every year's percentiles, the blocks joined along the year axis:
-    # (sigmas, t, variables)
-    percentiles = np.concatenate(block_percentiles, axis=1)
-    # One CSV column per (variable, percentile), each over the years: (t,)
-    columns = {
-        (var, sigma): percentiles[sigmas.index(sigma), :, v]
-        for v, var in enumerate(sample.output_vars) for sigma in sigmas
-    }
-    # Each row's label: its trend's years
-    labels = [f'{year - (trend_years - 1)}-{year} (AR6 rate definition)'
-              for year in range(first_year, last_year + 1)]
-    # The table, one CSV row per year
-    table = pd.DataFrame(columns, index=labels)
-    table.columns.names = ['variable', 'percentile']
-    table.index.name = 'Year'
-    return table
+    # Each year's window: the year and the trend_years - 1 before it
+    years = range(first_year, last_year + 1)
+    windows = [(year - (trend_years - 1), year) for year in years]
+    labels = [f'{first}-{last} (AR6 rate definition)'
+              for first, last in windows]
+    # The slope of each member's fitted line through each window
+    return windowed_definition_table(
+        sample, sigmas, warming_definitions.rate_func_vectorised, windows,
+        labels)

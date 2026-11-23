@@ -106,7 +106,7 @@ def scaling_factors(coefs, member_index):
 
 
 def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
-            inc_reg_const, output_vars):
+            output_vars, constant=None):
     """Rebuild members' attributed warming from their modelled warming,
     T_mod, and their scaling factors, β (and their observed members, T_obs,
     for the residual).
@@ -122,7 +122,10 @@ def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
     forcing_vars, regress_vars, output_vars: the three lists of variables
         (see the module's docstring); regress_vars in the order of the k
         axis, the constant (if used) being the last regressor
-    inc_reg_const: whether the regression has a constant term
+    constant: array (t,), the constant regressor's series over the same
+        years (ones, like its column in the regression), or a definition's
+        summary of it (see Sample.attributed_definition); None if the
+        regression has no constant term
     Returns an array (t, variables, N) in MEMBER_DTYPE: every member's
     attributed warming, its variables along output_vars.
     """
@@ -150,9 +153,10 @@ def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
     v_regressed = [forcing_vars.index(var) for var in regress_vars]
     # The total fitted warming, the sum of the regressed variables: (N, t)
     total = T_att[:, :, v_regressed].sum(axis=-1)
-    if inc_reg_const:
-        # Plus each member's constant term, the last regressor: (N, 1)
-        total += beta[:, -1:]
+    if constant is not None:
+        # Plus each member's constant term: its factor, the last regressor,
+        # (N, 1), times the constant's series, (t,): (N, t)
+        total += beta[:, -1:] * constant
 
     # Every member's attributed warming: (t, variables, N), filled one
     # variable at a time
@@ -184,7 +188,7 @@ def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
 
 
 def rebuild_into(members_warming, T_mod, beta, T_obs, member_index,
-                 forcing_vars, regress_vars, inc_reg_const, output_vars,
+                 forcing_vars, regress_vars, output_vars, constant=None,
                  n_threads=1, bytes_per_block=2**21):
     """Rebuild every member into `members_warming`, in blocks of members,
     over threads.
@@ -192,7 +196,7 @@ def rebuild_into(members_warming, T_mod, beta, T_obs, member_index,
     members_warming: array (t, variables, N), to fill with every member's
         attributed warming; member n is written to members_warming[:, :, n]
     T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
-        inc_reg_const, output_vars: as for `rebuild`, for all N members
+        output_vars, constant: as for `rebuild`, for all N members
     n_threads: how many threads rebuild member blocks at once (e.g. the
         job's CPUs)
     bytes_per_block: the memory of one member block's modelled warming
@@ -244,7 +248,7 @@ def rebuild_into(members_warming, T_mod, beta, T_obs, member_index,
         # the member axis: (t, variables, members in the block)
         members_warming[:, :, member_block] = rebuild(
             T_mod, beta[member_block], T_obs, block_index, forcing_vars,
-            regress_vars, inc_reg_const, output_vars)
+            regress_vars, output_vars, constant)
 
     # Rebuild every member block; list() makes any error in a thread
     # surface here
@@ -258,9 +262,10 @@ class Sample:
 
     It holds what the members are rebuilt from (T_mod, β, T_obs and the
     member index), not the members: the members of every year at once, (t,
-    variables, N), can need tens of GB, so each output rebuilds just the
-    years it needs, with `attributed_warming` (see
-    src/outputs/summaries.py).
+    variables, N), can need tens of GB, so each output rebuilds just what
+    it needs (see src/outputs/summaries.py): the years it needs, with
+    `attributed_warming`, or a definition's summary of each window of
+    years, with `attributed_definition`.
 
     T_mod: array (p, e, t, v), stage A's modelled warming, over `years`
     coefs: regression.Coefficients from stage B: obs (p, e, o, k) and pic
@@ -271,7 +276,8 @@ class Sample:
         members (see the module's docstring)
     forcing_vars, regress_vars: the forcing and regressed variables (see the
         module's docstring)
-    inc_reg_const: whether the regression has a constant term
+    inc_reg_const: whether the regression has a constant term, kept as
+        the constant regressor's series, ones in every year
     years: the years of T_mod's and T_obs's t axis, consecutive (e.g. the
         forcing years); the members can be rebuilt for any of them
     n_threads: how many threads rebuild members at once (see rebuild_into)
@@ -289,7 +295,9 @@ class Sample:
         self.member_index = member_index
         self.forcing_vars = forcing_vars
         self.regress_vars = regress_vars
-        self.inc_reg_const = inc_reg_const
+        # The constant regressor's series over the years, ones like its
+        # column in the regression, or None without a constant term: (t,)
+        self.constant = np.ones(len(years)) if inc_reg_const else None
         self.n_threads = n_threads
         # The years of the t axis, as an array: (t,)
         self.years = np.asarray(years)
@@ -357,6 +365,9 @@ class Sample:
         T_mod_years = self.T_mod[:, :, years_asked, :]
         # The observed members over those years: a view, (t, o)
         T_obs_years = self.T_obs[years_asked, :]
+        # The constant over those years, if used: (t,)
+        constant_years = (None if self.constant is None
+                          else self.constant[years_asked])
         if into is None:
             # The array to fill: (t, variables, N)
             into = np.empty((last_year - first_year + 1,
@@ -365,6 +376,69 @@ class Sample:
         # Rebuild every member over those years into it
         rebuild_into(into, T_mod_years, self.beta, T_obs_years,
                      self.member_index, self.forcing_vars, self.regress_vars,
-                     self.inc_reg_const, self.output_vars,
+                     self.output_vars, constant_years,
+                     n_threads=self.n_threads)
+        return into
+
+    def attributed_definition(self, definition, windows, into=None):
+        """Every member's attributed warming summarised by a definition that
+        is linear in time, in each of the given windows of years: e.g. its
+        mean over each decade, or the slope of its fitted line.
+
+        definition: a function summarising an array along its first axis,
+            the years, e.g. warming_definitions.mean_over_years; it must be
+            linear, i.e. give for a weighted sum of series the same weighted
+            sum of their summaries (true of means, fitted lines' end points
+            and slopes)
+        windows: the windows, (first_year, last_year) pairs, both years
+            included, within self.years
+        into: array (windows, variables, N) in MEMBER_DTYPE to write it into;
+            made if not given
+        Returns that array: (windows, variables, N), the variables along
+        output_vars.
+
+        Each member's attributed warming is a sum of its fixed scaling
+        factors times series in time: β · T_mod for each forcing variable,
+        T_obs minus their total for the residual. So, for a linear
+        definition, summarising the rebuilt warming gives the same, to
+        rounding, as rebuilding from T_mod and T_obs summarised first. This
+        does the second: it summarises T_mod's and T_obs's windows, which
+        are small, and rebuilds every member once per window rather than
+        once per year in it. The constant term, if used, is summarised the
+        same way, as a series like the others: the definition applied to
+        its ones (1 for a mean or an end point, 0 for a slope).
+        """
+        # Each window's summaries: of T_mod, (p, e, v); of T_obs, (o,); and
+        # of the constant, if used, a number
+        T_mod_summaries, T_obs_summaries, constant_summaries = [], [], []
+        for first_year, last_year in windows:
+            # The window's years, as positions along the t axis
+            window = self.year_positions(first_year, last_year)
+            # The modelled warming over the window, the years first so that
+            # the definition summarises along them: a view, (t, p, e, v)
+            T_mod_window = np.moveaxis(self.T_mod[:, :, window, :], 2, 0)
+            # Its summary: (p, e, v)
+            T_mod_summaries.append(definition(T_mod_window))
+            # The observed members' summary over the window: (o,)
+            T_obs_summaries.append(definition(self.T_obs[window, :]))
+            if self.constant is not None:
+                # The constant's summary over the window: a number
+                constant_summaries.append(definition(self.constant[window]))
+        # Every window's summary of T_mod, the windows in place of the years:
+        # (p, e, windows, v)
+        T_mod_summary = np.stack(T_mod_summaries, axis=2)
+        # ... of T_obs: (windows, o)
+        T_obs_summary = np.stack(T_obs_summaries)
+        # ... of the constant, if used: (windows,)
+        constant_summary = (None if self.constant is None
+                            else np.array(constant_summaries))
+        if into is None:
+            # The array to fill: (windows, variables, N)
+            into = np.empty((len(windows), len(self.output_vars),
+                             self.n_members), dtype=MEMBER_DTYPE)
+        # Rebuild every member from the summaries into it
+        rebuild_into(into, T_mod_summary, self.beta, T_obs_summary,
+                     self.member_index, self.forcing_vars, self.regress_vars,
+                     self.output_vars, constant_summary,
                      n_threads=self.n_threads)
         return into

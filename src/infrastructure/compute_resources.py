@@ -206,14 +206,14 @@ def _walltime_remaining():
         return '?'
 
 
-def check_memory(held_bytes, block_name, block_bytes):
+def check_memory(held_bytes, block_bytes):
     """Report what this run is expected to need, and stop now if it cannot
     fit.
 
     held_bytes: what is held throughout the summaries, e.g. the sample and
         stage B's coefficients
-    block_name, block_bytes: the summary that holds the most memory at once
-        while it runs, and how much (see summaries.largest_block_bytes)
+    block_bytes: the most memory a summary holds at once while it runs (see
+        summaries.block_bytes)
     Returns the expected peak, held_bytes + block_bytes, for
     report_memory_used.
 
@@ -233,7 +233,7 @@ def check_memory(held_bytes, block_name, block_bytes):
     run_log.log_section('Memory usage anticipated')
     print(f'Held throughout (the sample and the coefficients): '
           f'{describe_bytes(held_bytes)}\n'
-          f'Largest block (the {block_name}): {describe_bytes(block_bytes)}\n'
+          f'Largest block of rebuilt members: {describe_bytes(block_bytes)}\n'
           f'Expected memory peak: near {describe_bytes(expected)}, plus the '
           f'inputs\n'
           f'Slurm allocated memory for job: {describe_bytes(limit)}',

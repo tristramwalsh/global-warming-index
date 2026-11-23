@@ -62,6 +62,15 @@ def _trend_weights(n):
     return xc / (xc @ xc), x[-1] - x.mean()
 
 
+def mean_over_years(array):
+    """The mean of each series along axis 0, the years: used for the AR6
+    and CGWL definitions of warming (the mean over a window of years).
+
+    Takes an array of shape (n, ...) and returns shape (...).
+    """
+    return array.mean(axis=0)
+
+
 def final_value_of_trend_vectorised(array):
     """The value of the least-squares line through each series at its last
     point, along axis 0: used for the SR1.5 definition of present-day

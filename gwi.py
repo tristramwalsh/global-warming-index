@@ -849,25 +849,10 @@ if __name__ == "__main__":
     )
     # The names along the members' variable axis
     vars_list = sample.output_vars
-    # The windows of the headlines this run gives (the annual headline reads
-    # the timeseries, so needs none of its own)
-    headline_windows = []
-    if headline_toggles and 'SR1.5' in headline_toggles:
-        headline_windows.append(SR15_TREND_YEARS)
-    if headline_toggles and 'AR6' in headline_toggles:
-        headline_windows.append(AR6_MEAN_YEARS)
-    if headline_toggles and 'CGWL' in headline_toggles:
-        headline_windows.append(CGWL_MEAN_YEARS)
-    # The summary that holds the most rebuilt members at once, and how much,
-    # among those this run gives
-    largest_block_name, largest_block_bytes = summaries.largest_block_bytes(
-        sample, headline_windows,
-        rate_years=AR6_RATE_YEARS if rate_toggle else None)
     # Stop now if the summaries can't fit, and log what they should need
     expected_memory = compute_resources.check_memory(
         held_bytes=sample.nbytes + coefs.obs.nbytes + coefs.pic.nbytes,
-        block_name=largest_block_name,
-        block_bytes=largest_block_bytes)
+        block_bytes=summaries.block_bytes(sample))
     T1b = dt.datetime.now()
     run_log.log_section('Timeseries')
     print(f'Calculating GWI ... took {T1b - T1a}')
@@ -1071,10 +1056,11 @@ if __name__ == "__main__":
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-        # Each headline year's row, from that year's window of members,
-        # rebuilt on its own
-        dfs.extend(summaries.sr15_headline_rows(
-            sample, SIGMAS, hl_years_annual, SR15_TREND_YEARS))
+        # Each headline year's row: every member's SR1.5 value, rebuilt from
+        # T_mod and T_obs summarised over the year's window
+        if hl_years_annual:
+            dfs.append(summaries.sr15_headline_table(
+                sample, SIGMAS, hl_years_annual, SR15_TREND_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1108,9 +1094,11 @@ if __name__ == "__main__":
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-        # Each window's row, from that window of members, rebuilt on its own
-        dfs.extend(summaries.ar6_headline_rows(
-            sample, SIGMAS, hl_years_decadal, AR6_MEAN_YEARS))
+        # Each window's row: every member's mean, rebuilt from T_mod and
+        # T_obs averaged over the window
+        if hl_years_decadal:
+            dfs.append(summaries.ar6_headline_table(
+                sample, SIGMAS, hl_years_decadal, AR6_MEAN_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1141,9 +1129,11 @@ if __name__ == "__main__":
                 print('Calculating CGWL-definition temps', end=' ')
                 hl_years_cgwl.append(year)
 
-        # Each window's row, from that window of members, rebuilt on its own
-        dfs.extend(summaries.cgwl_headline_rows(
-            sample, SIGMAS, hl_years_cgwl, CGWL_MEAN_YEARS))
+        # Each window's row: every member's mean, rebuilt from T_mod and
+        # T_obs averaged over the window
+        if hl_years_cgwl:
+            dfs.append(summaries.cgwl_headline_table(
+                sample, SIGMAS, hl_years_cgwl, CGWL_MEAN_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1317,8 +1307,9 @@ if __name__ == "__main__":
                 f'{FIRST_RATE_YEAR - (AR6_RATE_YEARS - 1)} and {end_trunc} '
                 f'to be in the truncation years: '
                 f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-        # Every year's rate, FIRST_RATE_YEAR to the last output year, from
-        # members rebuilt a block of years at a time
+        # Every year's rate, FIRST_RATE_YEAR to the last output year: every
+        # member's slope, rebuilt from the slopes of T_mod and T_obs over
+        # each year's window
         df_rates = summaries.ar6_rate_table(
             sample, SIGMAS, FIRST_RATE_YEAR, end_trunc, AR6_RATE_YEARS)
         results_layout.write_csv(
