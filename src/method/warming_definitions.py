@@ -63,19 +63,32 @@ def _trend_weights(n):
 
 
 def final_value_of_trend_vectorised(array):
-    """The final value of a linear trend through each series, along axis 0:
-    used for the SR1.5 definition of present-day warming.
-
-    SR1.5 definition: 'warming at a given point in time is defined as the
-    global average temperatures for a 30-year period centred on that time,
-    extrapolating into the future if necessary'. For these calculations,
-    therefore, we take the final 15 years of the timeseries, take the trend
-    through it, and then warming is given by the value of the trend in the
-    final (present-day) year: extrapolating the trend for 15 more years and
-    taking the mid-value gives the same.
+    """The value of the least-squares line through each series at its last
+    point, along axis 0: used for the SR1.5 definition of present-day
+    warming.
 
     Takes an array of shape (n, ...) and returns shape (...), fitting an
-    independent trend down axis 0 for every remaining position.
+    independent line down axis 0 for every remaining position. The n
+    points are taken to be equally spaced, x = 0, 1, ..., n - 1, and the
+    line is read off at x = n - 1, the last point itself: no extrapolation
+    beyond it.
+
+    With annual means, each point stands for the middle of its year (the
+    mean over 1 January to 31 December), so the value returned is the
+    line's value at the middle of the final year, consistent with that
+    year's annual mean. n annual means cover n years of data, and their
+    first and last points are n - 1 years apart.
+
+    The caller chooses the n years (see summaries.sr15_headline_rows).
+
+    The SR1.5 definition: 'warming at a given point in time is defined as
+    the global average temperatures for a 30-year period centred on that
+    time, extrapolating into the future if necessary'. The line's value at
+    the last of n annual means equals the mean of the line extended over the
+    2n - 1 annual means centred on it, n - 1 before and n - 1 after: 31
+    years for n = 16, 29 for n = 15. A 30-year period centred on the middle
+    of a year starts and ends mid-year, so no whole number of annual means
+    gives exactly 30 years.
 
     A least-squares line passes through (xbar, ybar), so its value at the final
     point is ybar + b * (x_last - xbar).

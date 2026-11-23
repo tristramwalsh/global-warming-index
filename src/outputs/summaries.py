@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 import src.infrastructure.compute_resources as compute_resources
+import src.method.warming_definitions as warming_definitions
 
 
 def years_per_block(sample):
@@ -131,3 +132,67 @@ def gwi_timeseries_table(sample, sigmas, first_year, last_year):
     table.columns.names = ['variable', 'percentile']
     table.index.name = 'Year'
     return table
+
+
+def headline_row(percentiles, sigmas, output_vars, label):
+    """One headline as a one-row table, laid out as in the
+    GWI_results_headlines CSV.
+
+    percentiles: array (sigmas, variables), the headline's percentiles
+        along the member axis, its variables along output_vars
+    sigmas: the percentiles taken, e.g. gwi.py's SIGMAS
+    output_vars: the names along the variable axis
+    label: the row's name in the CSV's Year column, e.g.
+        '2024 (SR15 definition)'
+    Returns a DataFrame with one row, and a column for each (variable,
+    percentile).
+    """
+    # One CSV column per (variable, percentile), each a single number
+    columns = {
+        (var, sigma): percentiles[sigmas.index(sigma), v]
+        for v, var in enumerate(output_vars) for sigma in sigmas
+    }
+    # The one-row table
+    row = pd.DataFrame(columns, index=[label])
+    row.columns.names = ['variable', 'percentile']
+    row.index.name = 'Year'
+    return row
+
+
+def sr15_headline_rows(sample, sigmas, headline_years):
+    """The SR1.5-definition rows of the GWI_results_headlines CSV: the
+    warming in each headline year as the value, at the middle of that year,
+    of the least-squares line through the 16 annual means from 15 years
+    before it to the year itself (IPCC SR1.5, Ch. 1, §1.2.1).
+
+    E.g. for 2024: the annual means of 2009 to 2024 inclusive, 16 years of
+    data (1 January 2009 to 31 December 2024), with points 15 years apart
+    (mid-2009 to mid-2024), read off at mid-2024 (see
+    warming_definitions.final_value_of_trend_vectorised). That equals the
+    mean of the line extended over the 31 years 2009 to 2039.
+
+    sample: members.Sample
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    headline_years: the years to give, e.g. [2017, 2024]
+    Returns a list of one-row DataFrames (see headline_row), one per year,
+    labelled '<year> (SR15 definition)'.
+
+    Each year's 16-year window of members is rebuilt on its own: (16,
+    variables, N), about 2.3 GiB at --samples=60.
+    """
+    rows = []
+    for year in headline_years:
+        # Every member's attributed warming over the window: (16,
+        # variables, N)
+        window = sample.attributed_warming(year - 15, year)
+        # Each member's trend through the window, along the year axis, at
+        # its final year: (variables, N)
+        trend_end = warming_definitions.final_value_of_trend_vectorised(
+            window)
+        # Its percentiles along the member axis, the variables shared out
+        # over threads: (sigmas, variables)
+        percentiles = compute_resources.percentile_threaded(
+            trend_end, sigmas, axis=1)
+        rows.append(headline_row(percentiles, sigmas, sample.output_vars,
+                                 f'{year} (SR15 definition)'))
+    return rows

@@ -1002,8 +1002,9 @@ if __name__ == "__main__":
     if 'SR1.5' in headline_toggles:
         T1 = dt.datetime.now()
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
-        # Calculate the linear trend of the final 15 years of the timeseries
-        # and use this to calculate the present-day warming
+        # The value at the middle of each headline year of the line fitted
+        # through its 16 annual means, year-15 to year inclusive (see
+        # summaries.sr15_headline_rows)
         print('Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
@@ -1011,42 +1012,18 @@ if __name__ == "__main__":
             hl_years_annual.append(2017)
 
         for year in hl_years_annual:
-            if ((year not in trunc_Yrs) and (year-15 not in trunc_Yrs)):
+            # The trend's first year must be an output year too (its last,
+            # the headline year, is one already)
+            if year - 15 not in trunc_Yrs:
                 raise ValueError(
-                    f'SR15 definition requires the years {year} and {year-15} '
-                    'to be in the truncation years: '
+                    f'SR15 definition requires the years {year-15} and '
+                    f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-            years_SR15 = warming_definitions.contiguous_slice(
-                (year-15 <= trunc_Yrs) * (trunc_Yrs <= year))
-            temp_Att_Results_SR15_recent = temp_Att_Results[years_SR15, :, :]
-
-            # Calculate SR15-definition warming for each var-ens combination
-            # See SR15 Ch1 1.2.1
-            # This previously looped over variables, creating an mp.Pool per
-            # variable and mapping a per-series np.polyfit function over a
-            # list of millions of individual 16-year series. The pickling of
-            # those series dominated the runtime; the vectorised form below
-            # fits every trend in one weighted sum. It agrees with the
-            # per-series fit to ~1e-7 (float32 rounding) rather than exactly
-            # -- see final_value_of_trend_vectorised for why.
-            temp_Att_Results_SR15 = (
-                warming_definitions.final_value_of_trend_vectorised(
-                    temp_Att_Results_SR15_recent))
-
-            # Obtain statistics
-            gwi_headline_array = compute_resources.percentile_threaded(
-                temp_Att_Results_SR15, SIGMAS, axis=1)
-            dict_Results = {
-                (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
-                                                 vars_list.index(var)]
-                for var in vars_list for sigma in SIGMAS
-            }
-            df_headlines_i = pd.DataFrame(
-                dict_Results, index=[f'{year} (SR15 definition)'])
-            df_headlines_i.columns.names = ['variable', 'percentile']
-            df_headlines_i.index.name = 'Year'
-            dfs.append(df_headlines_i)
+        # Each headline year's row, from that year's 16-year window of
+        # members, rebuilt on its own
+        dfs.extend(summaries.sr15_headline_rows(
+            sample, SIGMAS, hl_years_annual))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1192,6 +1169,8 @@ if __name__ == "__main__":
 
             for year in hl_years_annual:
                 if ((year in df_temp_Obs.index) and (year-15 in df_temp_Obs.index)):
+                    # The 16 annual means, year-15 to year (pandas' .loc
+                    # includes both ends): (16, observed members)
                     temp_Obs_SR15_recent = df_temp_Obs.loc[year-15:year].to_numpy()
                     # print(temp_Obs_SR15_recent)
 
