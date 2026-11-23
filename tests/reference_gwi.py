@@ -331,7 +331,7 @@ def engine_gwi(inputs):
         inc_reg_const=inputs['inc_reg_const'],
         years=forc_Yrs)
     # Every member over every output year: (t, variables, N)
-    return (sample.attributed_warming(inputs['trunc'][0], inputs['trunc'][1]),
+    return (sample.ensemble_warming(inputs['trunc'][0], inputs['trunc'][1]),
             sample.output_vars)
 
 

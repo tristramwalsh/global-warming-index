@@ -123,9 +123,9 @@ def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
         (see the module's docstring); regress_vars in the order of the k
         axis, the constant (if used) being the last regressor
     constant: array (t,), the constant regressor's series over the same
-        years (ones, like its column in the regression), or a definition's
-        summary of it (see Sample.attributed_definition); None if the
-        regression has no constant term
+        years (ones, like its column in the regression), or a warming
+        definition's values of it (see Sample.ensemble_definition); None if
+        the regression has no constant term
     Returns an array (t, variables, N) in MEMBER_DTYPE: every member's
     attributed warming, its variables along output_vars.
     """
@@ -262,10 +262,12 @@ class Sample:
 
     It holds what the members are rebuilt from (T_mod, β, T_obs and the
     member index), not the members: the members of every year at once, (t,
-    variables, N), can need tens of GB, so each output rebuilds just what
-    it needs (see src/outputs/summaries.py): the years it needs, with
-    `attributed_warming`, or a definition's summary of each window of
-    years, with `attributed_definition`.
+    variables, N), can need tens of GB, so each output rebuilds just the
+    part of the ensemble it needs: every member's value of a warming
+    definition in each window of years, with `ensemble_definition` (every
+    output in src/outputs/summaries.py), or every member's warming in the
+    years asked for, with `ensemble_warming` (the general path, for outputs
+    not linear in time).
 
     T_mod: array (p, e, t, v), stage A's modelled warming, over `years`
     coefs: regression.Coefficients from stage B: obs (p, e, o, k) and pic
@@ -342,9 +344,10 @@ class Sample:
         return slice(first_year - self.years[0],
                      last_year - self.years[0] + 1)
 
-    def attributed_warming(self, first_year, last_year, into=None):
-        """Every member's attributed warming, rebuilt for the years
-        first_year to last_year (both included) only.
+    def ensemble_warming(self, first_year, last_year, into=None):
+        """The ensemble's attributed warming in each year: every member's,
+        rebuilt for the years first_year to last_year (both included) only.
+        The general path, for outputs not linear in time.
 
         first_year, last_year: the years an output needs, within self.years:
             e.g. one block of the output years for the timeseries (see
@@ -380,16 +383,17 @@ class Sample:
                      n_threads=self.n_threads)
         return into
 
-    def attributed_definition(self, definition, windows, into=None):
-        """Every member's attributed warming summarised by a definition that
-        is linear in time, in each of the given windows of years: e.g. its
-        mean over each decade, or the slope of its fitted line.
+    def ensemble_definition(self, definition, windows, into=None):
+        """The ensemble's value of a warming definition linear in time, in
+        each of the given windows of years: every member's attributed
+        warming under the definition, e.g. its mean over each decade, the
+        slope of its fitted line, or its value in a one-year window.
 
-        definition: a function summarising an array along its first axis,
-            the years, e.g. warming_definitions.mean_over_years; it must be
-            linear, i.e. give for a weighted sum of series the same weighted
-            sum of their summaries (true of means, fitted lines' end points
-            and slopes)
+        definition: a warming definition, a function of an array along its
+            first axis, the years, e.g. warming_definitions.mean_over_years;
+            it must be linear, i.e. give for a weighted sum of series the
+            same weighted sum of their values (true of means, and of fitted
+            lines' end points and slopes)
         windows: the windows, (first_year, last_year) pairs, both years
             included, within self.years
         into: array (windows, variables, N) in MEMBER_DTYPE to write it into;
@@ -400,45 +404,51 @@ class Sample:
         Each member's attributed warming is a sum of its fixed scaling
         factors times series in time: β · T_mod for each forcing variable,
         T_obs minus their total for the residual. So, for a linear
-        definition, summarising the rebuilt warming gives the same, to
-        rounding, as rebuilding from T_mod and T_obs summarised first. This
-        does the second: it summarises T_mod's and T_obs's windows, which
-        are small, and rebuilds every member once per window rather than
-        once per year in it. The constant term, if used, is summarised the
-        same way, as a series like the others: the definition applied to
-        its ones (1 for a mean or an end point, 0 for a slope).
+        definition, applying it to the rebuilt warming gives the same, to
+        rounding, as rebuilding from T_mod and T_obs with the definition
+        applied first. This does the second: it applies the definition to
+        T_mod's and T_obs's windows, which are small, and rebuilds every
+        member once per window rather than once per year in it. The constant
+        term, if used, is a series like the others: the definition applied
+        to its ones (1 for a mean or an end point, 0 for a slope).
         """
-        # Each window's summaries: of T_mod, (p, e, v); of T_obs, (o,); and
-        # of the constant, if used, a number
-        T_mod_summaries, T_obs_summaries, constant_summaries = [], [], []
+        # Each window's value of the definition: of T_mod, (p, e, v); of
+        # T_obs, (o,); and of the constant, if used, a number
+        T_mod_definition_values = []
+        T_obs_definition_values = []
+        constant_definition_values = []
         for first_year, last_year in windows:
             # The window's years, as positions along the t axis
             window = self.year_positions(first_year, last_year)
-            # The modelled warming over the window, the years first so that
-            # the definition summarises along them: a view, (t, p, e, v)
+            # The modelled warming over the window, the years first, the
+            # axis the definition works along: a view, (t, p, e, v)
             T_mod_window = np.moveaxis(self.T_mod[:, :, window, :], 2, 0)
-            # Its summary: (p, e, v)
-            T_mod_summaries.append(definition(T_mod_window))
-            # The observed members' summary over the window: (o,)
-            T_obs_summaries.append(definition(self.T_obs[window, :]))
+            # Its value of the definition: (p, e, v)
+            T_mod_definition_values.append(definition(T_mod_window))
+            # The observed members' value of the definition over the window:
+            # (o,)
+            T_obs_definition_values.append(definition(self.T_obs[window, :]))
             if self.constant is not None:
-                # The constant's summary over the window: a number
-                constant_summaries.append(definition(self.constant[window]))
-        # Every window's summary of T_mod, the windows in place of the years:
-        # (p, e, windows, v)
-        T_mod_summary = np.stack(T_mod_summaries, axis=2)
+                # The constant's value of the definition over the window: a
+                # number
+                constant_definition_values.append(
+                    definition(self.constant[window]))
+        # T_mod's value of the definition in every window, the windows in
+        # place of the years: (p, e, windows, v)
+        T_mod_definition_by_window = np.stack(T_mod_definition_values, axis=2)
         # ... of T_obs: (windows, o)
-        T_obs_summary = np.stack(T_obs_summaries)
+        T_obs_definition_by_window = np.stack(T_obs_definition_values)
         # ... of the constant, if used: (windows,)
-        constant_summary = (None if self.constant is None
-                            else np.array(constant_summaries))
+        constant_definition_by_window = (
+            None if self.constant is None
+            else np.array(constant_definition_values))
         if into is None:
             # The array to fill: (windows, variables, N)
             into = np.empty((len(windows), len(self.output_vars),
                              self.n_members), dtype=MEMBER_DTYPE)
-        # Rebuild every member from the summaries into it
-        rebuild_into(into, T_mod_summary, self.beta, T_obs_summary,
-                     self.member_index, self.forcing_vars, self.regress_vars,
-                     self.output_vars, constant_summary,
-                     n_threads=self.n_threads)
+        # Rebuild every member from the definition's values into it
+        rebuild_into(into, T_mod_definition_by_window, self.beta,
+                     T_obs_definition_by_window, self.member_index,
+                     self.forcing_vars, self.regress_vars, self.output_vars,
+                     constant_definition_by_window, n_threads=self.n_threads)
         return into

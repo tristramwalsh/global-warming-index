@@ -62,6 +62,21 @@ def _trend_weights(n):
     return xc / (xc @ xc), x[-1] - x.mean()
 
 
+def annual_value(array):
+    """The value in a window of one year: the annual definition of warming,
+    the year's annual mean itself.
+
+    Takes an array of shape (1, ...), the one year first, and returns shape
+    (...).
+    """
+    # Stop if the window holds more than one year
+    if len(array) != 1:
+        raise ValueError(
+            f'The annual value needs a window of one year, not {len(array)}.')
+    # The one year's values
+    return array[0]
+
+
 def mean_over_years(array):
     """The mean of each series along axis 0, the years: used for the AR6
     and CGWL definitions of warming (the mean over a window of years).
@@ -88,7 +103,7 @@ def final_value_of_trend_vectorised(array):
     year's annual mean. n annual means cover n years of data, and their
     first and last points are n - 1 years apart.
 
-    The caller chooses the n years (see summaries.sr15_headline_rows and
+    The caller chooses the n years (see summaries.sr15_headline_table and
     gwi.py's SR15_TREND_YEARS).
 
     The SR1.5 definition: 'warming at a given point in time is defined as

@@ -849,7 +849,7 @@ if __name__ == "__main__":
     )
     # The names along the members' variable axis
     vars_list = sample.output_vars
-    # Stop now if the summaries can't fit, and log what they should need
+    # Stop now if the outputs can't fit, and log what they should need
     expected_memory = compute_resources.check_memory(
         held_bytes=sample.nbytes + coefs.obs.nbytes + coefs.pic.nbytes,
         block_bytes=summaries.block_bytes(sample))
@@ -1038,7 +1038,7 @@ if __name__ == "__main__":
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # The value at the middle of each headline year of the line fitted
         # through its last SR15_TREND_YEARS annual means, the year included
-        # (see SR15_TREND_YEARS and summaries.sr15_headline_rows)
+        # (see SR15_TREND_YEARS and summaries.sr15_headline_table)
         print('Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
@@ -1057,7 +1057,7 @@ if __name__ == "__main__":
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
         # Each headline year's row: every member's SR1.5 value, rebuilt from
-        # T_mod and T_obs summarised over the year's window
+        # T_mod and T_obs with the definition applied over the year's window
         if hl_years_annual:
             dfs.append(summaries.sr15_headline_table(
                 sample, SIGMAS, hl_years_annual, SR15_TREND_YEARS))

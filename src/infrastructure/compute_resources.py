@@ -210,10 +210,10 @@ def check_memory(held_bytes, block_bytes):
     """Report what this run is expected to need, and stop now if it cannot
     fit.
 
-    held_bytes: what is held throughout the summaries, e.g. the sample and
-        stage B's coefficients
-    block_bytes: the most memory a summary holds at once while it runs (see
-        summaries.block_bytes)
+    held_bytes: what is held throughout while the outputs are made, e.g.
+        the sample and stage B's coefficients
+    block_bytes: the most memory an output holds at once while it is made
+        (see summaries.block_bytes)
     Returns the expected peak, held_bytes + block_bytes, for
     report_memory_used.
 

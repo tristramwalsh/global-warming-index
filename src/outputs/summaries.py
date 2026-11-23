@@ -1,29 +1,38 @@
-"""Percentile summaries of the sample: the GWI's CSV outputs.
+"""Percentile summaries of the ensemble: the GWI's CSV outputs.
 
-Every summary is a reduction along the member axis: for each year (or
-window of years) and variable, the percentiles across the sample's N
-members (see src/method/members.py). Two kinds:
-- the timeseries: each member's attributed warming, rebuilt one block of
-  years at a time (members.Sample.attributed_warming);
-- the headline definitions and rates, all linear in time (a mean over a
-  window, the end point or slope of a line fitted through it): each
-  member's summary of each window, rebuilt from T_mod and T_obs summarised
-  first, one block of windows at a time
-  (members.Sample.attributed_definition).
-So the members of every year are never held at once, and the summaries
+The terms, as used throughout:
+    ensemble            every drawn member's values, before percentiles
+                        (the member axis, N)
+    warming definition  a filter along the years, applied to each window
+                        of years: the annual value (windows of one year),
+                        the mean over a window (AR6's decade, the CGWL's
+                        centred mean), the end point of a line fitted
+                        through it (SR1.5) or its slope (the AR6 rate)
+    summary             the percentiles of the ensemble, taken along the
+                        member axis: what the CSVs give instead of the
+                        ensemble itself
+    headlines           the headline years (e.g. the latest, and the years
+                        of IPCC assessments), whose values of every
+                        definition the GWI_results_headlines CSV gathers
+
+Every warming definition so far is linear in time, so each member's value
+in each window is rebuilt from T_mod and T_obs with the definition applied
+first, one block of windows at a time (members.Sample.ensemble_definition).
+So the ensemble of every year is never held at once, and the summaries
 don't depend on the block size.
 
 How the functions connect:
-    percentiles_by_year_and_variable  members (t, variables, N) ->
+    percentiles_by_year_and_variable  ensemble (t, variables, N) ->
                                       percentiles (sigmas, t, variables)
     percentiles_as_csv_table          percentiles -> a DataFrame laid out
                                       as the CSVs are (a row per year or
                                       window, a column per (variable,
                                       percentile))
-    gwi_timeseries_table              the GWI_results_timeseries CSV: both
-                                      of the above, over blocks of years
-    windowed_definition_table         the same for any definition linear in
-                                      time, over a list of windows
+    windowed_definition_table         both of the above, for any definition
+                                      linear in time, over a list of
+                                      windows, in blocks
+    gwi_timeseries_table              the GWI_results_timeseries CSV: the
+                                      annual value, in windows of one year
     sr15_headline_table,              the SR1.5, AR6 and CGWL rows of the
     ar6_headline_table,               GWI_results_headlines CSV (which gwi.py
     cgwl_headline_table               joins with the annual rows, taken from
@@ -70,59 +79,40 @@ def years_per_block(sample):
 
 
 def block_bytes(sample):
-    """The most memory a summary here holds at once: a block of
-    years_per_block years (or windows) of every member, and the copy the
+    """The most memory an output here holds at once: a block of
+    years_per_block years (or windows) of the ensemble, and the copy the
     percentiles make of it, 2 × years_per_block × sample.bytes_per_year.
 
     sample: members.Sample
-    The timeseries, the headline definitions and the rates all work in such
-    blocks, so this holds whichever outputs the run gives.
+    Every warming definition, the annual timeseries and the rates included,
+    works in such blocks, so this holds whichever outputs the run gives.
     """
     return 2 * years_per_block(sample) * sample.bytes_per_year
 
 
-def year_blocks(first_year, last_year, years_per_block):
-    """Split the years first_year to last_year into blocks of
-    years_per_block years (the last block may be shorter).
-
-    Returns a list of (first, last) pairs, both ends included: e.g.
-    year_blocks(1850, 1861, 5) is [(1850, 1854), (1855, 1859), (1860, 1861)].
-    """
-    blocks = []
-    # The first year of the current block
-    first = first_year
-    while first <= last_year:
-        # Its last year: years_per_block years on, or the final year
-        last = min(first + years_per_block - 1, last_year)
-        blocks.append((first, last))
-        # The next block starts the year after
-        first = last + 1
-    return blocks
-
-
-def percentiles_by_year_and_variable(members_warming, sigmas):
+def percentiles_by_year_and_variable(ensemble, sigmas):
     """The percentiles of the attributed warming along the member axis, for
     each year and variable.
 
-    members_warming: array (t, variables, N), every member's attributed
-        warming, e.g. over a block of years
+    ensemble: array (t, variables, N), every member's value in each year
+        (or window), e.g. a block of years of attributed warming
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
     Returns an array (sigmas, t, variables): element [s, i, v] is the
-    sigmas[s]-th percentile of members_warming[i, v, :], the N members of
+    sigmas[s]-th percentile of ensemble[i, v, :], the N members of
     year i and variable v.
 
-    It is np.percentile(members_warming, sigmas, axis=-1) (in xarray,
+    It is np.percentile(ensemble, sigmas, axis=-1) (in xarray,
     a quantile along the member dimension), with the (year, variable) pairs
     shared out over the job's threads, so a block of a few years still uses
     every CPU.
     """
     # The sizes: years, variables, members
-    n_years, n_vars, n_members = members_warming.shape
+    n_years, n_vars, n_members = ensemble.shape
     # The year and variable axes merged into one axis of (year, variable)
     # pairs, pair i · variables + v being year i and variable v, so the
     # threads can share out the pairs (percentile_threaded shares out the
     # first axis): a view, (t · variables, N)
-    pairs = members_warming.reshape(n_years * n_vars, n_members)
+    pairs = ensemble.reshape(n_years * n_vars, n_members)
     # The percentiles of each pair along the member axis, over threads:
     # (sigmas, t · variables)
     pair_percentiles = compute_resources.percentile_threaded(
@@ -143,23 +133,13 @@ def gwi_timeseries_table(sample, sigmas, first_year, last_year):
     (variable, percentile), the variables in the order of
     sample.output_vars.
     """
-    # The percentiles of each block of years: one (sigmas, t, variables)
-    # array per block
-    block_percentiles = []
-    for first, last in year_blocks(first_year, last_year,
-                                   years_per_block(sample)):
-        # Every member's attributed warming over these years: (t,
-        # variables, N)
-        members_warming = sample.attributed_warming(first, last)
-        # Its percentiles: (sigmas, t, variables)
-        block_percentiles.append(
-            percentiles_by_year_and_variable(members_warming, sigmas))
-    # Every year's percentiles, the blocks joined along the year axis:
-    # (sigmas, t, variables)
-    percentiles = np.concatenate(block_percentiles, axis=1)
-    # The table, one CSV row per year
-    return percentiles_as_csv_table(percentiles, sigmas, sample.output_vars,
-                                    np.arange(first_year, last_year + 1))
+    # The output years: (t,)
+    years = np.arange(first_year, last_year + 1)
+    # Each year on its own, a window of one year
+    windows = [(year, year) for year in years]
+    # Each member's value in each year
+    return windowed_definition_table(
+        sample, sigmas, warming_definitions.annual_value, windows, years)
 
 
 def percentiles_as_csv_table(percentiles, sigmas, output_vars, labels):
@@ -191,16 +171,17 @@ def windowed_definition_table(sample, sigmas, definition, windows, labels):
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    definition: a function summarising an array along its first axis, the
-        years, and linear (see members.Sample.attributed_definition), e.g.
+    definition: a warming definition, a function of an array along its
+        first axis, the years, and linear (see
+        members.Sample.ensemble_definition), e.g.
         warming_definitions.mean_over_years
     windows: the windows, (first_year, last_year) pairs, both included
     labels: the rows' names, one per window
     Returns a DataFrame (see percentiles_as_csv_table).
 
     The windows are taken years_per_block at a time: each block rebuilds
-    every member's summary of its windows, (windows, variables, N), and
-    takes their percentiles in one pass over the threads.
+    the ensemble's value in its windows, (windows, variables, N), and takes
+    its percentiles in one pass over the threads.
     """
     # How many windows to take at once
     windows_per_block = years_per_block(sample)
@@ -208,12 +189,12 @@ def windowed_definition_table(sample, sigmas, definition, windows, labels):
     # variables) array per block
     block_percentiles = []
     for start in range(0, len(windows), windows_per_block):
-        # Every member's summary in these windows: (windows, variables, N)
-        members_summary = sample.attributed_definition(
+        # The ensemble's value in these windows: (windows, variables, N)
+        ensemble = sample.ensemble_definition(
             definition, windows[start:start + windows_per_block])
-        # Their percentiles: (sigmas, windows, variables)
+        # Its percentiles: (sigmas, windows, variables)
         block_percentiles.append(
-            percentiles_by_year_and_variable(members_summary, sigmas))
+            percentiles_by_year_and_variable(ensemble, sigmas))
     # Every window's percentiles: (sigmas, windows, variables)
     percentiles = np.concatenate(block_percentiles, axis=1)
     # The table, one CSV row per window
