@@ -166,6 +166,17 @@ if __name__ == "__main__":
         np.concatenate((np.sort(np.ravel(SIGMA_RANGES)), [50]), axis=0)
         )
 
+    # How many annual means the SR1.5 definition's trend is fitted through:
+    # the headline year and the SR15_TREND_YEARS - 1 years before it. The
+    # warming in the year is the fitted line's value at the middle of the
+    # year (the time its annual mean stands for), which equals the mean of
+    # the line extended over the 2 * SR15_TREND_YEARS - 1 years centred on
+    # it. SR1.5's '30-year period centred on that time' starts and ends
+    # mid-year, so no whole number of annual means gives exactly 30 years:
+    #   15: data 2011-2025 for 2025, the mean over 29 years, 2011-2039
+    #   16: data 2010-2025 for 2025, the mean over 31 years, 2010-2040
+    SR15_TREND_YEARS = 15
+
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
     # emulator_choice = 'AR5_IR'
@@ -1003,8 +1014,8 @@ if __name__ == "__main__":
         T1 = dt.datetime.now()
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # The value at the middle of each headline year of the line fitted
-        # through its 16 annual means, year-15 to year inclusive (see
-        # summaries.sr15_headline_rows)
+        # through its last SR15_TREND_YEARS annual means, the year included
+        # (see SR15_TREND_YEARS and summaries.sr15_headline_rows)
         print('Calculating SR15-definition temps', end=' ')
 
         hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
@@ -1012,18 +1023,20 @@ if __name__ == "__main__":
             hl_years_annual.append(2017)
 
         for year in hl_years_annual:
-            # The trend's first year must be an output year too (its last,
-            # the headline year, is one already)
-            if year - 15 not in trunc_Yrs:
+            # The trend's first year
+            first_year = year - (SR15_TREND_YEARS - 1)
+            # ... must be an output year too (its last, the headline year,
+            # is one already)
+            if first_year not in trunc_Yrs:
                 raise ValueError(
-                    f'SR15 definition requires the years {year-15} and '
+                    f'SR15 definition requires the years {first_year} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
 
-        # Each headline year's row, from that year's 16-year window of
-        # members, rebuilt on its own
+        # Each headline year's row, from that year's window of members,
+        # rebuilt on its own
         dfs.extend(summaries.sr15_headline_rows(
-            sample, SIGMAS, hl_years_annual))
+            sample, SIGMAS, hl_years_annual, SR15_TREND_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1168,10 +1181,15 @@ if __name__ == "__main__":
                 hl_years_annual.append(2017)
 
             for year in hl_years_annual:
-                if ((year in df_temp_Obs.index) and (year-15 in df_temp_Obs.index)):
-                    # The 16 annual means, year-15 to year (pandas' .loc
-                    # includes both ends): (16, observed members)
-                    temp_Obs_SR15_recent = df_temp_Obs.loc[year-15:year].to_numpy()
+                # The trend's first year (see SR15_TREND_YEARS)
+                first_year = year - (SR15_TREND_YEARS - 1)
+                if ((year in df_temp_Obs.index) and
+                        (first_year in df_temp_Obs.index)):
+                    # The SR15_TREND_YEARS annual means, first_year to year
+                    # (pandas' .loc includes both ends): (SR15_TREND_YEARS,
+                    # observed members)
+                    temp_Obs_SR15_recent = df_temp_Obs.loc[
+                        first_year:year].to_numpy()
                     # print(temp_Obs_SR15_recent)
 
                     # Vectorised for consistency with the attributed SR15

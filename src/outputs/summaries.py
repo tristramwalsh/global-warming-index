@@ -159,33 +159,35 @@ def headline_row(percentiles, sigmas, output_vars, label):
     return row
 
 
-def sr15_headline_rows(sample, sigmas, headline_years):
+def sr15_headline_rows(sample, sigmas, headline_years, trend_years):
     """The SR1.5-definition rows of the GWI_results_headlines CSV: the
     warming in each headline year as the value, at the middle of that year,
-    of the least-squares line through the 16 annual means from 15 years
-    before it to the year itself (IPCC SR1.5, Ch. 1, §1.2.1).
-
-    E.g. for 2024: the annual means of 2009 to 2024 inclusive, 16 years of
-    data (1 January 2009 to 31 December 2024), with points 15 years apart
-    (mid-2009 to mid-2024), read off at mid-2024 (see
-    warming_definitions.final_value_of_trend_vectorised). That equals the
-    mean of the line extended over the 31 years 2009 to 2039.
+    of the least-squares line through its last trend_years annual means, the
+    year itself included (IPCC SR1.5, Ch. 1, §1.2.1).
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    headline_years: the years to give, e.g. [2017, 2024]
+    headline_years: the years to give, e.g. [2017, 2025]
+    trend_years: how many annual means the line is fitted through, e.g.
+        gwi.py's SR15_TREND_YEARS (which explains the choice)
     Returns a list of one-row DataFrames (see headline_row), one per year,
     labelled '<year> (SR15 definition)'.
 
-    Each year's 16-year window of members is rebuilt on its own: (16,
-    variables, N), about 2.3 GiB at --samples=60.
+    E.g. for 2025 with trend_years = 15: the annual means of 2011 to 2025
+    inclusive, 15 years of data (1 January 2011 to 31 December 2025), with
+    points 14 years apart (mid-2011 to mid-2025), read off at mid-2025 (see
+    warming_definitions.final_value_of_trend_vectorised). That equals the
+    mean of the line extended over the 29 years 2011 to 2039.
+
+    Each year's window of members is rebuilt on its own: (trend_years,
+    variables, N), about 2.0 GiB for 15 years at --samples=60.
     """
     rows = []
     for year in headline_years:
-        # Every member's attributed warming over the window: (16,
-        # variables, N)
-        window = sample.attributed_warming(year - 15, year)
-        # Each member's trend through the window, along the year axis, at
+        # Every member's attributed warming over the window, the year and
+        # the trend_years - 1 before it: (trend_years, variables, N)
+        window = sample.attributed_warming(year - (trend_years - 1), year)
+        # Each member's line through the window, along the year axis, at
         # its final year: (variables, N)
         trend_end = warming_definitions.final_value_of_trend_vectorised(
             window)
