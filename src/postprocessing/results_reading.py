@@ -213,8 +213,10 @@ def load_gwi_priors_erf_obs():
 
                 for regressed_years in regressed_years_vars:
                     # Load GWI results files
+                    # The plots' names for the results they read, and the
+                    # result types of their files
                     res_type_dict = {
-                        res_type: (
+                        res_name: (
                                 f'{results_layout.AGGREGATED_FOLDER}/' +
                                 f'{scenario}/' +
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
@@ -227,7 +229,10 @@ def load_gwi_priors_erf_obs():
                                 f'REGRESSED-YEARS--{regressed_years}_' +
                                 'AVERAGE.csv'
                             )
-                        for res_type in ['timeseries', 'headlines', 'rates']
+                        for res_name, res_type in [
+                            ('timeseries', 'timeseries-ANNUAL'),
+                            ('headlines', 'headlines'),
+                            ('rates', 'timeseries-RATES')]
                     }
                     results_files[scenario
                                   ][ensemble_selection

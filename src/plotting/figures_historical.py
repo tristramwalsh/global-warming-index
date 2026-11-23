@@ -22,6 +22,10 @@ def figure_historical_only_timeseries(
     print('      Plotting historical-only timeseries')
 
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        # Levels only: these figures plot warming against the observations;
+        # the historical-only rates are written, but not drawn here
+        if headline == 'RATES':
+            continue
         print('        Plotting:', headline)
         plot_vars = results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'][
             headline].columns.get_level_values(0).unique().to_list()
@@ -176,6 +180,10 @@ def figure_headlines_comparison(
 
     # for headline in headlines:
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        # Levels only: these figures plot warming against the observations;
+        # the historical-only rates are written, but not drawn here
+        if headline == 'RATES':
+            continue
         unwanted_vars = ['GHG', 'OHF', 'Res']
         # Filtered in the results' own column order: a set difference would
         # come back in an order that changes every time Python starts.
@@ -333,6 +341,10 @@ def figure_thorne_et_al(
         v for v in params['plot_vars'] if v not in unwanted_vars]
 
     for headline in results_dfs[scen][ens][reg_vars]['HISTORICAL-ONLY'].keys():
+        # Levels only: these figures plot warming against the observations;
+        # the historical-only rates are written, but not drawn here
+        if headline == 'RATES':
+            continue
         for vv in plot_vars_main:
             # Determine line style
             ls = plot_style.HEADLINE_LINE_STYLE.get(vv)

@@ -13,13 +13,16 @@ def map_headline_to_index(
             'ANNUAL': str(year),
             'SR15': f'{year} (SR15 definition)',
             'AR6': f'{year-9}-{year}',
-            'CGWL': f'{year-9}-{year+10} (CGWL definition)',
+            'CGWL': f'{year-9}-{year+9} (CGWL definition)',
+            'RATES': f'{year-9}-{year} (AR6 rate definition)',
         }
 
         return mapping.get(headline, None)
 
     elif invert:
-        if 'CGWL' in index_str:
+        if 'rate' in index_str:
+            return 'RATES'
+        elif 'CGWL' in index_str:
             return 'CGWL'
         elif 'SR15' in index_str:
             return 'SR15'

@@ -238,19 +238,22 @@ RECIPE_COMMITTED=n
 # Select truncation range
 RECIPE_TRUNCATION=1850-2050
 
-# Select whether to include the rate of change in the regression
-#TODO: Specify which years to include rate of change for.
-# e.g. y
-# e.g. n
-RECIPE_INCLUDE_RATE=n
-
-# Select whether to include the headlines in the regression
-# e.g. 'annual,SR1.5,AR6,CGWL'
-# e.g. n
-RECIPE_HEADLINE_TOGGLES='annual,AR6,SR1.5,CGWL'
+# The warming definitions to give: at least one. Each gets its own
+# timeseries CSV (GWI_results_timeseries-<DEFINITION>), covering every year
+# for which it can be produced from the underlying annual timeseries (the
+# years whose whole window lies within the truncation range), and its values
+# at the headline years go into the headlines CSV. The annual timeseries is
+# always written, since the plots build on it.
+#   annual  the warming in each year
+#   SR1.5   the value at mid-year of the line fitted through the last 15 years
+#   AR6     the mean of the last 10 years
+#   CGWL    the mean of the 19 years centred on the year (needs forcing after it)
+#   rates   the slope of the line fitted through the last 10 years (AR6 rate)
+# e.g. 'annual,SR1.5,AR6,CGWL,rates'
+# e.g. annual, for the basic annual timeseries
+RECIPE_DEFINITIONS='annual,SR1.5,AR6,CGWL,rates'
 
 # Select which years for the headlines to cover.
-# If RECIPE_HEADLINE_TOGGLES is set to 'n' then this will be ignored.
 # e.g. 'end_regress' for the end of the regressed range
 # e.g. 'end_trunc' for the end of the truncation range
 # e.g. 'IGCC' for latest year, 2017 repeat, and 2010-2019 repeat

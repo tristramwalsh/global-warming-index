@@ -12,8 +12,8 @@ import src.method.warming_definitions as warming_definitions
 # The GWI result types gwi.py writes, as in their file names,
 # GWI_results_<type>_<...>.csv: the timeseries of each warming definition,
 # the headlines and the rates
-RESULT_TYPES = ('timeseries', 'timeseries-SR15', 'timeseries-AR6',
-                'timeseries-CGWL', 'headlines', 'rates')
+RESULT_TYPES = ('timeseries-ANNUAL', 'timeseries-SR15', 'timeseries-AR6',
+                'timeseries-CGWL', 'timeseries-RATES', 'headlines')
 
 
 def is_result_type(file_name, result_type):
@@ -29,8 +29,8 @@ def range_result_types(base_path):
     regressed-years directory under ITERATIONS_FOLDER -- holds at least one
     file, or [] if the directory does not exist. The directory is listed
     once, and that one listing answers for every type. A file is of a type
-    when its name starts with GWI_results_<type>_, so 'timeseries' doesn't
-    also match the timeseries-SR15 files.
+    when its name starts with GWI_results_<type>_, so that a type that is
+    the start of another's name doesn't also match the other's files.
 
     In the pipeline: calculate_iteration_averages runs it in a pool, once for
     every regressed-years directory of every scenario, ensemble selection and
@@ -86,7 +86,8 @@ def write_repeat_average(regressed_years, result_type, scenario,
 
 
 def calculate_iteration_averages():
-    """Average the timeseries, headlines and rates iterations of every run.
+    """Average the iterations of every result type (RESULT_TYPES) of every
+    run.
 
     Walks ITERATIONS_FOLDER through every scenario, ensemble selection, set
     of regressed variables and regressed range; finds which result types
@@ -196,8 +197,8 @@ def load_iteration_dfs(regressed_years, result_type, scenario,
 
     Args:
         regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines',
-            'rates').
+        result_type: The type of result, one of RESULT_TYPES (e.g.,
+            'timeseries-ANNUAL', 'headlines').
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.
@@ -246,8 +247,8 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
 
     Args:
         regressed_years: The range of years used for regression.
-        result_type: The type of result (e.g., 'timeseries', 'headlines',
-            'rates').
+        result_type: The type of result, one of RESULT_TYPES (e.g.,
+            'timeseries-ANNUAL', 'headlines').
         scenario: The scenario name.
         ensemble_selection: The ensemble selection name.
         regressed_vars: The regressed variables.

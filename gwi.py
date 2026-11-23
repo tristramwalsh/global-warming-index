@@ -218,7 +218,8 @@ if __name__ == "__main__":
     # --preindustrial-era=<start-end> (default 1850-1900)
     # --regress-range=<start-end> (default 1850-2023)
     # --truncate=<start-end> (default 1850-2023)
-    # --include-rate=<y/n> (default interactive)
+    # --definitions=<annual,SR1.5,AR6,CGWL,rates, or a subset> (default
+    #   interactive)
     # --erf-dataset=<id> (required, e.g. IGCC-2025)
     # --gmt-dataset=<id> (required, e.g. HadCRUT-2025)
     # --picontrol-dataset=<id> (required, e.g. CMIP6)
@@ -233,7 +234,7 @@ if __name__ == "__main__":
     # place.
     KNOWN_OPTIONS = (
         '--samples', '--seed', '--regress-range', '--truncate',
-        '--include-rate', '--headline-toggles', '--headline-years',
+        '--definitions', '--headline-years',
         '--regress-variables', '--erf-dataset', '--gmt-dataset',
         '--picontrol-dataset', '--committed', '--preindustrial-era',
         '--include-reg-const', '--erf-member', '--gmt-member',
@@ -394,32 +395,30 @@ if __name__ == "__main__":
             f'Invalid --seed {seed!r}: use a whole number from 0 to 2**32-1, '
             'or leave it empty for unseeded sampling.')
 
-    # Determine whether to calculate rates (computaitonally expensive).
-    if '--include-rate' in argv_dict:
-        rate_toggle = argv_dict['--include-rate']
-        rate_toggle = True if rate_toggle == 'y' else False
+    # The warming definitions to give: each gets its own timeseries CSV, and
+    # its values at the headline years go into the headlines CSV (the annual
+    # timeseries is always written, as the plots need it).
+    # Format: 'annual,SR1.5,AR6,CGWL,rates' or some subset.
+    if '--definitions' in argv_dict:
+        definitions_argv = argv_dict['--definitions']
     else:
-        # If no command line argument passed, use interactivity as a backup.
-        rate_toggle = input('Calculate rates? (y/n): ')
-        rate_toggle = True if rate_toggle == 'y' else False
-
-    # Determine whether to include headline calculations in the output.
-    # If no, then only the timeseries are calculated
-    # Format: 'ANNUAL,SR1.5,AR6,CGWL' or some subset.
-    if '--headline-toggles' in argv_dict:
-        headline_toggles = argv_dict['--headline-toggles']
-    else:
-        headline_toggles = input(
-            'Include headlines? (annual, SR1.5, AR6, CGWL, or n): ')
-
-    if headline_toggles == 'n':
-        headline_toggles = False
-    else:
-        tog_list = headline_toggles.split(',')
-        tog_avail = ['annual', 'SR1.5', 'AR6', 'CGWL', '']
-        # Check that the all elements of tog_list exist within tog_avail
-        if not (all(tog in tog_avail for tog in tog_list)):
-            raise ValueError('Invalid headline toggle(s) provided.')
+        definitions_argv = input(
+            'Warming definitions? (annual, SR1.5, AR6, CGWL, rates): ')
+    # ... as a list of names
+    definitions = [d for d in definitions_argv.split(',') if d]
+    # Stop if there are none
+    known_definitions = ['annual', 'SR1.5', 'AR6', 'CGWL', 'rates']
+    if not definitions:
+        raise ValueError(
+            'No warming definitions chosen: choose at least one of '
+            f'{known_definitions} (in a recipe, RECIPE_DEFINITIONS), e.g. '
+            'annual for the basic annual timeseries.')
+    # Stop if any isn't known
+    unknown = [d for d in definitions if d not in known_definitions]
+    if unknown:
+        raise ValueError(
+            f'Unknown warming definition(s) {unknown}: use some of '
+            f'{known_definitions}.')
 
     # Determine whether to include sub-variables in the output.
     if '--include-sub-vars' in argv_dict:
@@ -433,7 +432,7 @@ if __name__ == "__main__":
     if '--headline-years' in argv_dict:
         headline_years = argv_dict['--headline-years']
     else:
-        if headline_toggles:
+        if definitions:
             headline_years = input('Years for headlines: ')
         else:
             headline_years = None
@@ -653,7 +652,7 @@ if __name__ == "__main__":
     print(f'Number of samples: {samples}')
     print('Random seed: '
           f'{seed if seed is not None else "none (unseeded sampling)"}')
-    print(f'Calculate and save rates: {rate_toggle}')
+    print(f'Warming definitions: {", ".join(definitions) or "none"}')
     print(f'Include pre-industrial offset: {inc_pi_offset}')
     print(f'Include constant term in regression: {inc_reg_const}')
     print(f'Using model: {emulator_choice}')
@@ -938,7 +937,7 @@ if __name__ == "__main__":
     df_Results = summaries.gwi_timeseries_table(
         sample, SIGMAS, start_trunc, end_trunc)
     gwi_filename = (f'{results_folder}{output_path}' +
-                    f'GWI_results_timeseries_{variation}.csv')
+                    f'GWI_results_timeseries-ANNUAL_{variation}.csv')
     results_layout.write_csv(df_Results, gwi_filename)
 
     T3a = dt.datetime.now()
@@ -1007,7 +1006,7 @@ if __name__ == "__main__":
     # last output year, and the IPCC assessment years: see
     # warming_definitions.generate_headline_years)
 
-    if headline_toggles:
+    if definitions:
         run_log.log_section(f'Headlines ({headline_years})')
 
         hl_years = warming_definitions.generate_headline_years(
@@ -1015,7 +1014,7 @@ if __name__ == "__main__":
 
         dfs = []
 
-    if 'annual' in headline_toggles:
+    if 'annual' in definitions:
         T1 = dt.datetime.now()
         # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
         print('Reading annual mean definition temps', end=' ')
@@ -1032,7 +1031,7 @@ if __name__ == "__main__":
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
-    if 'SR1.5' in headline_toggles:
+    if 'SR1.5' in definitions:
         T1 = dt.datetime.now()
         # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
         # The value at the middle of each headline year of the line fitted
@@ -1070,7 +1069,7 @@ if __name__ == "__main__":
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
-    if 'AR6' in headline_toggles:
+    if 'AR6' in definitions:
         T1 = dt.datetime.now()
         # AR6 DEFINITION (DECADE MEAN) ########################################
         # The headline years whose whole window is in the output years
@@ -1109,7 +1108,7 @@ if __name__ == "__main__":
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
-    if 'CGWL' in headline_toggles:
+    if 'CGWL' in definitions:
         T1 = dt.datetime.now()
         # CGWL DEFINITION (20YR MEAN CENTERED WITH PROJECTIONS) ###############
         # This definition was propsoed in Betts et al., 2023, and is not
@@ -1152,19 +1151,46 @@ if __name__ == "__main__":
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
 
-    df_headlines = pd.concat(dfs, axis=0)
-    results_layout.write_csv(
-        df_headlines,
-        f'{results_folder}{output_path}' +
-        f'GWI_results_headlines_{variation}.csv')
+    if 'rates' in definitions:
+        T1 = dt.datetime.now()
+        # AR6 RATE DEFINITION (SLOPE OF THE DECADE'S TREND) ###################
+        print('Calculating AR6-definition attributed warming rates', end=' ')
+        # The rates timeseries: every output year whose window fits, every
+        # member's slope rebuilt from the slopes of T_mod and T_obs over the
+        # year's window
+        df_RATES = summaries.rates_timeseries_table(
+            sample, SIGMAS, start_trunc, end_trunc, AR6_RATE_YEARS)
+        results_layout.write_csv(
+            df_RATES, f'{results_folder}{output_path}' +
+            f'GWI_results_timeseries-RATES_{variation}.csv')
+        # The headline years whose whole window is in the output years
+        hl_years_rates = [
+            y for y in hl_years
+            if (y in trunc_Yrs) and (y - (AR6_RATE_YEARS - 1) in trunc_Yrs)]
+        # Its rows at those years, for the headlines CSV
+        if hl_years_rates:
+            dfs.append(summaries.headline_rows(
+                df_RATES, hl_years_rates,
+                [f'{year - (AR6_RATE_YEARS - 1)}-{year} (AR6 rate definition)'
+                 for year in hl_years_rates]))
+        T2 = dt.datetime.now()
+        print(f'... took {T2 - T1}')
+
+    # Every definition's rows at the headline years, in one CSV
+    if definitions and dfs:
+        df_headlines = pd.concat(dfs, axis=0)
+        results_layout.write_csv(
+            df_headlines,
+            f'{results_folder}{output_path}' +
+            f'GWI_results_headlines_{variation}.csv')
 
     # OBSERVATIONS HEADLINE RESULTS ###########################################
-    if headline_toggles:
+    if definitions:
         run_log.log_section(f'Headlines for observations ({headline_years})')
 
         dfs_obs = []
 
-        if 'annual' in headline_toggles:
+        if 'annual' in definitions:
             print('Reading annual mean definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
@@ -1191,7 +1217,7 @@ if __name__ == "__main__":
                 dfs_obs.append(df_headlines_obs_i)
             print('... done')
 
-        if 'SR1.5' in headline_toggles:
+        if 'SR1.5' in definitions:
             print('Calculating SR15-definition temps (Obs)', end=' ')
 
             hl_years_annual = [y for y in hl_years
@@ -1234,7 +1260,7 @@ if __name__ == "__main__":
                     dfs_obs.append(df_headlines_obs_i)
             print('... done')
 
-        if 'AR6' in headline_toggles:
+        if 'AR6' in definitions:
             print('Calculating AR6-definition temps (Obs)', end=' ')
 
             # The headline years whose whole window is observed
@@ -1271,7 +1297,7 @@ if __name__ == "__main__":
                 dfs_obs.append(df_headlines_obs_i)
             print('... done')
 
-        if 'CGWL' in headline_toggles:
+        if 'CGWL' in definitions:
             print('Calculating CGWL-definition temps (Obs)', end=' ')
 
             for year in hl_years:
@@ -1307,22 +1333,6 @@ if __name__ == "__main__":
                 f'{results_folder_obs}{out_path_obs}' +
                 f'Obs_results_headlines_{variation_obs}.csv')
 
-    # RATE: AR6 DEFINITION
-    if rate_toggle:
-        T7 = dt.datetime.now()
-        run_log.log_section('Warming rates')
-        print('Calculating AR6-definition attributed warming rates', end=' ')
-        # Every output year's rate, from the first whose window fits: every
-        # member's slope, rebuilt from the slopes of T_mod and T_obs over
-        # each year's window
-        df_rates = summaries.ar6_rate_table(
-            sample, SIGMAS, start_trunc, end_trunc, AR6_RATE_YEARS)
-        results_layout.write_csv(
-            df_rates,
-            f'{results_folder}{output_path}' +
-            f'GWI_results_rates_{variation}.csv')
-        T8 = dt.datetime.now()
-        print(f'... took {T8 - T7}')
 
     # What the run actually cost, to sit alongside the 'Memory usage
     # anticipated' block

@@ -260,17 +260,13 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **`TRUNCATION`**: Year range for output timeseries (e.g., `1850-2050`)
 - Output is cut down to this range after regression, but BEFORE the headline calculations.
 - This enables constrained future projections to be produced if future ERF scenario forcings are available; in this case, the truncation will extend beyond the regression range.
-- NOTE: Where CGWL headlines are required, the truncation range must extend far enough into the future to accommodate the 10-year future averaging period (see Important Technical Details below).
+- NOTE: Where CGWL headlines are required, the truncation range must extend far enough into the future to accommodate the 9 years after each year that the CGWL averages (see Important Technical Details below).
 
 
-**`INCLUDE_RATE`**: Calculate warming rates (`y` or `n`)
-- Definition of warming rate is the linear trend over the previous 10 years, and is (currently) hard coded to produce rates from 1950 to the end of the truncation range.
-- Rates are very (very) computationally expensive (time); set to `n` unless specifically needed.
-
-
-**`HEADLINE_TOGGLES`**: Which headline definitions to calculate
-- `'annual,SR1.5,AR6,CGWL'` = all four definitions
-- `n` = skip headline calculations (only produce annual timeseries)
+**`DEFINITIONS`**: Which warming definitions to give
+- `'annual,SR1.5,AR6,CGWL,rates'` = all five: the warming in each year; the value at mid-year of the line fitted through the last 15 years (SR1.5); the mean of the last 10 years (AR6); the mean of the 19 years centred on the year (CGWL); and the warming rate, the slope of the line fitted through the last 10 years (AR6).
+- Each definition gets its own timeseries CSV, over every output year whose window fits within the truncation range, and its values at the headline years go into the headlines CSV.
+- At least one is needed, e.g. `annual` for the basic annual timeseries. The annual timeseries is always written, since the plots build on it.
 
 
 **`HEADLINE_YEARS`**: Which years to calculate headlines for
@@ -386,9 +382,9 @@ global-warming-index/
 │            └── ENSEMBLE-MEMBER--ERF-{member}_GMT-{member}/
 │                └── VARIABLES--{vars}/
 │                    └── REGRESSED-YEARS--{start}-{end}/
-│                        ├── GWI_results_timeseries_*.csv
-│                        ├── GWI_results_headlines_*.csv
-│                        └── GWI_results_rates_*.csv  (if INCLUDE_RATE=y)
+│                        ├── GWI_results_timeseries-ANNUAL_*.csv
+│                        ├── GWI_results_timeseries-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
+│                        └── GWI_results_headlines_*.csv
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
 ├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
 └── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
@@ -403,15 +399,14 @@ The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-in
 - `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries_*.csv`, one per inputs folder), for the internal-variability figures.
 
 The CSVs are:
-- **Timeseries**: Annual values for all variables and percentiles
-- **Headlines**: Values for specific headline definitions (single year, SR1.5 30-year average centred using extrapolations, AR6 lagged decade average, CGWL 20 year average centred using constrained projections)
-- **Rates**: Warming rates for all variables and percentiles (if calculated)
+- **Timeseries** (`timeseries-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
+- **Headlines**: every definition's values at the headline years, in one table
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 
 The figures in `plots/aggregated/` follow the same `ERF--…_GMT--…`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy, and their names carry the same labels. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
 - `Timeseries_*` = the attributed warming timeseries, with uncertainty, against the observations
-- `Rates_*` = warming rates (if `INCLUDE_RATE=y`)
+- `Rates_*` = warming rates (if `rates` is among the `DEFINITIONS`)
 - `SPM2_BarPlot_*` = one per headline period: a bar chart of the attributed warming, in the style of IPCC AR6 WGI Figure SPM.2
 - `Waterfall_BarPlot_*` = one per headline period: the contributions to total warming as a waterfall, with subtotals
 

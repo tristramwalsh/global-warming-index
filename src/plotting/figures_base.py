@@ -125,11 +125,9 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
                  ):
     """Plot the warming rates of one regressed range, and save it.
 
-    df_rates is the range's averaged rates, indexed by period (e.g.
-    '1941-1950 (AR6 rate definition)'), and df_temp_Obs the observed
-    temperatures. Re-indexes df_rates in place by each period's end year,
-    which is safe because each pool worker has its own copy. Returns the
-    saved figure's path.
+    df_rates is the range's averaged rates, indexed by each trend's last
+    year, and df_temp_Obs the observed temperatures. Returns the saved
+    figure's path.
 
     In the pipeline: overarching_base_result_plotter runs it in a pool, once
     per regressed range that has rates.
@@ -139,14 +137,6 @@ def figure_rates(reg_range, df_rates, scen, ens, reg_vars,
     """
     # Get all variables present in the data
     all_data_vars = df_rates.columns.get_level_values(0).unique().to_list()
-
-    # Transform the index of df_rates to numeric - it is currently of the form
-    # '1941-1950 (AR6 rate definition)' and we want that to be '1950' for
-    # plotting.
-    df_rates.index = df_rates.index.to_series().apply(
-        lambda x: (int(x.split('-')[1].split()[0]) if '-' in x
-                   else int(x.split()[0]))
-        )
 
     # Define major variables (for plumes)
     major_vars = reg_vars.split('-')

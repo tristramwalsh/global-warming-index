@@ -103,7 +103,7 @@ def final_value_of_trend_vectorised(array):
     year's annual mean. n annual means cover n years of data, and their
     first and last points are n - 1 years apart.
 
-    The caller chooses the n years (see summaries.sr15_headline_table and
+    The caller chooses the n years (see summaries.sr15_timeseries_table and
     gwi.py's SR15_TREND_YEARS).
 
     The SR1.5 definition: 'warming at a given point in time is defined as

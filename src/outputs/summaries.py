@@ -35,10 +35,10 @@ How the functions connect:
                                       year whose window lies within the
                                       output years
     gwi_timeseries_table,             each definition's timeseries CSV
-    sr15_timeseries_table,            (GWI_results_timeseries, -SR15, -AR6,
-    ar6_timeseries_table,             -CGWL) and the GWI_results_rates CSV:
-    cgwl_timeseries_table,            each names its window and definition
-    ar6_rate_table
+    sr15_timeseries_table,            (GWI_results_timeseries-ANNUAL, -SR15,
+    ar6_timeseries_table,             -AR6, -CGWL, -RATES): each names its
+    cgwl_timeseries_table,            window and definition
+    rates_timeseries_table
     headline_rows                     a timeseries' rows at the headline
                                       years, labelled for the
                                       GWI_results_headlines CSV, which gwi.py
@@ -126,8 +126,8 @@ def percentiles_by_year_and_variable(ensemble, sigmas):
 
 
 def gwi_timeseries_table(sample, sigmas, first_year, last_year):
-    """The table of the GWI_results_timeseries CSV: the percentiles of the
-    attributed warming, in every year from first_year to last_year.
+    """The table of the GWI_results_timeseries-ANNUAL CSV: the percentiles
+    of the attributed warming, in every year from first_year to last_year.
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
@@ -318,31 +318,27 @@ def cgwl_timeseries_table(sample, sigmas, first_output_year,
         years_before=half, years_after=half)
 
 
-def ar6_rate_table(sample, sigmas, first_output_year, last_output_year,
-                   trend_years):
-    """The table of the GWI_results_rates CSV: in every output year whose
-    window fits, the AR6-definition warming rate, the slope (°C per year)
-    of the least-squares line through that year's last trend_years annual
-    means, the year itself included (IPCC AR6 WGI, Ch. 3, Table 3.1).
+def rates_timeseries_table(sample, sigmas, first_output_year,
+                           last_output_year, trend_years):
+    """The table of the GWI_results_timeseries-RATES CSV: in every output
+    year whose window fits, the AR6-definition warming rate, the slope (°C
+    per year) of the least-squares line through that year's last
+    trend_years annual means, the year itself included (IPCC AR6 WGI, Ch.
+    3, Table 3.1).
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
     first_output_year, last_output_year: the output years (both included)
     trend_years: how many annual means each line is fitted through, e.g.
         gwi.py's AR6_RATE_YEARS
-    Returns a DataFrame with a row for each year, labelled '<first year of
-    its trend>-<year> (AR6 rate definition)', e.g. '2016-2025 (AR6 rate
-    definition)', as the rates CSV has always been.
+    Returns a DataFrame indexed by year ('Year'), each year being its
+    window's last.
     """
     # The slope of each member's fitted line through each window
-    rates = definition_timeseries_table(
+    return definition_timeseries_table(
         sample, sigmas, warming_definitions.rate_func_vectorised,
         first_output_year, last_output_year,
         years_before=trend_years - 1, years_after=0)
-    # Each row labelled by its trend's years
-    labels = [f'{year - (trend_years - 1)}-{year} (AR6 rate definition)'
-              for year in rates.index]
-    return headline_rows(rates, rates.index, labels)
 
 
 def headline_rows(timeseries, headline_years, labels):

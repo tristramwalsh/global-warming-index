@@ -7,6 +7,11 @@ repository README lists them all.
 
 Everything in this folder is licensed CC BY 4.0 (see `LICENSE.md`).
 
+The recipes and scheduling scripts kept with each release run with the code
+that made it, not necessarily with the latest: to rerun one, first check out
+the commit its README gives (`git checkout <hash>`). The outputs themselves
+are all here, so rerunning is rarely needed.
+
 ## README template for a new folder
 
 Copy this into `<folder>/README.md` and fill it in:

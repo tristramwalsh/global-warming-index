@@ -207,8 +207,7 @@ gwi_command() {
     --seed="${RECIPE_SEED}"
     --regress-range="${RECIPE_START_REGRESS}-$2"
     --truncate="${RECIPE_TRUNCATION}"
-    --include-rate="${RECIPE_INCLUDE_RATE}"
-    --headline-toggles="${RECIPE_HEADLINE_TOGGLES}"
+    --definitions="${RECIPE_DEFINITIONS}"
     --headline-years="${RECIPE_HEADLINE_YEARS}"
     --regress-variables="${RECIPE_VARS}"
     --erf-dataset="${RECIPE_ERF_DATASET}"
@@ -271,9 +270,6 @@ if [ "${RECIPE_COMMITTED}" != "n" ]; then
 fi
 if [ "${RECIPE_INCLUDE_SUB_VARS}" = "y" ]; then
   RUN_TAG="${RUN_TAG}_SUB-VARS--y"
-fi
-if [ "${RECIPE_INCLUDE_RATE}" = "y" ]; then
-  RUN_TAG="${RUN_TAG}_RATE--y"
 fi
 if [ -n "${RECIPE_SEED}" ]; then
   RUN_TAG="${RUN_TAG}_SEED--${RECIPE_SEED}"
