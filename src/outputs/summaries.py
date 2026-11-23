@@ -198,3 +198,42 @@ def sr15_headline_rows(sample, sigmas, headline_years, trend_years):
         rows.append(headline_row(percentiles, sigmas, sample.output_vars,
                                  f'{year} (SR15 definition)'))
     return rows
+
+
+def ar6_headline_rows(sample, sigmas, headline_years, mean_years):
+    """The AR6-definition rows of the GWI_results_headlines CSV: the
+    warming over the mean_years years ending in each headline year, the mean
+    of their annual means (IPCC AR6 WGI's decadal means).
+
+    sample: members.Sample
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    headline_years: the windows' last years, e.g. [2019, 2025]
+    mean_years: how many annual means each window averages, e.g. gwi.py's
+        AR6_MEAN_YEARS
+    Returns a list of one-row DataFrames (see headline_row), one per
+    window, labelled '<first year>-<last year>'.
+
+    E.g. for 2025 with mean_years = 10: the mean of the annual means of 2016
+    to 2025 inclusive, 10 years of data (1 January 2016 to 31 December
+    2025), labelled '2016-2025'.
+
+    Each window of members is rebuilt on its own: (mean_years, variables,
+    N), about 1.4 GiB for 10 years at --samples=60.
+    """
+    rows = []
+    for year in headline_years:
+        # The window's first year
+        first_year = year - (mean_years - 1)
+        # Every member's attributed warming over the window: (mean_years,
+        # variables, N)
+        window = sample.attributed_warming(first_year, year)
+        # Each member's mean over the window, along the year axis:
+        # (variables, N)
+        window_mean = window.mean(axis=0)
+        # Its percentiles along the member axis, the variables shared out
+        # over threads: (sigmas, variables)
+        percentiles = compute_resources.percentile_threaded(
+            window_mean, sigmas, axis=1)
+        rows.append(headline_row(percentiles, sigmas, sample.output_vars,
+                                 f'{first_year}-{year}'))
+    return rows

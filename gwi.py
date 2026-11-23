@@ -177,6 +177,11 @@ if __name__ == "__main__":
     #   16: data 2010-2025 for 2025, the mean over 31 years, 2010-2040
     SR15_TREND_YEARS = 15
 
+    # How many annual means the AR6 definition averages: the headline year
+    # and the AR6_MEAN_YEARS - 1 years before it, e.g. 2016-2025 for 2025
+    # (AR6's decadal means, e.g. 2011-2020)
+    AR6_MEAN_YEARS = 10
+
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
     # emulator_choice = 'AR5_IR'
@@ -1044,8 +1049,10 @@ if __name__ == "__main__":
     if 'AR6' in headline_toggles:
         T1 = dt.datetime.now()
         # AR6 DEFINITION (DECADE MEAN) ########################################
+        # The headline years whose whole window is in the output years
         hl_years_decadal = [y for y in hl_years
-                            if ((y in trunc_Yrs) and (y-9 in trunc_Yrs))]
+                            if ((y in trunc_Yrs) and
+                                (y - (AR6_MEAN_YEARS - 1) in trunc_Yrs))]
         if ((headline_years == 'IGCC') and (2019 not in hl_years_decadal)):
             hl_years_decadal.append(2019)
 
@@ -1058,29 +1065,19 @@ if __name__ == "__main__":
         #     years_headlines = [[end_regress-9, end_regress]]
 
         for year in hl_years_decadal:
-            if ((year not in trunc_Yrs) and (year-9 not in trunc_Yrs)):
+            # The window's first year (see AR6_MEAN_YEARS)
+            first_year = year - (AR6_MEAN_YEARS - 1)
+            # The window's first and last years must both be output years
+            # (2019, added for IGCC, may not be)
+            if (year not in trunc_Yrs) or (first_year not in trunc_Yrs):
                 raise ValueError(
-                    f'AR6 definition requires the years {year-9} and '
+                    f'AR6 definition requires the years {first_year} and '
                     f'{year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-            recent_years = warming_definitions.contiguous_slice(
-                (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
-            temp_Att_Results_AR6 = \
-                temp_Att_Results[recent_years, :, :].mean(axis=0)
 
-            # Obtain statistics
-            gwi_headline_array = compute_resources.percentile_threaded(
-                temp_Att_Results_AR6, SIGMAS, axis=1)
-            dict_Results = {
-                (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
-                                                 vars_list.index(var)]
-                for var in vars_list for sigma in SIGMAS
-            }
-            df_headlines_i = pd.DataFrame(
-                dict_Results, index=['-'.join([str(year-9), str(year)])])
-            df_headlines_i.columns.names = ['variable', 'percentile']
-            df_headlines_i.index.name = 'Year'
-            dfs.append(df_headlines_i)
+        # Each window's row, from that window of members, rebuilt on its own
+        dfs.extend(summaries.ar6_headline_rows(
+            sample, SIGMAS, hl_years_decadal, AR6_MEAN_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1216,19 +1213,25 @@ if __name__ == "__main__":
         if 'AR6' in headline_toggles:
             print('Calculating AR6-definition temps (Obs)', end=' ')
 
+            # The headline years whose whole window is observed
             hl_years_decadal = [y for y in hl_years
                                 if ((y in df_temp_Obs.index) and
-                                    (y-9 in df_temp_Obs.index))]
+                                    (y - (AR6_MEAN_YEARS - 1)
+                                     in df_temp_Obs.index))]
             if ((headline_years == 'IGCC') and
                 (2019 not in hl_years_decadal) and
                 (2019 in df_temp_Obs.index) and
-                (2010 in df_temp_Obs.index)):
+                (2019 - (AR6_MEAN_YEARS - 1) in df_temp_Obs.index)):
 
                 hl_years_decadal.append(2019)
 
             for year in hl_years_decadal:
-                temp_Obs_AR6 = df_temp_Obs.loc[year-9:year].mean(axis=0
-                                                                 ).to_numpy()
+                # The window's first year (see AR6_MEAN_YEARS)
+                first_year = year - (AR6_MEAN_YEARS - 1)
+                # Each observed member's mean over the window (pandas' .loc
+                # includes both ends): (observed members,)
+                temp_Obs_AR6 = df_temp_Obs.loc[first_year:year].mean(axis=0
+                                                                     ).to_numpy()
 
                 obs_headline_array = np.percentile(temp_Obs_AR6, SIGMAS)
 
@@ -1238,7 +1241,7 @@ if __name__ == "__main__":
                 }
 
                 df_headlines_obs_i = pd.DataFrame(
-                    dict_Results_obs, index=['-'.join([str(year-9), str(year)])])
+                    dict_Results_obs, index=[f'{first_year}-{year}'])
                 df_headlines_obs_i.columns.names = ['variable', 'percentile']
                 df_headlines_obs_i.index.name = 'Year'
                 dfs_obs.append(df_headlines_obs_i)
