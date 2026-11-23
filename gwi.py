@@ -182,6 +182,18 @@ if __name__ == "__main__":
     # (AR6's decadal means, e.g. 2011-2020)
     AR6_MEAN_YEARS = 10
 
+    # How many annual means the CGWL definition (current global warming
+    # level, Betts et al., 2023) averages: an even number, half of them
+    # ending in the headline year and half after it, e.g. 2016-2035 for
+    # 2025. So the window is centred on the end of the headline year (the
+    # middle of 2025 to the middle of 2026, as the annual means stand for
+    # mid-years), not its middle: an even number of annual means can't be
+    # centred on a mid-year
+    CGWL_MEAN_YEARS = 20
+    if CGWL_MEAN_YEARS % 2:
+        raise ValueError(
+            f'CGWL_MEAN_YEARS must be even, not {CGWL_MEAN_YEARS}.')
+
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
     # emulator_choice = 'AR5_IR'
@@ -1088,41 +1100,29 @@ if __name__ == "__main__":
         # This definition was propsoed in Betts et al., 2023, and is not
         # currently used in the IPCC/IGCC assessments.
 
-        # Check that we have the years needed for the CGWL definition
+        # The headline years whose whole window is in the output years
+        hl_years_cgwl = []
         for year in hl_years:
-            if not ((year-9 in trunc_Yrs) and (year+10 in trunc_Yrs)):
+            # The window's first and last years (see CGWL_MEAN_YEARS)
+            first_year = year - (CGWL_MEAN_YEARS // 2 - 1)
+            last_year = year + CGWL_MEAN_YEARS // 2
+            if not ((first_year in trunc_Yrs) and (last_year in trunc_Yrs)):
                 # Often we can produce SR1.5 and AR6 definitions but not CGWL
                 # due to not having data off the end of the truncation period.
                 # Therefore, we simply print a warning rather than raising an
                 # error, so that we can still produce the headlines csv without
                 # the CGWL definition.
                 print(
-                    f'CGWL definition requires the years {year-9} and '
-                    f'{year+10} to be in the truncation years: '
+                    f'CGWL definition requires the years {first_year} and '
+                    f'{last_year} to be in the truncation years: '
                     f'({min(trunc_Yrs)}-{max(trunc_Yrs)})', end=' ')
-
             else:
                 print('Calculating CGWL-definition temps', end=' ')
+                hl_years_cgwl.append(year)
 
-                recent_years = warming_definitions.contiguous_slice(
-                    (year-9 <= trunc_Yrs) * (trunc_Yrs <= year+10))
-                temp_Att_Results_CGWL = \
-                    temp_Att_Results[recent_years, :, :].mean(axis=0)
-                # Obtain statistics
-                gwi_headline_array = compute_resources.percentile_threaded(
-                    temp_Att_Results_CGWL, SIGMAS, axis=1)
-                dict_Results = {
-                    (var, sigma): gwi_headline_array[SIGMAS.index(sigma),
-                                                    vars_list.index(var)]
-                    for var in vars_list for sigma in SIGMAS
-                }
-                df_headlines_i = pd.DataFrame(
-                    dict_Results, index=[
-                        f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"
-                    ])
-                df_headlines_i.columns.names = ['variable', 'percentile']
-                df_headlines_i.index.name = 'Year'
-                dfs.append(df_headlines_i)
+        # Each window's row, from that window of members, rebuilt on its own
+        dfs.extend(summaries.cgwl_headline_rows(
+            sample, SIGMAS, hl_years_cgwl, CGWL_MEAN_YEARS))
 
         T2 = dt.datetime.now()
         print(f'... took {T2 - T1}')
@@ -1251,8 +1251,15 @@ if __name__ == "__main__":
             print('Calculating CGWL-definition temps (Obs)', end=' ')
 
             for year in hl_years:
-                if ((year-9 in df_temp_Obs.index) and (year+10 in df_temp_Obs.index)):
-                    temp_Obs_CGWL = df_temp_Obs.loc[year-9:year+10].mean(axis=0).to_numpy()
+                # The window's first and last years (see CGWL_MEAN_YEARS)
+                first_year = year - (CGWL_MEAN_YEARS // 2 - 1)
+                last_year = year + CGWL_MEAN_YEARS // 2
+                if ((first_year in df_temp_Obs.index) and
+                        (last_year in df_temp_Obs.index)):
+                    # Each observed member's mean over the window (pandas'
+                    # .loc includes both ends): (observed members,)
+                    temp_Obs_CGWL = df_temp_Obs.loc[
+                        first_year:last_year].mean(axis=0).to_numpy()
 
                     obs_headline_array = np.percentile(temp_Obs_CGWL, SIGMAS)
 
@@ -1262,7 +1269,8 @@ if __name__ == "__main__":
                     }
 
                     df_headlines_obs_i = pd.DataFrame(
-                        dict_Results_obs, index=[f"{'-'.join([str(year-9), str(year+10)])} (CGWL definition)"])
+                        dict_Results_obs,
+                        index=[f'{first_year}-{last_year} (CGWL definition)'])
                     df_headlines_obs_i.columns.names = ['variable', 'percentile']
                     df_headlines_obs_i.index.name = 'Year'
                     dfs_obs.append(df_headlines_obs_i)
