@@ -183,16 +183,17 @@ if __name__ == "__main__":
     AR6_MEAN_YEARS = 10
 
     # How many annual means the CGWL definition (current global warming
-    # level, Betts et al., 2023) averages: an even number, half of them
-    # ending in the headline year and half after it, e.g. 2016-2035 for
-    # 2025. So the window is centred on the end of the headline year (the
-    # middle of 2025 to the middle of 2026, as the annual means stand for
-    # mid-years), not its middle: an even number of annual means can't be
-    # centred on a mid-year
-    CGWL_MEAN_YEARS = 20
-    if CGWL_MEAN_YEARS % 2:
+    # level, Betts et al., 2023) averages: an odd number, centred on the
+    # headline year, (CGWL_MEAN_YEARS - 1) / 2 years either side of it.
+    # Centred on the middle of the headline year, the time its annual mean
+    # stands for, as the annual, SR1.5 and AR6 definitions are (an even
+    # number of annual means would be centred on a year's end):
+    #   19: 2016-2034 for 2025, centred on mid-2025
+    #   20: 2016-2035 for 2025, centred on the end of 2025
+    CGWL_MEAN_YEARS = 19
+    if CGWL_MEAN_YEARS % 2 == 0:
         raise ValueError(
-            f'CGWL_MEAN_YEARS must be even, not {CGWL_MEAN_YEARS}.')
+            f'CGWL_MEAN_YEARS must be odd, not {CGWL_MEAN_YEARS}.')
 
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
@@ -1104,8 +1105,8 @@ if __name__ == "__main__":
         hl_years_cgwl = []
         for year in hl_years:
             # The window's first and last years (see CGWL_MEAN_YEARS)
-            first_year = year - (CGWL_MEAN_YEARS // 2 - 1)
-            last_year = year + CGWL_MEAN_YEARS // 2
+            first_year = year - (CGWL_MEAN_YEARS - 1) // 2
+            last_year = year + (CGWL_MEAN_YEARS - 1) // 2
             if not ((first_year in trunc_Yrs) and (last_year in trunc_Yrs)):
                 # Often we can produce SR1.5 and AR6 definitions but not CGWL
                 # due to not having data off the end of the truncation period.
@@ -1252,8 +1253,8 @@ if __name__ == "__main__":
 
             for year in hl_years:
                 # The window's first and last years (see CGWL_MEAN_YEARS)
-                first_year = year - (CGWL_MEAN_YEARS // 2 - 1)
-                last_year = year + CGWL_MEAN_YEARS // 2
+                first_year = year - (CGWL_MEAN_YEARS - 1) // 2
+                last_year = year + (CGWL_MEAN_YEARS - 1) // 2
                 if ((first_year in df_temp_Obs.index) and
                         (last_year in df_temp_Obs.index)):
                     # Each observed member's mean over the window (pandas'

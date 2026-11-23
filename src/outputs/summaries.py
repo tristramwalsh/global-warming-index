@@ -242,32 +242,31 @@ def ar6_headline_rows(sample, sigmas, headline_years, mean_years):
 def cgwl_headline_rows(sample, sigmas, headline_years, mean_years):
     """The CGWL-definition rows of the GWI_results_headlines CSV: the
     current global warming level (Betts et al., 2023) in each headline
-    year, the mean of mean_years annual means, half of them ending in that
-    year and half after it.
+    year, the mean of mean_years annual means centred on that year,
+    (mean_years - 1) / 2 either side of it.
 
     sample: members.Sample
     sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
     headline_years: the years to give, e.g. [2025]; each window must lie
         within the sample's years, so after the observations it uses the
         projected forcing
-    mean_years: how many annual means each window averages, an even
-        number, e.g. gwi.py's CGWL_MEAN_YEARS
+    mean_years: how many annual means each window averages, an odd
+        number, e.g. gwi.py's CGWL_MEAN_YEARS (which explains the choice)
     Returns a list of one-row DataFrames (see headline_row), one per year,
     labelled '<first year>-<last year> (CGWL definition)'.
 
-    E.g. for 2025 with mean_years = 20: the mean of the annual means of 2016
-    to 2035 inclusive, 20 years of data (1 January 2016 to 31 December
-    2035), centred on the end of 2025, labelled '2016-2035 (CGWL
-    definition)'.
+    E.g. for 2025 with mean_years = 19: the mean of the annual means of 2016
+    to 2034 inclusive, 19 years of data (1 January 2016 to 31 December
+    2034), centred on mid-2025, labelled '2016-2034 (CGWL definition)'.
 
     Each window of members is rebuilt on its own: (mean_years, variables,
-    N), about 2.7 GiB for 20 years at --samples=60.
+    N), about 2.6 GiB for 19 years at --samples=60.
     """
     rows = []
     for year in headline_years:
         # The window's first and last years
-        first_year = year - (mean_years // 2 - 1)
-        last_year = year + mean_years // 2
+        first_year = year - (mean_years - 1) // 2
+        last_year = year + (mean_years - 1) // 2
         # Every member's attributed warming over the window: (mean_years,
         # variables, N)
         window = sample.attributed_warming(first_year, last_year)
