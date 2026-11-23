@@ -1,5 +1,5 @@
-"""Which variables the GWI outputs hold, for gwi.py: the variables along the
-attribution's results array, and the aggregate variables (Ant, Tot), added
+"""Which variables the GWI outputs hold, for gwi.py: the variables of each
+member's attributed warming, and the aggregate variables (Ant, Tot), added
 as sums of their parts to the priors and to the forcing.
 """
 
@@ -9,15 +9,16 @@ import src.method.variables as variables
 
 
 def attribution_output_vars(forcing_vars, regress_vars):
-    """Return the variable names along axis 1 of the attribution array.
+    """Return the variable names along the variable axis of each member's
+    attributed warming (see members.Sample.output_vars).
 
     forcing_vars: the forcing variables, sorted (the v axis of T_mod)
     regress_vars: the regressed variables
 
     These are the forcing variables, followed by the aggregates diagnosed
     after the regression (see extra_vars) that are not already among them.
-    The order matters: it is the order of the variable axis of
-    temp_Att_Results, and of the output CSV columns.
+    The order matters: it is the order of the members' variable axis, and
+    of the output CSV columns.
     """
     diagnosed = variables.extra_vars(regress_vars)
     return list(forcing_vars) + [v for v in diagnosed if v not in forcing_vars]

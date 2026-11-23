@@ -1,5 +1,5 @@
-"""CPUs, memory and Slurm: how many workers to use, the results array,
-threaded percentiles, and reporting what a run costs.
+"""CPUs, memory and Slurm: how many workers to use, threaded percentiles,
+and checking and reporting what a run costs.
 """
 import functools
 import os
@@ -92,30 +92,6 @@ def n_workers():
             f'explicitly (GWI_NUM_WORKERS=4 python <script>.py).')
 
     return n_available
-
-
-def results_array(shape, dtype=np.float32):
-    """Return an empty array for the attribution results, after checking
-    that it can fit in the job's memory, and reporting what it will cost.
-
-    The memory is only charged to the job as the array is written, so the
-    check (see _check_and_report_memory) is what turns a run too big for its
-    allocation into an immediate, readable error, rather than the operating
-    system killing it minutes later.
-    """
-    # The array's size in bytes
-    n_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
-    # Stop now if it can't fit, and log the expected cost
-    _check_and_report_memory(n_bytes, shape)
-    try:
-        # The array itself, unfilled
-        return np.empty(shape, dtype=dtype)
-    except MemoryError as err:
-        raise MemoryError(
-            f'Could not reserve {n_bytes / 1024**3:.1f} GiB for the results '
-            f'of this run. That is more memory than this machine has '
-            f'available, so lower the number of samples, or use a larger '
-            f'node.') from err
 
 
 def _job_cgroup_value(filename):
@@ -230,62 +206,55 @@ def _walltime_remaining():
         return '?'
 
 
-def _check_and_report_memory(n_bytes, shape):
-    """Report what this run will cost, and stop if it cannot possibly work.
+def check_memory(held_bytes, block_name, block_bytes):
+    """Report what this run is expected to need, and stop now if it cannot
+    fit.
 
-    Without this the run would start, spend minutes emulating, and only then
-    be killed by the operating system with no explanation of what went wrong.
-    Checking first turns that into an immediate, readable message, and
-    putting the figures in the log means a run that later dies can still be
-    understood from its log alone.
+    held_bytes: what is held throughout the summaries, e.g. the sample and
+        stage B's coefficients
+    block_name, block_bytes: the summary that holds the most memory at once
+        while it runs, and how much (see summaries.largest_block_bytes)
+    Returns the expected peak, held_bytes + block_bytes, for
+    report_memory_used.
 
-    The peak comes to roughly TWICE the size of the results array, because
-    np.percentile copies whatever it is given (see percentile_threaded). So
-    needing more than the allocation for the array alone is hopeless and
-    stops the run; needing more than the allocation for twice it will almost
-    certainly die later at the percentile step, which is worth saying plainly
-    but not worth refusing outright, since the earlier stages may still be of
-    interest.
+    Without this a run too big for its allocation would start, spend minutes
+    emulating, and only then be killed by the operating system with no
+    explanation. Checking first turns that into an immediate, readable
+    message, and putting the figures in the log means a run that later dies
+    can still be understood from its log alone. The inputs, stage A's
+    emulator runs and the output tables come on top, and are not counted.
     """
     limit = job_memory_limit()
+    # The expected peak
+    expected = held_bytes + block_bytes
     advice = ('lower the number of samples (--samples), or raise the '
               'memory per CPU (RECIPE_CPU_MEM in a run-gwi.sh recipe)')
 
-    if limit is not None and n_bytes > limit:
-        raise MemoryError(
-            f'This run cannot fit in the memory it has been given. The '
-            f'results array alone needs {describe_bytes(n_bytes)} '
-            f'({shape[0]} years x {shape[1]} variables x {shape[2]:,} '
-            f'members), and this job may use only {describe_bytes(limit)}. '
-            f'To fix, {advice}.')
-
-    if limit is None:
-        verdict = 'cannot tell, not running under Slurm'
-    elif 2 * n_bytes > limit:
-        verdict = (f'LIKELY -- the expected peak is more than the allocation, '
-                   f'so this run will probably be killed at the percentile '
-                   f'step. To avoid, {advice}')
-    else:
-        verdict = 'not expected'
-
     run_log.log_section('Memory usage anticipated')
-    print(f'Results array: {describe_bytes(n_bytes)} '
-          f'({shape[0]} years x {shape[1]} variables x {shape[2]:,} members)\n'
-          f'Expected memory peak: near {describe_bytes(2 * n_bytes)} '
-          f'(np.percentile copies the input from results array, doubling the '
-          f'peak)\n'
-          f'Slurm allocated memory for job: {describe_bytes(limit)}\n'
-          f'Memory errors: {verdict}', flush=True)
+    print(f'Held throughout (the sample and the coefficients): '
+          f'{describe_bytes(held_bytes)}\n'
+          f'Largest block (the {block_name}): {describe_bytes(block_bytes)}\n'
+          f'Expected memory peak: near {describe_bytes(expected)}, plus the '
+          f'inputs\n'
+          f'Slurm allocated memory for job: {describe_bytes(limit)}',
+          flush=True)
+    if limit is not None and expected > limit:
+        raise MemoryError(
+            f'This run cannot fit in the memory it has been given: it needs '
+            f'about {describe_bytes(expected)}, and this job may use only '
+            f'{describe_bytes(limit)}. To fix, {advice}.')
+    return expected
 
 
-def report_memory_used(results_nbytes):
+def report_memory_used(expected_bytes):
     """Report what the run actually cost, to close the loop on the estimate.
 
-    The partner of the 'Memory usage anticipated' block printed when the
-    results array was made. Printing both means a log can be read on its own
-    to see whether the estimate was right, without going back to Slurm's
-    accounting -- which is purged eventually, and which in any case
-    double-counts memory shared between worker processes.
+    expected_bytes: the peak check_memory expected
+    The partner of the 'Memory usage anticipated' block. Printing both
+    means a log can be read on its own to see whether the estimate was
+    right, without going back to Slurm's accounting -- which is purged
+    eventually, and which in any case double-counts memory shared between
+    worker processes.
     """
     peak, limit = job_memory_peak(), job_memory_limit()
     if peak is None:
@@ -293,10 +262,9 @@ def report_memory_used(results_nbytes):
         return
     share = f' ({peak / limit:.0%} used)' if limit else ''
     print(f'Peak memory (usage): {describe_bytes(peak)} of '
-          f'{describe_bytes(limit)} allocated{share}\n'
-          f'Peak memory (vs results array): '
-          f'{peak / results_nbytes:.2f}x the {describe_bytes(results_nbytes)} '
-          f'results array, against the 2.00x anticipated', flush=True)
+          f'{describe_bytes(limit)} allocated{share}, against the '
+          f'{describe_bytes(expected_bytes)} anticipated (plus the inputs)',
+          flush=True)
 
 
 def percentile_threaded(array, q, axis, n_threads=None):

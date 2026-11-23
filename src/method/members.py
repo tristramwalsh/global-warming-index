@@ -306,6 +306,13 @@ class Sample:
         return len(self.member_index[0])
 
     @property
+    def nbytes(self):
+        """The memory the sample holds: T_mod, T_obs, the scaling factors
+        and the member index."""
+        return (self.T_mod.nbytes + self.T_obs.nbytes + self.beta.nbytes +
+                sum(positions.nbytes for positions in self.member_index))
+
+    @property
     def bytes_per_year(self):
         """The memory of one year of every member's attributed warming:
         variables × N numbers in MEMBER_DTYPE."""

@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 import src.infrastructure.compute_resources as compute_resources
+import src.method.members as members
 import src.method.warming_definitions as warming_definitions
 
 
@@ -43,6 +44,47 @@ def years_per_block(sample):
     percentiles make of them); 5 years (30 calculations) took 38.7 s.
     """
     return max(1, sample.n_threads // len(sample.output_vars))
+
+
+def largest_block_bytes(sample, headline_windows, rate_years=None):
+    """The most memory any summary the run gives holds at once, and which
+    one: the rebuilt members it works on, and what it makes from them.
+
+    sample: members.Sample
+    headline_windows: the window lengths in years of the headlines the run
+        gives, e.g. gwi.py's SR15_TREND_YEARS and AR6_MEAN_YEARS; empty if
+        it gives none (or only the annual one, which reads the timeseries)
+    rate_years: the rates' window length in years, e.g. gwi.py's
+        AR6_RATE_YEARS; None if the run gives no rates
+    Returns (name, bytes), e.g. ('rates', 4.2e9).
+
+    In units of one year of every member, Y = sample.bytes_per_year, with
+    float64 results w = 2 times larger than MEMBER_DTYPE's, and b years per
+    block (see years_per_block):
+        timeseries  2b Y: a block, and the copy the percentiles make of it
+        headlines   (window + 2w) Y: the longest window, its summary per
+                    member (variables, N), and the percentiles' copy of that
+        rates       (rate_years - 1 + b) Y + 2wb Y: a block with the windows
+                    before it, its slopes, and the percentiles' copy of them
+    """
+    # One year of every member's attributed warming
+    year_bytes = sample.bytes_per_year
+    # How much larger a float64 array is than one in MEMBER_DTYPE
+    widen = (np.dtype(np.float64).itemsize /
+             np.dtype(members.MEMBER_DTYPE).itemsize)
+    # How many years each block of the timeseries and the rates holds
+    block_years = years_per_block(sample)
+    # Each summary's most memory at once: the timeseries always, the
+    # headlines and rates if the run gives them
+    blocks = {'timeseries': 2 * block_years * year_bytes}
+    if headline_windows:
+        blocks['headlines'] = (max(headline_windows) + 2 * widen) * year_bytes
+    if rate_years is not None:
+        blocks['rates'] = ((rate_years - 1 + block_years) * year_bytes +
+                           2 * widen * block_years * year_bytes)
+    # The largest of them
+    name = max(blocks, key=blocks.get)
+    return name, int(blocks[name])
 
 
 def year_blocks(first_year, last_year, years_per_block):

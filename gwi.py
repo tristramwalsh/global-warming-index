@@ -849,21 +849,32 @@ if __name__ == "__main__":
     )
     # The names along the members' variable axis
     vars_list = sample.output_vars
-    # Every member over every output year, for the outputs that still take
-    # them all at once (headlines and rates), after checking they fit in
-    # memory: (t, variables, N)
-    temp_Att_Results = compute_resources.results_array(
-        shape=(end_trunc - start_trunc + 1, len(vars_list),
-               sample.n_members),
-        dtype=members.MEMBER_DTYPE)
-    sample.attributed_warming(start_trunc, end_trunc, into=temp_Att_Results)
+    # The windows of the headlines this run gives (the annual headline reads
+    # the timeseries, so needs none of its own)
+    headline_windows = []
+    if headline_toggles and 'SR1.5' in headline_toggles:
+        headline_windows.append(SR15_TREND_YEARS)
+    if headline_toggles and 'AR6' in headline_toggles:
+        headline_windows.append(AR6_MEAN_YEARS)
+    if headline_toggles and 'CGWL' in headline_toggles:
+        headline_windows.append(CGWL_MEAN_YEARS)
+    # The summary that holds the most rebuilt members at once, and how much,
+    # among those this run gives
+    largest_block_name, largest_block_bytes = summaries.largest_block_bytes(
+        sample, headline_windows,
+        rate_years=AR6_RATE_YEARS if rate_toggle else None)
+    # Stop now if the summaries can't fit, and log what they should need
+    expected_memory = compute_resources.check_memory(
+        held_bytes=sample.nbytes + coefs.obs.nbytes + coefs.pic.nbytes,
+        block_name=largest_block_name,
+        block_bytes=largest_block_bytes)
     T1b = dt.datetime.now()
     run_log.log_section('Timeseries')
     print(f'Calculating GWI ... took {T1b - T1a}')
     # The start of the PRIORS stage
     T2a = T1b
     # The number of members, for the output file names
-    n = temp_Att_Results.shape[2]
+    n = sample.n_members
 
 
     # PRIOR WARMING ###########################################################
@@ -1318,9 +1329,9 @@ if __name__ == "__main__":
         print(f'... took {T8 - T7}')
 
     # What the run actually cost, to sit alongside the 'Memory usage
-    # anticipated' block printed when the results array was made.
+    # anticipated' block
     run_log.log_section('Memory usage recorded')
-    compute_resources.report_memory_used(temp_Att_Results.nbytes)
+    compute_resources.report_memory_used(expected_memory)
 
     time_omega = dt.datetime.now()
     total_time = time_omega - time_alpha
