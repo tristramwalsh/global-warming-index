@@ -195,6 +195,15 @@ if __name__ == "__main__":
         raise ValueError(
             f'CGWL_MEAN_YEARS must be odd, not {CGWL_MEAN_YEARS}.')
 
+    # How many annual means the AR6 rate definition's trend is fitted
+    # through: the year and the AR6_RATE_YEARS - 1 years before it, e.g.
+    # 2016-2025 for 2025; the rate is the line's slope, in °C per year (AR6
+    # WGI, Ch. 3, Table 3.1)
+    AR6_RATE_YEARS = 10
+    # The first year whose rate the rates CSV gives; the last is the final
+    # output year
+    FIRST_RATE_YEAR = 1950
+
     # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
     # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
     # emulator_choice = 'AR5_IR'
@@ -1289,38 +1298,18 @@ if __name__ == "__main__":
         T7 = dt.datetime.now()
         run_log.log_section('Warming rates')
         print('Calculating AR6-definition attributed warming rates', end=' ')
-        dfs_rates = []
-        for year in np.arange(1950, end_trunc+1):
-            recent_years = warming_definitions.contiguous_slice(
-                (year-9 <= trunc_Yrs) * (trunc_Yrs <= year))
-            ten_slice = temp_Att_Results[recent_years, :, :]
-
-            # Calculate AR6-definition warming rate for each var-ens
-            # combination. See AR6 WGI Chapter 3 Table 3.1.
-            # This loop runs once per year from 1950, and previously created an
-            # mp.Pool per variable within each of those years -- several
-            # hundred pools per member, each pickling millions of 10-year
-            # series. That is why enabling rates used to cost days. The
-            # vectorised form fits every trend in one weighted sum, and agrees
-            # with the per-series np.polyfit fit to ~1e-16.
-            temp_Rate_Results = warming_definitions.rate_func_vectorised(
-                ten_slice)
-
-            # Obtain statistics
-            gwi_rate_array = compute_resources.percentile_threaded(
-                temp_Rate_Results, SIGMAS, axis=1)
-            dict_Results = {
-                (var, sigma):
-                gwi_rate_array[SIGMAS.index(sigma), vars_list.index(var)]
-                for var in vars_list for sigma in SIGMAS
-            }
-            df_rates_i = pd.DataFrame(
-                dict_Results, index=[f'{year-9}-{year} (AR6 rate definition)'])
-            df_rates_i.columns.names = ['variable', 'percentile']
-            df_rates_i.index.name = 'Year'
-            dfs_rates.append(df_rates_i)
-
-        df_rates = pd.concat(dfs_rates, axis=0)
+        # The first rate's trend starts AR6_RATE_YEARS - 1 years before it,
+        # which must be an output year
+        if FIRST_RATE_YEAR - (AR6_RATE_YEARS - 1) not in trunc_Yrs:
+            raise ValueError(
+                f'The AR6 rate definition requires the years '
+                f'{FIRST_RATE_YEAR - (AR6_RATE_YEARS - 1)} and {end_trunc} '
+                f'to be in the truncation years: '
+                f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
+        # Every year's rate, FIRST_RATE_YEAR to the last output year, from
+        # members rebuilt a block of years at a time
+        df_rates = summaries.ar6_rate_table(
+            sample, SIGMAS, FIRST_RATE_YEAR, end_trunc, AR6_RATE_YEARS)
         results_layout.write_csv(
             df_rates,
             f'{results_folder}{output_path}' +

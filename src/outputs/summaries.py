@@ -281,3 +281,63 @@ def cgwl_headline_rows(sample, sigmas, headline_years, mean_years):
             percentiles, sigmas, sample.output_vars,
             f'{first_year}-{last_year} (CGWL definition)'))
     return rows
+
+
+def ar6_rate_table(sample, sigmas, first_year, last_year, trend_years):
+    """The table of the GWI_results_rates CSV: in every year from
+    first_year to last_year, the AR6-definition warming rate, the slope (°C
+    per year) of the least-squares line through that year's last
+    trend_years annual means, the year itself included (IPCC AR6 WGI, Ch.
+    3, Table 3.1).
+
+    sample: members.Sample
+    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
+    first_year, last_year: the years whose rates to give (both included)
+    trend_years: how many annual means each line is fitted through, e.g.
+        gwi.py's AR6_RATE_YEARS
+    Returns a DataFrame with a row for each year, labelled '<first year of
+    its trend>-<year> (AR6 rate definition)', e.g. '2016-2025 (AR6 rate
+    definition)', and a column for each (variable, percentile).
+
+    The years are taken in blocks (see years_per_block). Each block
+    rebuilds its years and the trend_years - 1 before them, the overlapping
+    windows of its rates, (trend_years - 1 + years in the block, variables,
+    N), and takes the percentiles of all its rates in one pass over the
+    threads.
+    """
+    # The percentiles of each block of years: one (sigmas, t, variables)
+    # array per block
+    block_percentiles = []
+    for first, last in year_blocks(first_year, last_year,
+                                   years_per_block(sample)):
+        # Every member's attributed warming from the first window's first
+        # year to the block's last year: (trend_years - 1 + t, variables,
+        # N)
+        members_warming = sample.attributed_warming(
+            first - (trend_years - 1), last)
+        # Each year's rate: the slope along the year axis of each member's
+        # line through its window, the trend_years years ending in it, one
+        # (variables, N) array per year, stacked: (t, variables, N)
+        rates = np.stack([
+            warming_definitions.rate_func_vectorised(
+                members_warming[i:i + trend_years])
+            for i in range(last - first + 1)])
+        # Their percentiles along the member axis: (sigmas, t, variables)
+        block_percentiles.append(
+            percentiles_by_year_and_variable(rates, sigmas))
+    # Every year's percentiles, the blocks joined along the year axis:
+    # (sigmas, t, variables)
+    percentiles = np.concatenate(block_percentiles, axis=1)
+    # One CSV column per (variable, percentile), each over the years: (t,)
+    columns = {
+        (var, sigma): percentiles[sigmas.index(sigma), :, v]
+        for v, var in enumerate(sample.output_vars) for sigma in sigmas
+    }
+    # Each row's label: its trend's years
+    labels = [f'{year - (trend_years - 1)}-{year} (AR6 rate definition)'
+              for year in range(first_year, last_year + 1)]
+    # The table, one CSV row per year
+    table = pd.DataFrame(columns, index=labels)
+    table.columns.names = ['variable', 'percentile']
+    table.index.name = 'Year'
+    return table
