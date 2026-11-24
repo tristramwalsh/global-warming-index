@@ -240,6 +240,47 @@ def load_iteration_dfs(regressed_years, result_type, scenario,
     return dict_iterations, size_iterations
 
 
+def warn_if_mixed(dict_iterations, regressed_years, scenario,
+                  ensemble_selection, regressed_vars):
+    """Print a warning if one configuration's iterations mix sampling
+    designs or ensemble sizes.
+
+    dict_iterations:
+        the iterations, keyed by file name (see load_iteration_dfs)
+    regressed_years, scenario, ensemble_selection, regressed_vars:
+        the configuration, for the warning
+
+    The average weights each iteration by its ensemble size, which is right
+    for repeats of one design and size. Mixed ones are averaged too, but
+    they usually mean two pieces of work share an output tag (or none was
+    set), e.g. a sensitivity test written into a production tag, so the
+    warning lists them, with how many iterations each has:
+
+        Warning: ERF--IGCC-2025_..., ENSEMBLE-MEMBER--ERF-all_GMT-all,
+        VARIABLES--GHG-Nat-OHF, REGRESSED-YEARS--1850-2025 mixes ensemble
+        designs/sizes: latin-1000000 (3 iterations), mc-30000 (1 iteration)
+
+    Names written before the sampling designs have no design, and show as
+    e.g. size-28000.
+    """
+    # Each iteration's design and size, as one label, e.g. latin-1000000
+    labels = []
+    for file_name in dict_iterations:
+        design, n_members = results_layout.sample_from_name(file_name)
+        labels.append(f'{design or "size"}-{n_members}')
+    # Nothing to say if they are all the same
+    if len(set(labels)) <= 1:
+        return
+    # ... otherwise each label, with how many iterations have it
+    listed = ', '.join(
+        f'{label} ({labels.count(label)} '
+        f'{"iteration" if labels.count(label) == 1 else "iterations"})'
+        for label in sorted(set(labels)))
+    print(f'Warning: {scenario}, ENSEMBLE-MEMBER--{ensemble_selection}, '
+          f'VARIABLES--{regressed_vars}, REGRESSED-YEARS--{regressed_years} '
+          f'mixes ensemble designs/sizes: {listed}', flush=True)
+
+
 def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
                     regressed_vars):
     """
@@ -264,6 +305,12 @@ def combine_repeats(regressed_years, result_type, scenario, ensemble_selection,
 
     if len(dict_iterations) == 0:
         return None, None, None
+
+    # Say if the iterations mix designs or ensemble sizes (once per
+    # configuration: for its annual timeseries, which every run writes)
+    if result_type == RESULT_TYPES[0]:
+        warn_if_mixed(dict_iterations, regressed_years, scenario,
+                      ensemble_selection, regressed_vars)
 
     iteration_files = list(dict_iterations.keys())
 

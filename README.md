@@ -170,7 +170,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
     - `mc` = $N$ members drawn independently and uniformly from the complete ensemble (Monte Carlo).
     - `cube` = every combination of $k$ random members of each source (all of a source with fewer than $k$), with the largest $k$ that keeps the cube within $N$, so it can have fewer members than asked for (by up to ~20%). Earlier GWI releases used a cube that kept every parameter set, with $k$ given directly.
     - `all` = every member of the complete ensemble: no sampling error, and the same result every time. It needs a large-memory node for IGCC-sized datasets (see **Memory and Computing Resources**).
-- The number of entries is the number of iterations. When repeat runs are generated, the results are combined using a weighted average (weighted by ensemble size of each iteration) in `combine_results_iterations.py`, to minimise sampling noise.
+- The number of entries is the number of iterations. When repeat runs are generated, the results are combined using a weighted average (weighted by ensemble size of each iteration) in `combine_results_iterations.py`, to minimise sampling noise. If one configuration's iterations mix designs or ensemble sizes (usually two pieces of work sharing an `OUTPUT_TAG`, or none set), the combination script still averages them, but prints a warning listing them, e.g. `mixes ensemble designs/sizes: latin-1000000 (3 iterations), mc-30000 (1 iteration)`.
 - Examples:
     - e.g. `(latin-1e4)` = a quick test
     - e.g. `(latin-1e6 latin-1e6 latin-1e6)` runs 3 repeat iterations of a million members each

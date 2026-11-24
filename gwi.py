@@ -797,18 +797,11 @@ def draw_members(cfg, inputs):
           f'x ERF members x observed members x piControl segments = '
           f'{" x ".join(str(n) for n in axis_lengths)})')
 
-    # The cube's members per source, which sets its size
-    if cfg.sampling_design == 'cube':
-        k = sampling.cube_samples_per_axis(cfg.ensemble_size, axis_lengths)
-        print(f'Cube: up to {k} members of each source')
-        if cfg.ensemble_size >= n_complete:
-            print(f'The ensemble size asked for, {cfg.ensemble_size:,}, '
-                  'reaches the complete ensemble, so the cube is every '
-                  'member.')
-    # The members, from the run's one random number generator
+    # The members, from the run's one random number generator; the design
+    # logs how it drew them (e.g. the cube's k, or latin's swaps)
     rng = np.random.default_rng(cfg.seed)
     member_index = sampling.DESIGNS[cfg.sampling_design](
-        axis_lengths, cfg.ensemble_size, rng)
+        axis_lengths, cfg.ensemble_size, rng, report=print)
 
     # The sample's actual size, against the size asked for and the
     # complete ensemble's

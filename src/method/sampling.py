@@ -31,7 +31,10 @@ The designs (DESIGNS), each treating the four sources alike:
 
 Each takes the axis lengths (P, E, O, C), the ensemble size N asked for,
 and a numpy Generator (np.random.default_rng(seed)), the run's only source
-of random numbers; `all` uses neither N nor the Generator.
+of random numbers; `all` uses neither N nor the Generator. Each also takes
+report: a function to give lines describing the draw to (gwi.py passes
+print, for its log), or None (the default) to say nothing; cube reports its
+k, and latin how many repeats it removed and how.
 
 Positions are stored in the smallest unsigned integer type that holds the
 axis's last position (uint8 up to 255, uint16 up to 65,535): 1 or 2 bytes
@@ -41,6 +44,8 @@ four arrays, 185 MiB → 29 MiB at 6 million members, and 25 GB → 4 GB for
 the complete ensemble (790 million members; 28 parameter sets, 1000 ERF
 members, 200 observed members, 141 piControl segments: 5 bytes per member).
 """
+
+import time
 
 import numpy as np
 
@@ -131,7 +136,7 @@ def cube_samples_per_axis(ensemble_size, axis_lengths):
     return k
 
 
-def cube(axis_lengths, ensemble_size, rng):
+def cube(axis_lengths, ensemble_size, rng, report=None):
     """The cube design: every combination of a random subset of each source.
 
     axis_lengths:
@@ -142,6 +147,9 @@ def cube(axis_lengths, ensemble_size, rng):
         (see cube_samples_per_axis), so it can have fewer
     rng:
         the run's numpy Generator
+    report:
+        a function to give a line describing the draw to (e.g. print), or
+        None to say nothing
     Returns the member index, (p, e, o, c), four (N',) arrays, N' ≤ N (see
     grid)
 
@@ -152,6 +160,11 @@ def cube(axis_lengths, ensemble_size, rng):
     """
     # The members of each source to draw
     k = cube_samples_per_axis(ensemble_size, axis_lengths)
+    if report:
+        complete_says = (', which is every member' if k >= max(axis_lengths)
+                         else '')
+        report(f'Cube: up to {k} members of each source{complete_says}')
+
     # A random subset of each axis, without replacement: four 1-D arrays
     drawn = [rng.choice(n_axis, min(k, n_axis), replace=False)
              for n_axis in axis_lengths]
@@ -159,7 +172,7 @@ def cube(axis_lengths, ensemble_size, rng):
     return grid(drawn, axis_lengths)
 
 
-def mc(axis_lengths, ensemble_size, rng):
+def mc(axis_lengths, ensemble_size, rng, report=None):
     """The Monte Carlo design: N members drawn independently and uniformly
     from the complete ensemble.
 
@@ -169,6 +182,8 @@ def mc(axis_lengths, ensemble_size, rng):
         N, the members to draw
     rng:
         the run's numpy Generator
+    report:
+        unused: there is nothing to report beyond the sample itself
     Returns the member index, (p, e, o, c), four (N,) arrays
 
     Each member's position along each axis is drawn uniformly, with
@@ -254,6 +269,10 @@ def remove_repeats(positions, axis_lengths, rng):
         (P, E, O, C), or as many axes as positions has rows
     rng:
         the run's numpy Generator
+    Returns (n_repeats, n_rounds):
+        n_repeats: how many members repeated one drawn before them, before
+            any swap
+        n_rounds: how many rounds of swaps removed them (0 if none)
 
     In plain words: find the members that appear twice; swap one of their
     positions with another member's; keep each swap only if it makes two
@@ -324,15 +343,16 @@ def remove_repeats(positions, axis_lengths, rng):
     is_first = np.zeros(n_members, dtype=bool)
     is_first[first_columns] = True
     repeats = columns[~is_first]
+    n_repeats = len(repeats)
     del used_ids, first_columns, uses, is_first
 
     # 3. Rounds of swaps, until no member repeats
-    for _ in range(EMPIRICALLY_TUNED_MAX_REPAIR_ROUNDS):
+    for n_rounds in range(EMPIRICALLY_TUNED_MAX_REPAIR_ROUNDS):
         # a. The members still repeating: a member stops when a swap
         # changes it, or moves the other copies of it away: (R,)
         repeats = repeats[times_drawn[ids[repeats]] > 1]
         if len(repeats) == 0:
-            return
+            return n_repeats, n_rounds
 
         # b. A random partner for each: drawn from every member, then kept
         # only if it isn't a repeat itself, and only the first time it is
@@ -385,7 +405,7 @@ def remove_repeats(positions, axis_lengths, rng):
         f'{EMPIRICALLY_TUNED_MAX_REPAIR_ROUNDS} rounds of swaps.')
 
 
-def latin(axis_lengths, ensemble_size, rng, replace=False):
+def latin(axis_lengths, ensemble_size, rng, replace=False, report=None):
     """The Latin hypercube design: N members in which every member of each
     source is used equally often, the sources paired at random, and no
     member drawn twice until every member has been drawn.
@@ -400,6 +420,11 @@ def latin(axis_lengths, ensemble_size, rng, replace=False):
         True to let members repeat (the sources balanced and paired at
         random, nothing more), for comparisons; the design `latin` is
         False
+    report:
+        a function to give lines describing the draw to (e.g. print): the
+        copies of the complete ensemble, whether the members were drawn to
+        include or to leave out, and how many repeats the swaps removed, in
+        how many rounds and how long; or None to say nothing
     Returns the member index, (p, e, o, c), four (N,) arrays
 
     In plain words, with M members in the complete ensemble:
@@ -475,8 +500,22 @@ def latin(axis_lengths, ensemble_size, rng, replace=False):
         balanced_positions(n_axis, n_to_draw, rng).astype(
             position_type(max(axis_lengths)))
         for n_axis in axis_lengths])
-    # ... with any repeated member swapped away
-    remove_repeats(positions, axis_lengths, rng)
+    # ... with any repeated member swapped away, timed for the report
+    swaps_start = time.perf_counter()
+    n_repeats, n_rounds = remove_repeats(positions, axis_lengths, rng)
+    if report:
+        # e.g. 'Latin: 2 copies of the complete ensemble, plus 1,976 members
+        # (drawn as the 1,048 to leave out): paired at random, 166 of those
+        # drawn repeated another, removed in 18 rounds of swaps (0.1 s)'
+        copies_says = (f'{n_copies} {"copy" if n_copies == 1 else "copies"} '
+                       'of the complete ensemble, plus ' if n_copies else '')
+        drawn_says = (f' (drawn as the {n_to_draw:,} to leave out)'
+                      if leave_out else '')
+        report(f'Latin: {copies_says}{n_rest:,} members{drawn_says}: '
+               f'paired at random, {n_repeats:,} of those drawn repeated '
+               f'another, removed in {n_rounds} '
+               f'{"round" if n_rounds == 1 else "rounds"} of swaps '
+               f'({time.perf_counter() - swaps_start:.1f} s)')
 
     # 2, again. If those were the members to leave out, take every other
     # member instead: flag the ones left out, among all M, then list the
@@ -499,12 +538,12 @@ def latin(axis_lengths, ensemble_size, rng, replace=False):
                  for copy, axis_rest in zip(copies, rest))
 
 
-def all_members(axis_lengths, ensemble_size=None, rng=None):
+def all_members(axis_lengths, ensemble_size=None, rng=None, report=None):
     """The `all` design: every member of the complete ensemble.
 
     axis_lengths:
         (P, E, O, C)
-    ensemble_size, rng:
+    ensemble_size, rng, report:
         unused: the design has P · E · O · C members, the same every time
     Returns the member index, (p, e, o, c), four (P · E · O · C,) arrays,
     ordered as grid orders them

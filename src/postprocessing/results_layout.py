@@ -115,23 +115,38 @@ def sample_name(sampling_design, n_members, seed):
     return f'ENSEMBLE--{sampling_design}-{n_members}-seed{seed}'
 
 
-def ensemble_size_from_name(file_name):
-    """The sample's size, N, from a results file's name (see sample_name).
+def sample_from_name(file_name):
+    """The sample's design and size, N, from a results file's name (see
+    sample_name).
 
     file_name:
         the name, or its path
-    Returns N, an int. Names written before the sampling designs (Phase 2
-    of the engine refactor) give it as ENSEMBLE-SIZE--<N>, which is read
-    too, so older results can still be averaged.
+    Returns (design, N):
+        design: e.g. 'latin'; None for names written before the sampling
+            designs (Phase 2 of the engine refactor), which give only the
+            size, as ENSEMBLE-SIZE--<N>, and are read too, so older results
+            can still be averaged
+        N: an int
     """
-    # The size in the sample's field, ENSEMBLE--<design>-<N>-seed<seed>
-    match = re.search(r'_ENSEMBLE--[a-z]+-(\d+)-seed\d+', file_name)
-    # ... or in the field of the names before it
-    if match is None:
-        match = re.search(r'_ENSEMBLE-SIZE--(\d+)', file_name)
-    if match is None:
-        raise ValueError(f'No ensemble size in the file name {file_name!r}.')
-    return int(match.group(1))
+    # The sample's field, ENSEMBLE--<design>-<N>-seed<seed>
+    match = re.search(r'_ENSEMBLE--([a-z]+)-(\d+)-seed\d+', file_name)
+    if match is not None:
+        return match.group(1), int(match.group(2))
+    # ... or the field of the names before it
+    match = re.search(r'_ENSEMBLE-SIZE--(\d+)', file_name)
+    if match is not None:
+        return None, int(match.group(1))
+    raise ValueError(f'No ensemble size in the file name {file_name!r}.')
+
+
+def ensemble_size_from_name(file_name):
+    """The sample's size, N, from a results file's name (see
+    sample_from_name), which iteration_averaging weights each iteration by.
+
+    file_name:
+        the name, or its path
+    """
+    return sample_from_name(file_name)[1]
 
 
 def write_csv(df, path):
