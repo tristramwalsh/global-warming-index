@@ -37,7 +37,7 @@ gives the same β, and it is what makes factor-then-sample possible. The
 reference fits their sum directly, so agreement also checks that linearity.
 
 Members are ordered (p, e, o, c), with the last index varying fastest, as in
-the engine's results array.
+the engine's member index (src/method/sampling.py's cube).
 """
 
 import functools

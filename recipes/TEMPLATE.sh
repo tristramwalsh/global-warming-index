@@ -72,7 +72,10 @@ RECIPE_START_REGRESS=1850
 RECIPE_END_REGRESS=2025
 
 # Select the subsampling sizes: one iteration for each value, each sampling
-# that many members from each source of uncertainty.
+# up to that many members from each source of uncertainty (the ERF members,
+# the observed members and the piControl segments; every FaIR parameter set
+# is always used), and taking every combination of them: 28 × k³ members
+# for k samples, e.g. about 6 million for 60.
 # e.g. RECIPE_SUBSAMPLE_ITERATIONS=(10)                (a quick test)
 # e.g. RECIPE_SUBSAMPLE_ITERATIONS=(60 60 60)          (three repeat
 #                                                       iterations, averaged
@@ -81,7 +84,12 @@ RECIPE_END_REGRESS=2025
 # e.g. RECIPE_SUBSAMPLE_ITERATIONS=(60 70 80 90 100)   (scaling up the
 #                                                       calculation)
 # e.g. RECIPE_SUBSAMPLE_ITERATIONS=(10000)             (maxing out the
-#                                                       calculation)
+#                                                       calculation: every
+#                                                       member, about 790
+#                                                       million for IGCC-2025
+#                                                       with HadCRUT-2025,
+#                                                       which needs a
+#                                                       large-memory node)
 RECIPE_SUBSAMPLE_ITERATIONS=(10)
 
 # Select a seed for the random sampling of ensemble members, for exactly
@@ -256,7 +264,9 @@ RECIPE_DEFINITIONS='annual,SR1.5,AR6,CGWL,rates'
 # Select which years for the headlines to cover.
 # e.g. 'end_regress' for the end of the regressed range
 # e.g. 'end_trunc' for the end of the truncation range
-# e.g. 'IGCC' for latest year, 2017 repeat, and 2010-2019 repeat
+# e.g. 'IGCC' for the end of the regressed range, plus each definition's
+#      year assessed in the IPCC reports (2017 for annual and SR1.5,
+#      2010-2019 for AR6 and rates), repeated to validate against them
 # e.g. '2024' for a single year
 # e.g. '2023,2024,2025' for multiple separate years.
 # e.g. 'end_regress,2050,2100,2300' to combine end_regress and manual years
@@ -279,8 +289,10 @@ RECIPE_HEADLINE_YEARS='end_regress'
 RECIPE_CLUSTER=htc
 
 # Select the resources for each Slurm job: time limit, CPUs, and memory per
-# CPU. 0:10:00, 28 and 9000M suit about 60-100 samples without rates; larger
-# ensembles need more memory, and rates or member-by-member runs more time.
+# CPU. 0:10:00, 28 and 9000M suit about 60 samples with every definition
+# (3 to 5 minutes, peaking near 5 GiB); the time and memory grow with the
+# number of members, and member-by-member runs need more time (see the
+# README's Memory and Computing Resources).
 RECIPE_WALLTIME=0:10:00
 RECIPE_SIM_CPUS=28
 RECIPE_CPU_MEM=9000M

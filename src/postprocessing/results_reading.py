@@ -381,7 +381,7 @@ def headline_var_available(df, period, var, context=''):
 
     There is exactly one situation in which a missing value is legitimate:
     'Res' (the residual, Obs - Tot) on a CGWL period. The CGWL definition is a
-    20-year window centred on the present (year-9 to year+10), so whenever it
+    19-year window centred on the present (year-9 to year+9), so whenever it
     extends beyond the end of the observations there is no observed
     temperature from which to form a residual, and gwi.py deliberately writes
     NaN there. Note that gwi.py already applies the same logic to the

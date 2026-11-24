@@ -377,7 +377,7 @@ def figure_thorne_et_al(
     ax.set_xlim(params['start_year'], params['end_year'] + 0.5)
     ax.set_title(
         'Calculated as historical-only: annual-mean, AR6 decade-mean, '
-        'SR1.5 centered 30-year mean, and CGWL centered 20-year mean')
+        'SR1.5 centered 30-year mean, and CGWL centered 19-year mean')
     gr.overall_legend(fig, 'lower center', 5)
 
     ax.set_ylabel('Attributable warming relative to 1850–1900 (⁰C)')

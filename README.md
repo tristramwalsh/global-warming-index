@@ -164,11 +164,11 @@ The following settings control the analysis. Every recipe sets each of them, nam
 
 
 **`SUBSAMPLE_ITERATIONS`**: The ensemble subsampling sizes
-- Assuming independence, the full ensemble contains $\mathcal{O}(10^8)$ samples, which is computationally very heavy (memory). To reduce this to a size manageable for computation, the code randomly samples a subset of ensemble members from each source (observational uncertainty, forcing uncertainty, climate parameter uncertainty, internal variability uncertainty).
-- This argument specifies how many samples to take from each source for each iteration (each value in the array), and how many iterations to run (the length of the array)
+- Assuming independence, the complete ensemble is every combination of the members of the four uncertainty sources: about 790 million members for the IGCC assessment (28 FaIR parameter sets × 1000 ERF members × 200 HadCRUT members × 141 piControl segments), which is computationally very heavy. To reduce this to a size manageable for computation, each run keeps every FaIR parameter set and randomly samples a subset of the members of each other source (forcing uncertainty, observational uncertainty, internal variability uncertainty), then takes every combination of those (see **What the Scripts Do**).
+- This argument specifies how many samples to take from each of those sources for each iteration (each value in the array), and how many iterations to run (the length of the array). With $k$ samples per source a run has $28 k^3$ members: e.g. about 6 million at $k = 60$.
 - When repeat runs are generated, the results are combined using a weighted average (weighted by ensemble size of each iteration) in `combine_results_iterations.py`, to minimise sampling noise.
 - Examples:
-    - e.g.`(90 90 90 90)` runs 4 repeat iterations with a maximum of 90 samples for each of the 4 uncertainty sources (observations, forcing, climate parameters, internal variability)
+    - e.g.`(90 90 90 90)` runs 4 repeat iterations with a maximum of 90 samples for each of the 3 sampled uncertainty sources (forcing, observations, internal variability)
     - e.g. `(30 60 90)` runs 3 repeat iterations with 30, 60, and 90 samples respectively
 
 **`SEED`**: A seed for the random sampling of ensemble members, for exactly reproducible runs
@@ -260,7 +260,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **`TRUNCATION`**: Year range for output timeseries (e.g., `1850-2050`)
 - Output is cut down to this range after regression, but BEFORE the headline calculations.
 - This enables constrained future projections to be produced if future ERF scenario forcings are available; in this case, the truncation will extend beyond the regression range.
-- NOTE: Where CGWL headlines are required, the truncation range must extend far enough into the future to accommodate the 9 years after each year that the CGWL averages (see Important Technical Details below).
+- NOTE: Where CGWL headlines are required, the truncation range must extend far enough into the future to accommodate the 9 years after each year that the CGWL averages (see **Truncation vs Regression Ranges** below).
 
 
 **`DEFINITIONS`**: Which warming definitions to give
@@ -272,7 +272,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **`HEADLINE_YEARS`**: Which years to calculate headlines for
 - `'end_regress'` = use the end of regression range (recommended for historical-only)
 - `'end_trunc'` = use the end of truncation range
-- `'IGCC'` for latest year, 2017 repeat, and 2010-2019 repeat (for IPCC validation)
+- `'IGCC'` = the end of the regression range, plus each definition's year assessed in the IPCC reports, repeated to validate against them and to show how the assessment has changed since: 2017 for the annual and SR1.5 definitions (assessed in SR1.5), and 2010-2019 for the AR6 mean and rate (assessed in AR6)
 - `'2024'` = specific single year
 - `'2023,2024,2025'` = multiple specific years
 - `'end_regress,2050,2100,2300'` to combine end_regress and manual years
@@ -289,9 +289,11 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **Slurm resources** (slurm mode only): `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
 - `CLUSTER` = which Slurm cluster to submit to on Oxford ARC: `arc`, `htc`, or `arc,htc` to take whichever starts sooner. The partition is set automatically from the host.
 - `SIM_CPUS`, `CPU_MEM`, `WALLTIME` = CPUs, memory per CPU, and time limit for each job.
-- Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits `SUBSAMPLE_ITERATIONS` of about 60-100 samples without rates. Larger ensembles need more memory (see **Memory and Computing Resources**), and rates or member-by-member runs need more time.
+- Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits `SUBSAMPLE_ITERATIONS` of about 60 samples: such a run, with every definition, takes 3 to 5 minutes and peaks near 5 GiB. Both grow with the number of members, as $k^3$ (see **Memory and Computing Resources**); member-by-member runs need more time.
 
-#### 2.3. What the Script Does
+#### 2.3. What the Scripts Do
+
+##### 2.3.1. `run-gwi.sh`
 
 The `run-gwi.sh` script:
 1. Checks the recipe against `recipes/TEMPLATE.sh`, then reads it
@@ -299,6 +301,20 @@ The `run-gwi.sh` script:
 3. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
     - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
     - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
+
+##### 2.3.2. `gwi.py`
+
+Each `gwi.py` run attributes the observed warming once, for one configuration, as a short pipeline of named steps (`main`, at the bottom of `gwi.py`; its module docstring lists them):
+
+1. **Read the configuration and load the inputs**: the ERF ensemble ($E$ members), the observed temperatures ($O$ members), the piControl segments that sample internal variability ($C$), and the FaIR parameter sets ($P = 28$, one emulating each of 28 CMIP6 models).
+2. **Draw the members.** A *member* of the ensemble is one choice from each source of uncertainty: a parameter set $p$, an ERF member $e$, an observed member $o$ and a piControl segment $c$. The run keeps every parameter set, draws up to `--samples` of each other source at random (seeded by `--seed`, if given), and takes every combination of those: $N = P k^3$ members for $k$ samples. Each member is stored as its four positions (its *member index*), in 1 or 2 bytes each.
+3. **Stage A, modelling warming priors**: FaIR runs on each forcing variable alone (e.g. GHG, OHF, Nat, and with `INCLUDE_SUB_VARS` their components), for every parameter set and ERF member, giving the modelled warming $T_\mathrm{mod}(p, e, t, v)$.
+4. **Stage B, constraining warming**: for every (parameter set, ERF member) pair, the least-squares fit of the observed temperatures onto the modelled warming of the regressed variables, over the regression years, gives the scaling factors that constrain it. The fit is made once for each observed member ($\beta_\mathrm{obs}$) and once for each piControl segment ($\beta_\mathrm{pic}$, the spread that internal variability adds); since the fit is linear in its target, a member's scaling factors are the sum of the two, $\beta = \beta_\mathrm{obs}[o] + \beta_\mathrm{pic}[c]$.
+5. **Stage C, drawing ensemble members**: member $n$'s attributed warming from each forcing variable is its scaling factor times its modelled warming, $\beta_n \, T_\mathrm{mod}(p_n, e_n, t, v)$ (a sub-variable takes the factor of the variable it is part of); `Tot` is their sum over the regressed variables (with the constant, if `INCLUDE_REG_CONST=y`), `Res` the observed temperature minus `Tot`, and `Ant` = GHG + OHF (see **Variable Regression Logic**). The members are never all held at once: `src/method/members.py` rebuilds them a block of years at a time, and only where each output needs them.
+6. **The percentile summaries**: each warming definition (see `DEFINITIONS`) is applied to every member, and the percentiles taken across the members, in every year whose window fits. The definitions are described once, in `WARMING_DEFINITIONS` in `gwi.py`, and applied in the same way to the observations. The prior warming (stage A's, before the constraint) and the ERFs have percentile summaries output as well.
+7. **Write** the inputs as used (the observed members and the piControl segments), the priors and the ERFs, then each definition's timeseries and the headlines (see **Output Structure**).
+
+The run's log is divided into labelled sections (`RUN CONFIGURATION`, `ENSEMBLE SAMPLING`, `STAGES A, B AND C`, `MEMORY USAGE ANTICIPATED`, `DEFINITIONS`, `DEFINITIONS FOR OBSERVATIONS`, `PRIORS AND ERF`, `MEMORY USAGE RECORDED` and `TOTAL`), with the time each step took.
 
 
 #### 2.4. Technical Notes
@@ -316,13 +332,16 @@ The truncation range defines the output timeseries extent, while the regression 
   - Must be within the forcing data range
   - The code automatically adjusts if specified outside available forcing data
 
-**Important for headline calculations**: 
-- Headline definitions (SR1.5, AR6, CGWL) require specific year ranges to be available in the truncation period:
-  - **SR1.5**: Needs 15 years before and including the target year (30-year centered mean)
-  - **AR6**: Needs 9 years before and including the target year (10-year lagged mean)
-  - **CGWL**: Needs 9 years before and 10 years after the target year (20-year centered mean)
+**Important for the warming definitions**: 
+- Each definition needs its window of years to lie within the truncation range:
+  - **SR1.5**: the target year and the 14 years before it (the end point of a 15-year linear trend, equivalent to a 29-year mean centred on the year)
+  - **AR6**: the target year and the 9 years before it (10-year lagged mean)
+  - **CGWL**: the target year and the 9 years either side of it (19-year centred mean)
+  - **rates**: the target year and the 9 years before it (the slope of the line fitted through those 10 years)
+- Each definition's timeseries covers the years whose window fits. A headline year whose window doesn't fit is left out of the headlines, with a note in the log.
+- Note that the definitions for SR1.5 and CWGL technically prescibe a 30 year and 20 year mean respectively. We choose to use 29 and 19 years respectively, so that the centred mean lands on is the mid-point of a year, rather than the end-point for consistency with with the annual mean and the AR6 decade mean, which are both indexed as the mid-point of a calendar year.
   
-If you set `HEADLINE_YEARS='end_regress'`, make sure your truncation range extends far enough to accommodate these definitions. For example, if `end_regress=2024` and you want CGWL, you need `end_trunc >= 2034`, and forcing projections that extend that far.
+If you set `HEADLINE_YEARS='end_regress'`, make sure your truncation range extends far enough to accommodate these definitions. For example, if `end_regress=2024` and you want CGWL, you need `end_trunc >= 2033`, and forcing projections that extend that far.
 
 ##### 2.4.2. Variable Regression Logic
 
@@ -441,8 +460,8 @@ To add a new year of an existing dataset (e.g. `HadCRUT-2026`), put its files in
 
 The prior temperature responses come from a climate model, and the rest of the
 attribution doesn't depend on which one. Each model has its own folder in
-`models/`, named after its `model_choice` in `gwi.py`, holding the model's code
-or parameters and a `SOURCE.md`:
+`models/`, holding the model's code or parameters and a `SOURCE.md`; the GWI
+reaches them only through `src/method/emulators.py`:
 
 - `models/FaIR_V2/`: FaIR v2.0.0-alpha1, used for all published results, with
   parameters emulating 28 CMIP6 models (`FaIR_CMIP6_climresp.csv`). The GWI
@@ -451,16 +470,20 @@ or parameters and a `SOURCE.md`:
   into `models/FaIR_V2/FaIRv2_0_0_alpha1/` the first time `models` is imported,
   and is not tracked by git.
 - `models/AR5_IR/`: the IPCC AR5 impulse response model, from earlier versions
-  of the GWI. It is not wired into the current analysis.
+  of the GWI, with its default parameters (`AR5_IR_params.py`). It is not
+  wired into the current analysis.
 
 
 ##### 2.4.7. Memory and Computing Resources
+The ensemble sizes for the GWI uncertainty calculations are extremely large, which can present significant memory and computing requirements. The code is written in a way to mitigate that pressure as far as possible.
 
-The uncertainty calculation is heavily memory-constrained. `gwi.py` holds every attributed ensemble member in one array, whose size grows steeply with the number of samples per uncertainty source (`SUBSAMPLE_ITERATIONS`), and its peak memory use is about twice that array.
+<!-- `gwi.py` never holds the whole ensemble of attributed warming (see **What the Scripts Do**). What it holds throughout is small: the modelled warming of every (parameter set, ERF member) pair, the scaling factors of every observed member and piControl segment for each pair, the observed temperatures, and each member's four positions (1 or 2 bytes each). The members' attributed warming is rebuilt a block of years at a time, and a block, with the copy that the percentiles make of it, takes 2 × years per block × variables × members × 4 bytes. So the memory grows with the number of members, through the blocks, whose size is chosen to fit. -->
 
-To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, the size of that array, the peak to expect, and the memory Slurm allocated to the job, and says whether it expects to run out. A run whose array cannot fit at all stops there, before any work is done. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
+<!-- The years per block are as many as the threads can take percentiles of in one pass (⌊threads / variables⌋, e.g. 4 for 6 variables on 28 threads; bigger blocks are no faster), unless the memory free when the sample is made (stage C) allows fewer; the log's `Years per block` line says which limits it. For example, at `SUBSAMPLE_ITERATIONS` of 60 (about 6 million members, 6 variables, 28 threads) the run holds 0.5 GiB, each block takes 1.1 GiB, and the measured peak is near 5 GiB, the inputs and stage A's FaIR runs coming on top. The complete ensemble (790 million members) needs about 19 GB for each year of a block (twice that with the percentiles' copy), and 4 GB for the members' positions. -->
 
-Both `gwi.py` and `combine_results_iterations.py` run as many worker processes as the CPUs Slurm allocates to the job, or, outside Slurm, as the CPUs of the machine; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation: an interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets.
+To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, what is held throughout, the largest block, the peak to expect, and the memory Slurm allocated to the job. A run that cannot fit stops there, before the members are rebuilt. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
+
+`gwi.py` rebuilds the members and takes their percentiles on as many threads, and `combine_results_iterations.py` runs as many worker processes, as the CPUs Slurm allocates to the job, or, outside Slurm, as the CPUs of the machine; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation. <!-- An interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets for the post-processing combination script. -->
 
 
 ##### 2.4.8. Running the GWI for Individual Ensemble Members

@@ -1,8 +1,9 @@
 """Climate models used to emulate the temperature response to forcing.
 
-Each model has its own folder here, named after its `model_choice` in gwi.py,
-holding the model's code or parameters and a SOURCE.md:
-- AR5_IR/:  the IPCC AR5 impulse response model.
+Each model has its own folder here, holding the model's code or parameters
+and a SOURCE.md; the GWI reaches them only through src/method/emulators.py:
+- AR5_IR/:  the IPCC AR5 impulse response model and its default parameters
+            (not wired into the current analysis).
 - FaIR_V2/: the CMIP6 climate-response parameters for FaIR v2.0.0-alpha1; the
             FaIR code itself is downloaded into FaIR_V2/FaIRv2_0_0_alpha1/ the
             first time this package is imported, and is not tracked by git.
