@@ -76,6 +76,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+import src.infrastructure.compute_resources as compute_resources
 import src.method.attribution as attribution
 import src.method.variables as variables
 
@@ -187,9 +188,49 @@ def rebuild(T_mod, beta, T_obs, member_index, forcing_vars, regress_vars,
     return members_warming
 
 
+# The memory of one member block's modelled warming in rebuild_into, which
+# sets how many members each block holds: 2 MiB, EMPIRICALLY TUNED (measured
+# on 28 threads; see rebuild_into). It is a size in bytes, not a number of
+# members, so it adapts to the run: a block holds 2 MiB / (years × forcing
+# variables × 8 bytes) members, fewer with sub-variables or with years
+# reaching to 2100, more with fewer of either.
+EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES = 2**21
+
+
+def rebuild_working_bytes(n_threads, n_forcing_vars, n_regress_vars,
+                          n_output_vars, T_mod_itemsize):
+    """The memory the rebuild holds while it works, on top of the array it
+    fills, worked out from the arrays `rebuild` makes for one member block.
+
+    n_threads: how many member blocks are rebuilt at once
+    n_forcing_vars, n_regress_vars, n_output_vars: how many forcing (v),
+        regressed (r) and output (V) variables there are
+    T_mod_itemsize: the bytes per number of the modelled warming (8 for
+        float64)
+
+    For a block of b members and t years, `rebuild` holds at most: each
+    member's modelled warming and attributed warming, 2 × (b, t, v); the
+    regressed variables' copy summed into the total, (b, t, r); the total,
+    the observed members and the residual, 3 × (b, t), all in T_mod's
+    precision; and its output, (t, V, b) in MEMBER_DTYPE. A block holds
+    b = EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES / (t × v × T_mod_itemsize)
+    members, so per thread that is the block's bytes times
+    2 + (r + 3) / v + (V / v) × (MEMBER_DTYPE's itemsize / T_mod_itemsize):
+    5 for GHG, Nat, OHF (v = 3, V = 6), about 3 with sub-variables; 0.3
+    GiB on 28 threads.
+    """
+    # The output's bytes per number relative to the modelled warming's
+    output_ratio = np.dtype(MEMBER_DTYPE).itemsize / T_mod_itemsize
+    # The arrays rebuild holds per block, in units of the block's bytes
+    copies = (2 + (n_regress_vars + 3) / n_forcing_vars +
+              n_output_vars / n_forcing_vars * output_ratio)
+    return int(copies * EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES * n_threads)
+
+
 def rebuild_into(members_warming, T_mod, beta, T_obs, member_index,
                  forcing_vars, regress_vars, output_vars, constant=None,
-                 n_threads=1, bytes_per_block=2**21):
+                 n_threads=1,
+                 bytes_per_block=EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES):
     """Rebuild every member into `members_warming`, in blocks of members,
     over threads.
 
@@ -202,18 +243,18 @@ def rebuild_into(members_warming, T_mod, beta, T_obs, member_index,
     bytes_per_block: the memory of one member block's modelled warming
         (every year and forcing variable of its members, in T_mod's
         precision), which sets how many members each block holds; default
-        2 MiB
+        EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES, 2 MiB
 
     A member block is a run of consecutive members,
     members_warming[:, :, start:stop]: a slice along the member axis only,
     holding every year and variable. Each thread rebuilds one member block
     at a time, with `rebuild`, and writes it straight into its positions
     along the member axis.
-    While it works it holds about 3.5 × bytes_per_block (the block's
-    modelled warming, its attributed warming, and their output), so the
-    rebuild needs about 3.5 × n_threads × bytes_per_block on top of
-    `members_warming`: about 0.2 GiB on 28 threads. The block size doesn't
-    depend on the memory or the CPUs available. Measured on 28 threads (on
+    While it works each thread holds a few times bytes_per_block (the
+    block's modelled warming, its attributed warming, their sums and the
+    output: see rebuild_working_bytes), about 0.3 GiB on 28 threads on top
+    of `members_warming`. The block size doesn't depend on the memory or
+    the CPUs available. Measured on 28 threads (on
     shared nodes, so ±15%): blocks of 1 to 16 MiB are within ~20% of each
     other, and which is fastest shifts with the number of members; 2 MiB
     was within ~10% of the fastest both at 0.9 and at 6 million members.
@@ -309,6 +350,10 @@ class Sample:
             forcing_vars, regress_vars)
         # Each member's scaling factors: (N, k)
         self.beta = scaling_factors(coefs, member_index)
+        # The memory still free now that the sample holds all of that, for
+        # the outputs' blocks of rebuilt members (see
+        # summaries.years_per_block); None if it can't be told
+        self.memory_available = compute_resources.memory_available()
 
     @property
     def n_members(self):
@@ -321,6 +366,14 @@ class Sample:
         and the member index."""
         return (self.T_mod.nbytes + self.T_obs.nbytes + self.beta.nbytes +
                 sum(positions.nbytes for positions in self.member_index))
+
+    @property
+    def rebuild_working_bytes(self):
+        """The memory the rebuild holds while it works, on top of the
+        array it fills (see the module's rebuild_working_bytes)."""
+        return rebuild_working_bytes(
+            self.n_threads, len(self.forcing_vars), len(self.regress_vars),
+            len(self.output_vars), self.T_mod.itemsize)
 
     @property
     def bytes_per_year(self):

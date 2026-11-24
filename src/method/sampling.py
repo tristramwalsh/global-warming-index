@@ -26,7 +26,9 @@ def cube(params, erf, obs, pic):
         of positions for the ERF members
     Returns the member index, (p, e, o, c): four integer arrays of length
     N = len(params) · len(erf) · len(obs) · len(pic), positions along the
-    whole axes, member n being (p[n], e[n], o[n], c[n]).
+    whole axes, member n being (p[n], e[n], o[n], c[n]), each in the
+    smallest unsigned integer type that holds its positions (so do
+    arithmetic on them in a wider type).
 
     The members are ordered with the parameter sets varying slowest and the
     piControl segments fastest, each source in the order given:
@@ -47,7 +49,15 @@ def cube(params, erf, obs, pic):
     # (len(params), len(erf), len(obs), len(pic))
     grid = np.meshgrid(np.asarray(params), np.asarray(erf),
                        np.asarray(obs), np.asarray(pic), indexing='ij')
-    # Flattened in C order, so pic varies fastest and params slowest: four
+    # Flattened in C order, so pic varies fastest and params slowest, each
+    # in the smallest unsigned integer type that holds its largest position
+    # (uint8 up to 255, uint16 up to 65,535): 1 or 2 bytes per member rather
+    # than 8. The positions are exact in any integer type, so only the
+    # memory changes: for the four arrays, 185 MiB → 29 MiB at 6 million
+    # members (--samples=60), and 25 GB → 4 GB for the complete ensemble
+    # (790 million members; 28 parameter sets, 1000 ERF members, 200
+    # observed members, 141 piControl segments: 5 bytes per member): four
     # (N,)
-    p, e, o, c = (positions.ravel() for positions in grid)
+    p, e, o, c = (positions.ravel().astype(np.min_scalar_type(positions.max()))
+                  for positions in grid)
     return p, e, o, c

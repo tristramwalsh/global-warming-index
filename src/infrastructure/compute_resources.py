@@ -116,7 +116,8 @@ def _job_cgroup_value(filename):
     if not job_id:
         return None
     v1_names = {'memory.max': 'memory.limit_in_bytes',
-                'memory.peak': 'memory.max_usage_in_bytes'}
+                'memory.peak': 'memory.max_usage_in_bytes',
+                'memory.current': 'memory.usage_in_bytes'}
     paths = [
         f'/sys/fs/cgroup/system.slice/slurmstepd.scope/job_{job_id}/'
         f'{filename}',
@@ -151,6 +152,33 @@ def job_memory_peak():
     peaks). This counts shared memory once and misses nothing.
     """
     return _job_cgroup_value('memory.peak')
+
+
+def memory_available():
+    """Return the memory this job can still use, in bytes, or None if it
+    can't be told.
+
+    Under Slurm: the job's limit less what the job uses now (its cgroup's
+    counters; the use includes file cache the system would reclaim, so this
+    can understate what is free). Otherwise, on Linux: the machine's
+    available memory (MemAvailable in /proc/meminfo). Elsewhere (e.g.
+    macOS): None.
+    """
+    # Under Slurm, the job's own limit and use
+    limit = job_memory_limit()
+    used = _job_cgroup_value('memory.current')
+    if limit is not None and used is not None:
+        return max(0, limit - used)
+    # Otherwise the machine's available memory, where Linux reports it
+    try:
+        with open('/proc/meminfo') as fh:
+            for line in fh:
+                if line.startswith('MemAvailable:'):
+                    # Given in kB
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 def describe_bytes(n):

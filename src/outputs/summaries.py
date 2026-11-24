@@ -60,17 +60,53 @@ import src.infrastructure.compute_resources as compute_resources
 import src.method.warming_definitions as warming_definitions
 
 
+def years_per_block_limits(sample):
+    """The most years (or windows) of the ensemble to rebuild at once that
+    the threads, and the memory, allow: (by_threads, by_memory).
+
+    sample: members.Sample
+    by_threads: the most years whose (year, variable) percentile
+        calculations don't outnumber the threads, ⌊threads / variables⌋,
+        and at least one (see years_per_block)
+    by_memory: the most years whose block, and the copy the percentiles
+        make of it (2 × years × sample.bytes_per_year), fit in the memory
+        that was free when the sample was made, less the rebuild's own
+        working memory (sample.rebuild_working_bytes), and at least one;
+        None if the free memory can't be told (e.g. on macOS)
+
+    This only sizes the blocks; it never stops the run. The measured free
+    memory can understate what is free (under Slurm the job's use counts
+    file cache the system would reclaim), so if even one year looks short,
+    the blocks are one year, and compute_resources.check_memory, which
+    checks the expected peak against the job's limit, decides whether the
+    run can go ahead.
+    """
+    # The threads' limit: one (year, variable) calculation per thread
+    by_threads = max(1, sample.n_threads // len(sample.output_vars))
+    # The memory's limit, if the free memory is known
+    if sample.memory_available is None:
+        return by_threads, None
+    # The memory for the blocks: what was free, less the rebuild's own
+    for_blocks = sample.memory_available - sample.rebuild_working_bytes
+    # ... in years, each year of a block needing bytes_per_year twice, and
+    # at least one
+    by_memory = max(1, int(for_blocks // (2 * sample.bytes_per_year)))
+    return by_threads, by_memory
+
+
 def years_per_block(sample):
-    """How many years of members to rebuild at once.
+    """How many years (or windows) of the ensemble to rebuild at once: as
+    many as the threads can take percentiles of in one pass, unless the
+    memory allows fewer (see years_per_block_limits).
 
     sample: members.Sample
 
     Each (year, variable) pair is its own percentile calculation along the
     member axis, so a block of t years holds t × variables calculations,
-    which are shared out over the threads. The block is the most years
-    whose calculations don't outnumber the threads, ⌊threads / variables⌋,
-    and at least one: e.g. 4 years for 6 variables on 28 threads, which is
-    24 calculations for 28 threads.
+    which are shared out over the threads. The threads' limit is the most
+    years whose calculations don't outnumber the threads, ⌊threads /
+    variables⌋, and at least one: e.g. 4 years for 6 variables on 28
+    threads, which is 24 calculations for 28 threads.
 
     Bigger blocks gain nothing. The rebuild is no faster in bigger blocks,
     since each member's scaling factors are summed once for the whole
@@ -81,8 +117,15 @@ def years_per_block(sample):
     years per block take 35.6, 35.0 and 34.5 s for the timeseries, and 1.1,
     3.8 and 8.7 GiB per block (a block's members, and the copy the
     percentiles make of them); 5 years (30 calculations) took 38.7 s.
+
+    For very large ensembles the memory sets the limit instead: e.g. the
+    complete ensemble (790 million members, 6 variables) needs ~19 GB per
+    year of the ensemble, so four-year blocks need ~150 GB.
     """
-    return max(1, sample.n_threads // len(sample.output_vars))
+    # The threads' and the memory's limits
+    by_threads, by_memory = years_per_block_limits(sample)
+    # The smaller of the two (the threads' alone if the memory is unknown)
+    return by_threads if by_memory is None else min(by_threads, by_memory)
 
 
 def block_bytes(sample):

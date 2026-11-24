@@ -853,6 +853,12 @@ if __name__ == "__main__":
     expected_memory = compute_resources.check_memory(
         held_bytes=sample.nbytes + coefs.obs.nbytes + coefs.pic.nbytes,
         block_bytes=summaries.block_bytes(sample))
+    # How many years of the ensemble each block holds, and what limits it
+    by_threads, by_memory = summaries.years_per_block_limits(sample)
+    memory_says = ('cannot be told' if by_memory is None
+                   else f'allows {by_memory}')
+    print(f'Years per block: {summaries.years_per_block(sample)} (the '
+          f'threads allow {by_threads}; the memory {memory_says})')
     T1b = dt.datetime.now()
     run_log.log_section('Timeseries')
     print(f'Calculating GWI ... took {T1b - T1a}')
@@ -885,7 +891,8 @@ if __name__ == "__main__":
     n_pairs = T_mod.shape[0] * n_erf
     # Each member's parameter set and ERF member: two (N,)
     p, e = member_index[:2]
-    pairs_used = np.unique(p * n_erf + e)
+    # ... in int64, since the member index is stored in small integer types
+    pairs_used = np.unique(p.astype(np.int64) * n_erf + e)
     print(f'The priors are every (parameter set, ERF member) pair, '
           f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
           f'which may differ from the pairs the attribution samples: its '
