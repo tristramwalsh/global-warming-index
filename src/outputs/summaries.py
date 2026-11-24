@@ -58,7 +58,6 @@ import pandas as pd
 
 import src.infrastructure.compute_resources as compute_resources
 import src.method.attribution as attribution
-import src.method.emulators as emulators
 
 
 def years_per_block_limits(sample):
@@ -291,15 +290,15 @@ def headline_rows(timeseries, headline_years, labels):
     return rows
 
 
-def observed_timeseries_table(df_obs, sigmas, definition, years_before,
+def observed_timeseries_table(gmt, sigmas, definition, years_before,
                               years_after):
     """A warming definition's timeseries for the observed temperatures: its
     percentiles across the observed members, in every year whose window
     lies within the observed years.
 
-    df_obs:
-        DataFrame, the observed members' temperatures, indexed by consecutive
-        years, one column per member, (t, o)
+    gmt:
+        the observed members' temperatures, a DataArray (year, gmt_member)
+        over consecutive years
     sigmas:
         the percentiles to take, e.g. gwi.py's SIGMAS
     definition:
@@ -316,15 +315,16 @@ def observed_timeseries_table(df_obs, sigmas, definition, years_before,
     observed member directly, and the percentiles taken across the members.
     """
     # The observed years
-    first_obs_year, last_obs_year = df_obs.index[0], df_obs.index[-1]
+    first_obs_year = int(gmt.year[0])
+    last_obs_year = int(gmt.year[-1])
     # The years whose windows lie within them: (t,)
     years = np.arange(first_obs_year + years_before,
                       last_obs_year - years_after + 1)
     # Each observed member's value of the definition in each year's window:
     # one (o,) array per year, stacked: (t, o)
     values = np.stack([
-        definition(df_obs.loc[year - years_before:
-                              year + years_after].to_numpy())
+        definition(gmt.sel(year=slice(year - years_before,
+                                      year + years_after)).to_numpy())
         for year in years])
     # Their percentiles across the members: (sigmas, t)
     percentiles = np.percentile(values, sigmas, axis=1)
@@ -368,12 +368,12 @@ def prior_timeseries_table(T_mod, forcing_vars, regress_vars, years, sigmas):
     return percentiles_as_csv_table(percentiles, sigmas, prior_vars, years)
 
 
-def erf_timeseries_table(df_forc, forcing_vars, regress_vars, sigmas):
+def erf_timeseries_table(erf, forcing_vars, regress_vars, sigmas):
     """The table of the ERF_results_timeseries CSV: the forcing of every
     variable, with its percentiles over the ERF members.
 
-    df_forc:
-        the forcing, columns (variable, ensemble), indexed by year
+    erf:
+        the forcing, a DataArray (year, erf_member, forcing_variable)
     forcing_vars, regress_vars:
         the forcing and regressed variables
     sigmas:
@@ -383,9 +383,7 @@ def erf_timeseries_table(df_forc, forcing_vars, regress_vars, sigmas):
         aggregates (Ant, Tot), as sums of their parts.
     """
     # The forcing of every variable, for every ERF member: (t, e, v)
-    erf_all = emulators.forcing_array(
-        df_forc, forcing_vars,
-        df_forc.columns.get_level_values('ensemble').unique())
+    erf_all = erf.to_numpy()
     # ... plus the aggregates: (t, e, v'), and the names along v'
     erf_all, erf_vars = attribution.add_aggregate_variables(
         erf_all, forcing_vars, regress_vars)
@@ -393,4 +391,4 @@ def erf_timeseries_table(df_forc, forcing_vars, regress_vars, sigmas):
     percentiles = np.percentile(erf_all, sigmas, axis=1)
     # The table, one CSV row per year
     return percentiles_as_csv_table(percentiles, sigmas, erf_vars,
-                                    df_forc.index.to_numpy())
+                                    erf.year.to_numpy())

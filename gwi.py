@@ -28,6 +28,23 @@ One run is a short pipeline (main, at the bottom):
 Each warming definition (annual, SR1.5, AR6, CGWL, rates) is described once,
 in WARMING_DEFINITIONS, and applied in the same way to the attributed
 warming and to the observations.
+
+NAMING. The inputs (see load_inputs), each a labelled xarray DataArray:
+
+    erf     the forcing                (year, erf_member, forcing_variable)
+    gmt     the observed temperatures  (year, gmt_member)
+    pic     the piControl segments     (year, pic_member)
+    params  the FaIR parameter sets    (param_member, parameter, box)
+
+- A member is one instance of a source of uncertainty (one ERF member, one
+  observed member, one piControl segment, one parameter set), so each
+  source's dimension is <source>_member: the axes e, o, c and p.
+- Every input is year first, then its members, then its variables, so its
+  values (.to_numpy()) are already in the order the engine uses: e.g. the
+  forcing as (t, e, v).
+- DataArrays are named for their source, as above; numpy arrays by their
+  symbols in the method's equations (T_mod, X, Y_obs, beta), with their
+  shapes in a comment; DataFrames appear only as the CSV tables.
 """
 
 import os
@@ -191,7 +208,7 @@ KNOWN_OPTIONS = (
 ###############################################################################
 # STAGES A AND B ##############################################################
 ###############################################################################
-def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
+def modelled_warming(erf, params, inc_pi_offset, start_pi, end_pi):
     """Stage A: the modelled warming from each forcing variable alone,
 
         T_mod[p, e, t, v]
@@ -200,34 +217,30 @@ def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
     and every forcing variable v. Both the attribution (stages B and C) and
     the priors are built from it.
 
-    df_forc:
-        forcing, columns (variable, ensemble), for every ERF member, in the
-        order of the e axis
-    df_params:
-        FaIR thermal parameter sets, columns (set name, parameter), in the
-        order of the p axis
+    erf:
+        the forcing, a DataArray (year, erf_member, forcing_variable), as
+        from input_datasets.load_ERF: its ERF members in the order of the e
+        axis, its variables sorted
+    params:
+        the FaIR thermal parameter sets, a DataArray (param_member,
+        parameter, box), as from emulators.fair_parameter_sets: its sets in
+        the order of the p axis
     inc_pi_offset:
         whether to express the modelled warming relative to its mean over the
         pre-industrial years, start_pi to end_pi (both ends included); without
         it, it is relative to the first forcing year
     Returns (T_mod, forcing_vars):
-        T_mod: an array (p, e, t, v) over the forcing years (df_forc's index)
+        T_mod: an array (p, e, t, v) over the forcing years (erf's years)
         forcing_vars: the names along v, sorted.
     """
     # The forcing variables, sorted: the v axis
-    forcing_vars = sorted(df_forc.columns.get_level_values(
-        "variable").unique().to_list())
-    # Every ERF member, in order: the e axis
-    erf_members = df_forc.columns.get_level_values(
-        "ensemble").unique().to_list()
+    forcing_vars = erf['forcing_variable'].to_numpy().tolist()
     # The forcing years: the t axis
-    forc_Yrs = df_forc.index.to_numpy()
+    forc_Yrs = erf.year.to_numpy()
 
     # The modelled warming, for every parameter set and every ERF member:
     # (p, e, t, v)
-    T_mod = emulators.run_fair_v2_alpha(
-        emulators.forcing_array(df_forc, forcing_vars, erf_members),
-        forc_Yrs, df_params)
+    T_mod = emulators.run_fair_v2_alpha(erf, params)
 
     # Express it relative to its pre-industrial mean, if asked to: each
     # (parameter set, ERF member, variable) relative to its own mean over
@@ -244,8 +257,8 @@ def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
     return T_mod, forcing_vars
 
 
-def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
-              regress_vars, inc_reg_const, start_regress, end_regress):
+def constrain(T_mod, forcing_vars, forc_Yrs, gmt, pic, regress_vars,
+              inc_reg_const, start_regress, end_regress):
     """Stage B: constrain the modelled warming by the observations. The
     scaling factors that fit each (parameter set, ERF member)'s modelled
     warming to each observed member, and to each piControl segment:
@@ -274,12 +287,13 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
         the names along its v axis
     forc_Yrs:
         the years along its t axis
-    df_temp_Obs:
-        every observed GMT member (columns, in the order of the o axis),
-        indexed by year
-    df_temp_PiC:
-        every piControl segment (columns, in the order of the c axis),
-        indexed by the same years
+    gmt:
+        every observed GMT member, a DataArray (year, gmt_member), as from
+        input_datasets.load_GMT: its members in the order of the o axis
+    pic:
+        every piControl segment, a DataArray (year, pic_member), as from
+        input_datasets.filter_PiControl: its segments in the order of the c
+        axis
     regress_vars:
         the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
     inc_reg_const:
@@ -289,10 +303,6 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
     Returns regression.Coefficients:
         obs (p, e, o, k) and pic (p, e, c, k).
     """
-    # The years of the observations
-    temp_Yrs = df_temp_Obs.index.to_numpy()  # observed GMT
-    PiC_Yrs = df_temp_PiC.index.to_numpy()  # piControl segments
-
     # Every observed GMT member, and every piControl segment, is fitted onto
     # each (parameter set, ERF member)'s modelled warming, all in one batched
     # solve. The regressors X are the regressed variables (plus a column of
@@ -311,11 +321,9 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
         # Add a column of ones to every matrix, for the constant: k + 1
         X = np.concatenate([X, np.ones(X.shape[:-1] + (1,))], axis=-1)
     # The observed GMT members over the regression years: (t, o)
-    Y_obs = df_temp_Obs.to_numpy()[
-        (temp_Yrs >= start_regress) & (temp_Yrs <= end_regress)]
+    Y_obs = gmt.sel(year=slice(start_regress, end_regress)).to_numpy()
     # The piControl segments over the regression years: (t, c)
-    Y_pic = df_temp_PiC.to_numpy()[
-        (PiC_Yrs >= start_regress) & (PiC_Yrs <= end_regress)]
+    Y_pic = pic.sel(year=slice(start_regress, end_regress)).to_numpy()
     # Every fit at once: coefs.obs (p, e, o, k), coefs.pic (p, e, c, k)
     coefs = regression.ols(X, Y_obs, Y_pic)
     return coefs
@@ -636,28 +644,30 @@ def load_inputs(cfg):
         the configuration (see read_argv_config); its output years are
         moved into the forcing years if they reach beyond them
     Returns a SimpleNamespace:
-    - df_forc:
-        the forcing: columns (variable, ensemble), indexed by year
-    - df_temp_Obs:
-        the observed members, indexed by year
-    - df_temp_PiC:
-        the piControl segments, filtered, indexed by the same years
-    - df_params:
-        the FaIR parameter sets, sorted by model: the p axis
-    - models:
-        their names
+    - erf:
+        the forcing, a DataArray (year, erf_member, forcing_variable)
+    - gmt:
+        the observed members, a DataArray (year, gmt_member)
+    - pic:
+        the piControl segments, filtered, a DataArray (year, pic_member),
+        over the observed years
+    - params:
+        the FaIR parameter sets, sorted by model (the p axis), a DataArray
+        (param_member, parameter, box)
+    Each is labelled along every dimension, and its members are in the
+    order of their axis (see input_datasets and emulators).
     """
     inputs = types.SimpleNamespace()
 
     # The forcing, extended to the committed warming's end if asked
-    inputs.df_forc = datasets.load_ERF(
+    inputs.erf = datasets.load_ERF(
         cfg.erf_id, cfg.regress_vars, cfg.ensemble_members['ERF'],
         include_sub_vars=cfg.include_sub_vars)
     if cfg.year_committed_to and cfg.year_committed_from:
-        inputs.df_forc = datasets.extend_ERF_to_committed_year(
-            inputs.df_forc, cfg.year_committed_to, cfg.year_committed_from)
+        inputs.erf = datasets.extend_ERF_to_committed_year(
+            inputs.erf, cfg.year_committed_to, cfg.year_committed_from)
     # Its years
-    forc_Yrs = inputs.df_forc.index.to_numpy()
+    forc_Yrs = inputs.erf.year.to_numpy()
     forc_Yrs_min, forc_Yrs_max = forc_Yrs.min(), forc_Yrs.max()
 
     # The output years, moved into the forcing years if they reach beyond
@@ -677,9 +687,9 @@ def load_inputs(cfg):
                      f'committed warming end year {cfg.year_committed_to}.')
 
     # The observed temperatures, relative to the pre-industrial period
-    inputs.df_temp_Obs = datasets.load_GMT(
+    inputs.gmt = datasets.load_GMT(
         cfg.gmt_id, cfg.ensemble_members['GMT'], cfg.start_pi, cfg.end_pi)
-    temp_Yrs = inputs.df_temp_Obs.index.to_numpy()
+    temp_Yrs = inputs.gmt.year.to_numpy()
 
     # Stop if the regression years aren't within both the observations and
     # the forcing (rather than shorten them, which would run a different
@@ -706,13 +716,13 @@ def load_inputs(cfg):
     # The piControl segments: as long as the observed record, indexed by
     # its years, relative to the pre-industrial period, filtered for drift
     # and variability
-    inputs.df_temp_PiC = datasets.filter_PiControl(
+    inputs.pic = datasets.filter_PiControl(
         datasets.load_PiC(cfg.picontrol_id, temp_Yrs, cfg.start_pi,
                           cfg.end_pi),
         [1, 3, 30])
 
     # The FaIR parameter sets, sorted by model name: the p axis
-    inputs.df_params, inputs.models = emulators.fair_parameter_sets()
+    inputs.params = emulators.fair_parameter_sets()
     return inputs
 
 
@@ -720,8 +730,8 @@ def log_configuration(cfg, inputs, folders):
     """Log the Slurm resources and the run's configuration."""
     compute_resources.log_slurm_configuration()
     run_log.log_section('Run configuration')
-    forc_Yrs = inputs.df_forc.index
-    temp_Yrs = inputs.df_temp_Obs.index
+    forc_Yrs = inputs.erf.year.to_numpy()
+    temp_Yrs = inputs.gmt.year.to_numpy()
     print(f'Git commit: {run_log.describe_git_commit()}')
     print(f'Regressed variables: {cfg.regress_vars}')
     print(f'ERF dataset: {cfg.erf_id}')
@@ -788,10 +798,10 @@ def draw_members(cfg, inputs):
     run_log.log_section('Ensemble sampling')
     # The sources' sizes, (P, E, O, C): the complete ensemble's axes
     axis_lengths = (
-        len(inputs.models),
-        inputs.df_forc.columns.get_level_values('ensemble').nunique(),
-        inputs.df_temp_Obs.shape[1],
-        inputs.df_temp_PiC.shape[1])
+        inputs.params.sizes['param_member'],
+        inputs.erf.sizes['erf_member'],
+        inputs.gmt.sizes['gmt_member'],
+        inputs.pic.sizes['pic_member'])
     n_complete = int(np.prod(axis_lengths, dtype=np.int64))
     print(f'Complete ensemble: {n_complete:,} members (FaIR parameter sets '
           f'x ERF members x observed members x piControl segments = '
@@ -912,13 +922,13 @@ def calculate_attributed_percentiles(sample, cfg):
     return timeseries, (pd.concat(rows, axis=0) if rows else None)
 
 
-def calculate_observed_percentiles(df_temp_Obs, cfg):
+def calculate_observed_percentiles(gmt, cfg):
     """The observations' percentile summaries: each warming definition
     applied to every observed member, with percentiles across them (no
     rebuild), and their rows at the headline years.
 
-    df_temp_Obs:
-        the observed members, indexed by year
+    gmt:
+        the observed members, a DataArray (year, gmt_member)
     cfg:
         the configuration (see read_argv_config)
     Returns (timeseries, headlines):
@@ -940,7 +950,7 @@ def calculate_observed_percentiles(df_temp_Obs, cfg):
         print(f'Calculating the {name} timeseries (Obs)', end=' ')
         # Every year whose window lies within the observed years
         observed = summaries.observed_timeseries_table(
-            df_temp_Obs, SIGMAS, definition['function'],
+            gmt, SIGMAS, definition['function'],
             definition['years_before'], definition['years_after'])
         # ... kept for its CSV if asked for
         if name in cfg.definitions:
@@ -988,9 +998,9 @@ def calculate_prior_and_erf_percentiles(T_mod, forcing_vars, member_index,
     # The two summaries
     priors = summaries.prior_timeseries_table(
         T_mod, forcing_vars, cfg.regress_vars,
-        inputs.df_forc.index.to_numpy(), SIGMAS)
+        inputs.erf.year.to_numpy(), SIGMAS)
     erf = summaries.erf_timeseries_table(
-        inputs.df_forc, forcing_vars, cfg.regress_vars, SIGMAS)
+        inputs.erf, forcing_vars, cfg.regress_vars, SIGMAS)
     return priors, erf
 
 
@@ -1023,20 +1033,23 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
 
     # The sizes: the observed members, piControl segments, (parameter set,
     # ERF member) pairs and ERF members
-    n_obs = inputs.df_temp_Obs.shape[1]
-    n_pic = inputs.df_temp_PiC.shape[1]
-    n_erf = inputs.df_forc.columns.get_level_values('ensemble').nunique()
-    n_pairs = len(inputs.models) * n_erf
+    n_obs = inputs.gmt.sizes['gmt_member']
+    n_pic = inputs.pic.sizes['pic_member']
+    n_erf = inputs.erf.sizes['erf_member']
+    n_pairs = inputs.params.sizes['param_member'] * n_erf
 
-    # The observed members used, relative to the pre-industrial period
+    # The observed members used, relative to the pre-industrial period: one
+    # CSV row per year, one column per member, the year column headed
+    # 'Year' as before the inputs were DataArrays
     results_layout.write_csv(
-        inputs.df_temp_Obs,
+        inputs.gmt.to_pandas().rename_axis(index='Year', columns=None),
         f'{folders.obs}Obs_timeseries_{inputs_name}_'
         f'ENSEMBLE-SIZE--{n_obs}.csv')
 
-    # The piControl segments, after filtering
+    # The piControl segments, after filtering: one CSV row per year, one
+    # column per segment, the year column without a heading, as before
     results_layout.write_csv(
-        inputs.df_temp_PiC,
+        inputs.pic.to_pandas().rename_axis(index=None, columns=None),
         f'{folders.picontrol}PiControl_timeseries_{inputs_name}_'
         f'ENSEMBLE-SIZE--{n_pic}.csv')
 
@@ -1129,7 +1142,7 @@ def main(argv):
     # Stage A: the modelled warming for every parameter set and ERF member,
     # (p, e, t, v)
     T_mod, forcing_vars = modelled_warming(
-        df_forc=inputs.df_forc, df_params=inputs.df_params,
+        erf=inputs.erf, params=inputs.params,
         inc_pi_offset=cfg.inc_pi_offset, start_pi=cfg.start_pi,
         end_pi=cfg.end_pi)
 
@@ -1137,8 +1150,8 @@ def main(argv):
     # against every observed member and piControl segment
     coefs = constrain(
         T_mod=T_mod, forcing_vars=forcing_vars,
-        forc_Yrs=inputs.df_forc.index.to_numpy(),
-        df_temp_Obs=inputs.df_temp_Obs, df_temp_PiC=inputs.df_temp_PiC,
+        forc_Yrs=inputs.erf.year.to_numpy(),
+        gmt=inputs.gmt, pic=inputs.pic,
         regress_vars=cfg.regress_vars, inc_reg_const=cfg.inc_reg_const,
         start_regress=cfg.start_regress, end_regress=cfg.end_regress)
 
@@ -1147,10 +1160,10 @@ def main(argv):
     # A's t axis), NaN after the observations end: (t, o)
     sample = members.Sample(
         T_mod=T_mod, coefs=coefs,
-        T_obs=inputs.df_temp_Obs.reindex(inputs.df_forc.index).to_numpy(),
+        T_obs=inputs.gmt.reindex(year=inputs.erf.year).to_numpy(),
         member_index=member_index, forcing_vars=forcing_vars,
         regress_vars=cfg.regress_vars, inc_reg_const=cfg.inc_reg_const,
-        years=inputs.df_forc.index.to_numpy(),
+        years=inputs.erf.year.to_numpy(),
         n_threads=compute_resources.n_workers())
     print(f'Modelling, constraining and sampling ... took '
           f'{dt.datetime.now() - time_start}')
@@ -1171,7 +1184,7 @@ def main(argv):
     # definition, for the attributed warming and the observations, and of
     # the interim results (the prior warming and the forcing)
     attributed = calculate_attributed_percentiles(sample, cfg)
-    observed = calculate_observed_percentiles(inputs.df_temp_Obs, cfg)
+    observed = calculate_observed_percentiles(inputs.gmt, cfg)
     priors, erf = calculate_prior_and_erf_percentiles(
         T_mod, forcing_vars, member_index, cfg, inputs)
 
@@ -1179,7 +1192,7 @@ def main(argv):
     # Write the inputs as used and the interim results
     write_inputs_and_interims(cfg, inputs, priors, erf, folders)
     # Write the attribution outputs, and post-processed observation outputs
-    write_outputs(cfg, sample.n_members, inputs.df_temp_Obs.shape[1],
+    write_outputs(cfg, sample.n_members, inputs.gmt.sizes['gmt_member'],
                   attributed, observed, folders)
 
     # What the run cost, beside the 'Memory usage anticipated' block

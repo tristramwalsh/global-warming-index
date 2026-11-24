@@ -199,7 +199,12 @@ def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
     include_sub_vars: also keep the variables' sub-variables, e.g. co2 for
         GHG (see variables.SUB_VAR_MAPPING)
 
-    Returns a DataFrame indexed by year, with columns (variable, ensemble).
+    Returns the forcing, a DataArray (year, erf_member, forcing_variable)
+    (see erf_as_dataarray).
+
+    The products' loaders below read their files into DataFrames, with
+    columns (variable, ensemble); only here, at the edge, does the forcing
+    become a DataArray.
     """
     metadata = dataset_metadata(erf_id, 'ERF')
 
@@ -222,7 +227,37 @@ def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
     # Extract just the required ensemble member(s)
     df_ERF = extract_ERF_members(df_ERF, member, erf_id)
 
-    return df_ERF
+    # The forcing as a DataArray, with named dimensions
+    return erf_as_dataarray(df_ERF)
+
+
+def erf_as_dataarray(df_ERF):
+    """The forcing as a DataArray with named dimensions.
+
+    df_ERF:
+        a DataFrame indexed by year, with columns (variable, ensemble), as
+        from the load_ERF_* loaders
+    Returns a DataArray (year, erf_member, forcing_variable): year first,
+    then members, then variables, as every input is (see gwi.py's NAMING),
+    the variables sorted, and the ERF members in the order they appear in
+    the DataFrame (the order of the e axis).
+    """
+    # The variables, sorted, and the ERF members, in order
+    forcing_vars = sorted(df_ERF.columns.get_level_values(
+        'variable').unique())
+    erf_members = df_ERF.columns.get_level_values(
+        'ensemble').unique().to_list()
+    # Each ERF member's forcing of each variable: (t, e, v)
+    values = np.stack([
+        np.stack([df_ERF[(var, member)].to_numpy() for var in forcing_vars],
+                 axis=-1)
+        for member in erf_members], axis=1)
+    return xr.DataArray(
+        values, dims=('year', 'erf_member', 'forcing_variable'),
+        coords={'erf_member': erf_members,
+                'year': df_ERF.index.to_numpy(),
+                'forcing_variable': forcing_vars},
+        name='erf')
 
 
 def extract_ERF_variables(df_ERF, regress_vars, include_sub_vars=False):
@@ -306,28 +341,33 @@ def extract_ERF_members(df_ERF, member, erf_id):
     return df_ERF.loc[:, (slice(None), matches[0])]
 
 
-def extend_ERF_to_committed_year(df_ERF, year_committed_to,
+def extend_ERF_to_committed_year(erf, year_committed_to,
                                  year_committed_from=None):
-    """Extend an ERF DataFrame to year_committed_to by holding the ERF
-    constant from year_committed_from (or from its last year, if None).
+    """Extend the forcing to year_committed_to by holding it constant from
+    year_committed_from (or from its last year, if None).
 
-    e.g. year_committed_from=2025, year_committed_to=2300
+    erf:
+        the forcing, a DataArray (year, erf_member, forcing_variable), as
+        from load_ERF
+    year_committed_to, year_committed_from:
+        e.g. 2300 and 2025
+    Returns the forcing over the years up to year_committed_to, each year
+    after year_committed_from the same as year_committed_from.
     """
-
+    # The forcing up to the year it is held from
     if year_committed_from is not None:
-        df_ERF = df_ERF.loc[:year_committed_from]
+        erf = erf.sel(year=slice(None, year_committed_from))
 
-    last_year = df_ERF.index.max()
+    # The years to add, each with the last year's forcing
+    last_year = int(erf.year.max())
     if year_committed_to > last_year:
         years_to_add = np.arange(last_year + 1, year_committed_to + 1)
-        df_extension = pd.DataFrame(
-            index=years_to_add,
-            columns=df_ERF.columns,
-            data=np.tile(df_ERF.loc[last_year].values,
-                         (len(years_to_add), 1))
-        )
-        df_ERF = pd.concat([df_ERF, df_extension], axis=0)
-    return df_ERF
+        # The last year's forcing, repeated along the new years, with the
+        # dimensions in the forcing's order
+        extension = erf.sel(year=last_year, drop=True).expand_dims(
+            year=years_to_add).transpose(*erf.dims)
+        erf = xr.concat([erf, extension], dim='year')
+    return erf
 
 
 def aggregate_missing_forcings(df_ERF,
@@ -671,7 +711,14 @@ def load_GMT(gmt_id, member, start_pi, end_pi):
     start_pi, end_pi: the pre-industrial period, e.g. 1850, 1900; None for
         no offset
 
-    Returns a DataFrame indexed by year, with one column per member.
+    Returns the observed temperatures, a DataArray (year, gmt_member): year
+    first, then members, as every input is (see gwi.py's NAMING), the
+    members in the order they appear in the file (the order of the o
+    axis).
+
+    The products' loaders below read their files into DataFrames, one
+    column per member; only here, at the edge, do the temperatures become
+    a DataArray.
     """
     metadata = dataset_metadata(gmt_id, 'GMT')
 
@@ -693,7 +740,12 @@ def load_GMT(gmt_id, member, start_pi, end_pi):
     # Remove pre-industrial baseline from temperature data
     df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
 
-    return df_temp
+    # The temperatures as a DataArray, with named dimensions
+    return xr.DataArray(
+        df_temp.to_numpy(), dims=('year', 'gmt_member'),
+        coords={'year': df_temp.index.to_numpy(),
+                'gmt_member': df_temp.columns.to_list()},
+        name='gmt')
 
 
 def extract_GMT_members(df_temp, member, gmt_id):
@@ -871,13 +923,25 @@ def load_PiC(picontrol_id, years, start_pi, end_pi):
         this long, and is indexed by these years.
     start_pi, end_pi: e.g. 1850, 1900, both included; None for no
         pre-industrial offset (each segment is then offset by its own mean)
+
+    Returns the segments, a DataArray (year, pic_member): year first, then
+    members (each member a segment), as every input is (see gwi.py's
+    NAMING), the segments in the order the loader makes them (the order of
+    the c axis).
     """
-    # Load with the dataset's loader
+    # Load with the dataset's loader, into a DataFrame, one column per
+    # segment
     if picontrol_id == 'CMIP6':
-        return load_PiC_CMIP6(years, start_pi, end_pi)
+        df_PiC = load_PiC_CMIP6(years, start_pi, end_pi)
     else:
         raise ValueError(
             f'No piControl loader for {picontrol_id!r}.')
+    # The segments as a DataArray, with named dimensions
+    return xr.DataArray(
+        df_PiC.to_numpy(), dims=('year', 'pic_member'),
+        coords={'year': df_PiC.index.to_numpy(),
+                'pic_member': df_PiC.columns.to_list()},
+        name='pic')
 
 
 def load_PiC_CMIP6(years, start_pi, end_pi):
@@ -947,15 +1011,17 @@ def load_PiC_CMIP6(years, start_pi, end_pi):
     return pd.DataFrame(dict_temp, index=years)
 
 
-def filter_PiControl(df, timeframes):
+def filter_PiControl(pic, timeframes):
     """Remove piControl segments whose variability is implausible next to
     the observations.
 
-    df: one column per segment, as from load_PiC
+    pic: the segments, a DataArray (year, pic_member), as from load_PiC
     timeframes: e.g. [1, 3, 30] (not used at present)
+    Returns the segments kept, a DataArray (year, pic_member), in their
+    order.
     """
-    dict_temp_PiC = {}
-    for ens in list(df):
+    kept_segments = []
+    for segment in pic.pic_member.to_numpy():
         # Establish inclusion condition, which is that the smoothed internal
         # variability of a CMIP6 ensemble must operate within certain bounds:
         # 1. there must be a minimum level of variation (to remove those models
@@ -973,7 +1039,7 @@ def filter_PiControl(df, timeframes):
         # multiple parallel realisations of reality) in any given year. We
         # allow the ensemble to be slightly broader, to reasonably allow for a
         # wider range of behaviours than we have so far seen in the real world.
-        temp = df[ens].to_numpy()
+        temp = pic.sel(pic_member=segment).to_numpy()
         temp_ma_3 = warming_definitions.moving_average(temp, 3)
         temp_ma_30 = warming_definitions.moving_average(temp, 30)
         _cond = (
@@ -985,6 +1051,7 @@ def filter_PiControl(df, timeframes):
         # Approve actual (ie not smoothed) data if the corresponding smoothed
         # data is approved.
         if _cond:
-            dict_temp_PiC[ens] = temp
+            kept_segments.append(segment)
 
-    return pd.DataFrame(dict_temp_PiC, index=df.index)
+    # The segments approved, in their order
+    return pic.sel(pic_member=kept_segments)

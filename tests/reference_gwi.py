@@ -53,6 +53,7 @@ sys.path.insert(0, str(REPO))
 
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair  # noqa: E402
 import src.inputs.input_datasets as datasets  # noqa: E402
+import src.method.emulators as emulators  # noqa: E402
 import src.method.members as members  # noqa: E402
 import src.method.sampling as sampling  # noqa: E402
 from src.method.variables import SUB_VAR_MAPPING  # noqa: E402
@@ -169,9 +170,10 @@ def reference_gwi(inputs):
     axis, in the engine's order (sorted forcing variables, then the
     diagnosed ones that are not forcing variables).
     """
-    forc = inputs['df_forc']
-    forc_vars = sorted(forc.columns.get_level_values('variable').unique())
-    erf_members = forc.columns.get_level_values('ensemble').unique()
+    # The inputs are DataArrays, as gwi.py loads them; the reference takes
+    # each member's slice as a pandas table or series, one at a time
+    erf, gmt, pic = inputs['erf'], inputs['gmt'], inputs['pic']
+    forc_vars = erf['forcing_variable'].to_numpy().tolist()
     diagnosed = DIAGNOSED[tuple(inputs['regress_vars'])]
     output_vars = forc_vars + [v for v in diagnosed if v not in forc_vars]
 
@@ -182,14 +184,16 @@ def reference_gwi(inputs):
         # the parameter sets from the index's levels)
         params = inputs['df_params'][p].copy()
         params.columns = pd.MultiIndex.from_product([[p], params.columns])
-        for e in erf_members:
-            forcing = forc.xs(e, axis=1, level='ensemble')[forc_vars]
+        for e in erf.erf_member.to_numpy():
+            # This ERF member's forcing: index year, one column per variable
+            forcing = erf.sel(erf_member=e).to_pandas()[forc_vars]
             T_mod = emulate(forcing, params)
-            for o in inputs['df_temp_Obs'].columns:
-                for c in inputs['df_temp_PiC'].columns:
+            for o in gmt.gmt_member.to_numpy():
+                for c in pic.pic_member.to_numpy():
                     att = attribute_member(
-                        T_mod, inputs['df_temp_Obs'][o],
-                        inputs['df_temp_PiC'][c], inputs['regress_vars'],
+                        T_mod, gmt.sel(gmt_member=o).to_pandas(),
+                        pic.sel(pic_member=c).to_pandas(),
+                        inputs['regress_vars'],
                         inputs['inc_reg_const'], inputs['preindustrial'],
                         inputs['regress'], inputs['trunc'])
                     members.append(att[output_vars].to_numpy())
@@ -245,34 +249,32 @@ def tiny_inputs(erf_id='IGCC-2025', gmt_id='HadCRUT-2025',
                             replace=False)
         return [labels[i] for i in sorted(chosen)]
 
-    df_forc = _load_erf(erf_id, tuple(regress_vars), include_sub_vars)
+    erf = _load_erf(erf_id, tuple(regress_vars), include_sub_vars)
     # As gwi.py: truncation is clipped to the ERF years
-    trunc = (max(trunc[0], df_forc.index.min()),
-             min(trunc[1], df_forc.index.max()))
-    erf_members = pick(df_forc.columns.get_level_values('ensemble').unique(),
-                       n_erf)
-    df_forc = df_forc.loc[:, (slice(None), erf_members)]
+    trunc = (max(trunc[0], int(erf.year.min())),
+             min(trunc[1], int(erf.year.max())))
+    erf = erf.sel(erf_member=pick(erf.erf_member.to_numpy(), n_erf))
 
-    df_temp_Obs = _load_gmt(gmt_id, preindustrial)
-    df_temp_Obs = df_temp_Obs[pick(df_temp_Obs.columns, n_gmt)].copy()
+    gmt = _load_gmt(gmt_id, preindustrial)
+    gmt = gmt.sel(gmt_member=pick(gmt.gmt_member.to_numpy(), n_gmt))
 
     # As gwi.py: segments as long as the GMT record, indexed by its years
-    gmt_years = tuple(_load_gmt(gmt_id, preindustrial).index)
-    df_temp_PiC = _load_pic(gmt_years, preindustrial)
-    df_temp_PiC = df_temp_PiC[pick(df_temp_PiC.columns, n_pic)].copy()
+    gmt_years = tuple(_load_gmt(gmt_id, preindustrial).year.to_numpy())
+    pic = _load_pic(gmt_years, preindustrial)
+    pic = pic.sel(pic_member=pick(pic.pic_member.to_numpy(), n_pic))
 
     df_params = _load_params()
     models = pick(df_params.columns.levels[0].unique(), n_params)
 
-    for source, n in [('ERF', len(erf_members)),
-                      ('GMT', df_temp_Obs.shape[1]),
-                      ('piControl', df_temp_PiC.shape[1]),
+    for source, n in [('ERF', erf.sizes['erf_member']),
+                      ('GMT', gmt.sizes['gmt_member']),
+                      ('piControl', pic.sizes['pic_member']),
                       ('FaIR parameter', len(models))]:
         if n == 0:
             raise ValueError(f'No {source} members left for these settings.')
 
-    return dict(df_forc=df_forc, df_params=df_params, models=models,
-                df_temp_Obs=df_temp_Obs, df_temp_PiC=df_temp_PiC,
+    return dict(erf=erf, df_params=df_params, models=models,
+                gmt=gmt, pic=pic,
                 regress_vars=regress_vars, inc_reg_const=inc_reg_const,
                 preindustrial=preindustrial, regress=regress, trunc=trunc)
 
@@ -288,37 +290,36 @@ def engine_gwi(inputs):
     """
     import gwi  # gwi.py's main block doesn't run on import
     start_pi, end_pi = inputs['preindustrial'] or (None, None)
-    # The parameter sets used, in the reference's order
-    df_params = pd.concat(
-        {model: inputs['df_params'][model] for model in inputs['models']},
-        axis=1)
+    # The parameter sets used, in the reference's order, as gwi.py loads
+    # them
+    params = emulators.fair_parameter_sets().sel(
+        param_member=inputs['models'])
     # Every member of every source, in the reference's order (the full
     # grid): four arrays of positions (p, e, o, c)
-    n_erf = len(inputs['df_forc'].columns.get_level_values(
-        'ensemble').unique())
     member_index = sampling.all_members(
-        (len(inputs['models']), n_erf, inputs['df_temp_Obs'].shape[1],
-         inputs['df_temp_PiC'].shape[1]))
+        (len(inputs['models']), inputs['erf'].sizes['erf_member'],
+         inputs['gmt'].sizes['gmt_member'],
+         inputs['pic'].sizes['pic_member']))
     # Stage A, for every parameter set and ERF member: (p, e, t, v)
     T_mod, forcing_vars = gwi.modelled_warming(
-        df_forc=inputs['df_forc'],
-        df_params=df_params,
+        erf=inputs['erf'],
+        params=params,
         inc_pi_offset=inputs['preindustrial'] is not None,
         start_pi=start_pi, end_pi=end_pi)
     # The forcing years: T_mod's t axis
-    forc_Yrs = inputs['df_forc'].index.to_numpy()
+    forc_Yrs = inputs['erf'].year.to_numpy()
     # Stage B: the scaling factors
     coefs = gwi.constrain(
         T_mod=T_mod,
         forcing_vars=forcing_vars,
         forc_Yrs=forc_Yrs,
-        df_temp_Obs=inputs['df_temp_Obs'],
-        df_temp_PiC=inputs['df_temp_PiC'],
+        gmt=inputs['gmt'],
+        pic=inputs['pic'],
         regress_vars=inputs['regress_vars'],
         inc_reg_const=inputs['inc_reg_const'],
         start_regress=inputs['regress'][0], end_regress=inputs['regress'][1])
     # The observed members, lined up with the forcing years: (t, o)
-    T_obs = inputs['df_temp_Obs'].reindex(inputs['df_forc'].index).to_numpy()
+    T_obs = inputs['gmt'].reindex(year=inputs['erf'].year).to_numpy()
     # Stage C, the sample: every member
     sample = members.Sample(
         T_mod=T_mod,
