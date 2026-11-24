@@ -241,7 +241,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
     figure_timeseries.
     """
     dict_iterations, _ = iteration_averaging.load_iteration_dfs(
-        reg_range, 'timeseries', scen, ens, reg_vars)
+        reg_range, 'timeseries-ANNUAL', scen, ens, reg_vars)
 
     # The comparison is only meaningful where a configuration has been run
     # more than once.
@@ -441,7 +441,7 @@ def figure_spm2(
         # Add text
         fig.text(axes[0].get_position().x0, axes[0].get_position().y1+0.08,
                  'Observed warming and contributions ('
-                 + period.replace('-', '\N{EN DASH}') + ')',
+                 + str(period).replace('-', '\N{EN DASH}') + ')',
                  fontsize=plt.rcParams['axes.titlesize'],
                  fontweight='bold',
                  )
@@ -820,7 +820,7 @@ def figure_waterfall(
         # Title
         fig.text(0.05, 0.95,
                  'Attributable contributions to warming ('
-                 + period.replace('-', '\N{EN DASH}') + ')',
+                 + str(period).replace('-', '\N{EN DASH}') + ')',
                  ha='left', fontsize=16, fontweight='bold')
 
         # Configuration text
