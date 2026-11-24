@@ -37,7 +37,7 @@ gives the same β, and it is what makes factor-then-sample possible. The
 reference fits their sum directly, so agreement also checks that linearity.
 
 Members are ordered (p, e, o, c), with the last index varying fastest, as in
-the engine's member index (src/method/sampling.py's cube).
+the engine's member index (src/method/sampling.py's grid).
 """
 
 import functools
@@ -296,10 +296,9 @@ def engine_gwi(inputs):
     # grid): four arrays of positions (p, e, o, c)
     n_erf = len(inputs['df_forc'].columns.get_level_values(
         'ensemble').unique())
-    member_index = sampling.cube(
-        np.arange(len(inputs['models'])), np.arange(n_erf),
-        np.arange(inputs['df_temp_Obs'].shape[1]),
-        np.arange(inputs['df_temp_PiC'].shape[1]))
+    member_index = sampling.all_members(
+        (len(inputs['models']), n_erf, inputs['df_temp_Obs'].shape[1],
+         inputs['df_temp_PiC'].shape[1]))
     # Stage A, for every parameter set and ERF member: (p, e, t, v)
     T_mod, forcing_vars = gwi.modelled_warming(
         df_forc=inputs['df_forc'],

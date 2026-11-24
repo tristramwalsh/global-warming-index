@@ -95,6 +95,45 @@ def gmt_id_from_label(scen):
     return scen.split('_GMT--')[1].split('_PREINDUSTRIAL--')[0]
 
 
+def sample_name(sampling_design, n_members, seed):
+    """The field naming a run's sample in its results files, e.g.
+    'ENSEMBLE--latin-1000000-seed42'.
+
+    sampling_design:
+        the design (see src/method/sampling.py)
+    n_members:
+        the sample's actual size, N, which iteration_averaging weights each
+        iteration by (see ensemble_size_from_name)
+    seed:
+        the seed its members were drawn with
+
+    One field, not three (SAMPLING--, ENSEMBLE-SIZE--, SEED--), because the
+    results files' names are close to the 255-byte limit on a file name:
+    with the longest dataset IDs and a drawn ten-digit seed, three fields
+    take a name to ~275 bytes, one to ~241.
+    """
+    return f'ENSEMBLE--{sampling_design}-{n_members}-seed{seed}'
+
+
+def ensemble_size_from_name(file_name):
+    """The sample's size, N, from a results file's name (see sample_name).
+
+    file_name:
+        the name, or its path
+    Returns N, an int. Names written before the sampling designs (Phase 2
+    of the engine refactor) give it as ENSEMBLE-SIZE--<N>, which is read
+    too, so older results can still be averaged.
+    """
+    # The size in the sample's field, ENSEMBLE--<design>-<N>-seed<seed>
+    match = re.search(r'_ENSEMBLE--[a-z]+-(\d+)-seed\d+', file_name)
+    # ... or in the field of the names before it
+    if match is None:
+        match = re.search(r'_ENSEMBLE-SIZE--(\d+)', file_name)
+    if match is None:
+        raise ValueError(f'No ensemble size in the file name {file_name!r}.')
+    return int(match.group(1))
+
+
 def write_csv(df, path):
     """Write a DataFrame to a CSV file, so that no one ever sees half of it.
 

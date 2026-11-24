@@ -133,7 +133,7 @@ bash run-gwi.sh recipes/TEMPLATE.sh direct
 ```
 
 > [!WARNING]
-> The template's results are not fit for any real use. Its ensemble is trivially small (10 samples from each source of uncertainty), so it only checks that everything runs. Real results need much larger ensembles (see `SUBSAMPLE_ITERATIONS`).
+> The template's results are not fit for any real use. Its ensemble is trivially small (10,000 members), so it only checks that everything runs. Real results need much larger ensembles (see `SAMPLING_ITERATIONS`).
 
 ##### 2.1.2. Combine results from multiple iterations
 Once the runs have completed, run the combination script with the recipe's `OUTPUT_TAG` (`run-gwi.sh` prints this command when it finishes):
@@ -163,18 +163,24 @@ The following settings control the analysis. Every recipe sets each of them, nam
     - e.g. `seq 1950 2024` creates separate jobs for each year from 1950-2024, each only incorporating years from START_REGRESS to END_REGRESS in the constraining.
 
 
-**`SUBSAMPLE_ITERATIONS`**: The ensemble subsampling sizes
-- Assuming independence, the complete ensemble is every combination of the members of the four uncertainty sources: about 790 million members for the IGCC assessment (28 FaIR parameter sets × 1000 ERF members × 200 HadCRUT members × 141 piControl segments), which is computationally very heavy. To reduce this to a size manageable for computation, each run keeps every FaIR parameter set and randomly samples a subset of the members of each other source (forcing uncertainty, observational uncertainty, internal variability uncertainty), then takes every combination of those (see **What the Scripts Do**).
-- This argument specifies how many samples to take from each of those sources for each iteration (each value in the array), and how many iterations to run (the length of the array). With $k$ samples per source a run has $28 k^3$ members: e.g. about 6 million at $k = 60$.
-- When repeat runs are generated, the results are combined using a weighted average (weighted by ensemble size of each iteration) in `combine_results_iterations.py`, to minimise sampling noise.
+**`SAMPLING_ITERATIONS`**: How to sample the ensemble, one entry per iteration
+- Assuming independence, the complete ensemble is every combination of the members of the four uncertainty sources: about 790 million members for the IGCC assessment (28 FaIR parameter sets × 1000 ERF members × 200 HadCRUT members × 141 piControl segments), all equally weighted. A run rebuilds a sample of $N$ of them, chosen by a *sampling design*, or every one (see **What the Scripts Do**).
+- Each entry is a design and the ensemble size $N$ joined by a dash, e.g. `latin-1e6`, or `all`. $N$ is a whole number, or in e notation (`1e6` = 1,000,000). The designs, each treating the four sources alike:
+    - `latin` = $N$ members in which every member of each source is used equally often (to within one), the sources paired at random (a Latin hypercube), and no member drawn twice until every member has been drawn. The balance removes most of the sampling variance that Monte Carlo has, and drawing without repeats lowers the rest by the share of the complete ensemble drawn: so at the complete ensemble's size the sample *is* the complete ensemble, the same as `all`, and beyond it every member is drawn equally often (see `tests/plot_latin_sampling.py` for a picture).
+    - `mc` = $N$ members drawn independently and uniformly from the complete ensemble (Monte Carlo).
+    - `cube` = every combination of $k$ random members of each source (all of a source with fewer than $k$), with the largest $k$ that keeps the cube within $N$, so it can have fewer members than asked for (by up to ~20%). Earlier GWI releases used a cube that kept every parameter set, with $k$ given directly.
+    - `all` = every member of the complete ensemble: no sampling error, and the same result every time. It needs a large-memory node for IGCC-sized datasets (see **Memory and Computing Resources**).
+- The number of entries is the number of iterations. When repeat runs are generated, the results are combined using a weighted average (weighted by ensemble size of each iteration) in `combine_results_iterations.py`, to minimise sampling noise.
 - Examples:
-    - e.g.`(90 90 90 90)` runs 4 repeat iterations with a maximum of 90 samples for each of the 3 sampled uncertainty sources (forcing, observations, internal variability)
-    - e.g. `(30 60 90)` runs 3 repeat iterations with 30, 60, and 90 samples respectively
+    - e.g. `(latin-1e4)` = a quick test
+    - e.g. `(latin-1e6 latin-1e6 latin-1e6)` runs 3 repeat iterations of a million members each
+    - e.g. `(latin-1e5 latin-1e6 latin-1e7)` runs 3 iterations of increasing size
+- The results files name the design, the actual ensemble size and the seed in one field (e.g. `ENSEMBLE--latin-1000000-seed42`), and each run's log says how many members of each source its sample uses.
 
 **`SEED`**: A seed for the random sampling of ensemble members, for exactly reproducible runs
-- Leave empty (the usual setting) for unseeded sampling: every run samples afresh, so repeat iterations differ, and averaging them reduces the sampling noise.
+- Leave empty (the usual setting) for every run to draw its own seed, and so sample afresh: repeat iterations differ, and averaging them reduces the sampling noise. The seed drawn is logged, and named in the results files, so any run can be reproduced.
 - Set to a whole number (e.g. `42`) to draw exactly the same samples each time: runs of the same configuration on the same inputs then give identical results. This is useful for checking that a code change leaves the results unchanged.
-- Every run uses the same seed, so with a seed set, repeat iterations of the same configuration in `SUBSAMPLE_ITERATIONS` give identical results.
+- Every run uses the same seed, so with a seed set, repeat iterations of the same configuration in `SAMPLING_ITERATIONS` give identical results.
 
 
 **`PREINDUSTRIAL_ERA`**: Pre-industrial baseline period
@@ -289,7 +295,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **Slurm resources** (slurm mode only): `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
 - `CLUSTER` = which Slurm cluster to submit to on Oxford ARC: `arc`, `htc`, or `arc,htc` to take whichever starts sooner. The partition is set automatically from the host.
 - `SIM_CPUS`, `CPU_MEM`, `WALLTIME` = CPUs, memory per CPU, and time limit for each job.
-- Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits `SUBSAMPLE_ITERATIONS` of about 60 samples: such a run, with every definition, takes 3 to 5 minutes and peaks near 5 GiB. Both grow with the number of members, as $k^3$ (see **Memory and Computing Resources**); member-by-member runs need more time.
+- Our standard runs use `SIM_CPUS=28`, `CPU_MEM=9000M` and `WALLTIME=0:10:00`, which suits ensembles of about 6 million members: such a run, with every definition, takes 3 to 5 minutes and peaks near 5 GiB. Both grow in proportion to the number of members (see **Memory and Computing Resources**); member-by-member runs need more time.
 
 #### 2.3. What the Scripts Do
 
@@ -297,7 +303,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 
 The `run-gwi.sh` script:
 1. Checks the recipe against `recipes/TEMPLATE.sh`, then reads it
-2. Loops over `END_REGRESS` values (regression end years) and `SUBSAMPLE_ITERATIONS` (subsampling sizes)
+2. Loops over `END_REGRESS` values (regression end years) and `SAMPLING_ITERATIONS` (the sampling of each iteration)
 3. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
     - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
     - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
@@ -307,7 +313,7 @@ The `run-gwi.sh` script:
 Each `gwi.py` run attributes the observed warming once, for one configuration, as a short pipeline of named steps (`main`, at the bottom of `gwi.py`; its module docstring lists them):
 
 1. **Read the configuration and load the inputs**: the ERF ensemble ($E$ members), the observed temperatures ($O$ members), the piControl segments that sample internal variability ($C$), and the FaIR parameter sets ($P = 28$, one emulating each of 28 CMIP6 models).
-2. **Draw the members.** A *member* of the ensemble is one choice from each source of uncertainty: a parameter set $p$, an ERF member $e$, an observed member $o$ and a piControl segment $c$. The run keeps every parameter set, draws up to `--samples` of each other source at random (seeded by `--seed`, if given), and takes every combination of those: $N = P k^3$ members for $k$ samples. Each member is stored as its four positions (its *member index*), in 1 or 2 bytes each.
+2. **Draw the members.** A *member* of the ensemble is one choice from each source of uncertainty: a parameter set $p$, an ERF member $e$, an observed member $o$ and a piControl segment $c$. The complete ensemble is every combination, $P \cdot E \cdot O \cdot C$ members. The run chooses $N$ of them (`--ensemble-size`) with its sampling design (`--sampling-design`: `latin`, `mc`, `cube`, or `all` for every member; see `SAMPLING_ITERATIONS`), drawing from one random number generator seeded by `--seed` (drawn afresh, and logged, if not given). Each member is stored as its four positions (its *member index*), in 1 or 2 bytes each.
 3. **Stage A, modelling warming priors**: FaIR runs on each forcing variable alone (e.g. GHG, OHF, Nat, and with `INCLUDE_SUB_VARS` their components), for every parameter set and ERF member, giving the modelled warming $T_\mathrm{mod}(p, e, t, v)$.
 4. **Stage B, constraining warming**: for every (parameter set, ERF member) pair, the least-squares fit of the observed temperatures onto the modelled warming of the regressed variables, over the regression years, gives the scaling factors that constrain it. The fit is made once for each observed member ($\beta_\mathrm{obs}$) and once for each piControl segment ($\beta_\mathrm{pic}$, the spread that internal variability adds); since the fit is linear in its target, a member's scaling factors are the sum of the two, $\beta = \beta_\mathrm{obs}[o] + \beta_\mathrm{pic}[c]$.
 5. **Stage C, drawing ensemble members**: member $n$'s attributed warming from each forcing variable is its scaling factor times its modelled warming, $\beta_n \, T_\mathrm{mod}(p_n, e_n, t, v)$ (a sub-variable takes the factor of the variable it is part of); `Tot` is their sum over the regressed variables (with the constant, if `INCLUDE_REG_CONST=y`), `Res` the observed temperature minus `Tot`, and `Ant` = GHG + OHF (see **Variable Regression Logic**). The members are never all held at once: `src/method/members.py` rebuilds them a block of years at a time, and only where each output needs them.
@@ -375,8 +381,8 @@ All options are optional:
 - `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `ERF-all_GMT-all` selection is always plotted in full.
 
 ###### 2.4.3.1 Aggregating Iteration Outputs
-For iterations generated with `SUBSAMPLE_ITERATIONS`, the script:
-1. Finds all iterations generated from `SUBSAMPLE_ITERATIONS` in `results/iterations/`
+For iterations generated with `SAMPLING_ITERATIONS`, the script:
+1. Finds all iterations generated from `SAMPLING_ITERATIONS` in `results/iterations/`
 2. Combines them using a weighted average (weighted by ensemble size)
 3. Saves combined results to `results/aggregated/`
 
@@ -479,16 +485,16 @@ The ensemble sizes for the GWI uncertainty calculations are extremely large, whi
 
 <!-- `gwi.py` never holds the whole ensemble of attributed warming (see **What the Scripts Do**). What it holds throughout is small: the modelled warming of every (parameter set, ERF member) pair, the scaling factors of every observed member and piControl segment for each pair, the observed temperatures, and each member's four positions (1 or 2 bytes each). The members' attributed warming is rebuilt a block of years at a time, and a block, with the copy that the percentiles make of it, takes 2 × years per block × variables × members × 4 bytes. So the memory grows with the number of members, through the blocks, whose size is chosen to fit. -->
 
-<!-- The years per block are as many as the threads can take percentiles of in one pass (⌊threads / variables⌋, e.g. 4 for 6 variables on 28 threads; bigger blocks are no faster), unless the memory free when the sample is made (stage C) allows fewer; the log's `Years per block` line says which limits it. For example, at `SUBSAMPLE_ITERATIONS` of 60 (about 6 million members, 6 variables, 28 threads) the run holds 0.5 GiB, each block takes 1.1 GiB, and the measured peak is near 5 GiB, the inputs and stage A's FaIR runs coming on top. The complete ensemble (790 million members) needs about 19 GB for each year of a block (twice that with the percentiles' copy), and 4 GB for the members' positions. -->
+<!-- The years per block are as many as the threads can take percentiles of in one pass (⌊threads / variables⌋, e.g. 4 for 6 variables on 28 threads; bigger blocks are no faster), unless the memory free when the sample is made (stage C) allows fewer; the log's `Years per block` line says which limits it. For example, at about 6 million members (6 variables, 28 threads) the run holds 0.5 GiB, each block takes 1.1 GiB, and the measured peak is near 5 GiB, the inputs and stage A's FaIR runs coming on top. The complete ensemble (790 million members) needs about 19 GB for each year of a block (twice that with the percentiles' copy), and 4 GB for the members' positions. -->
 
-To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, what is held throughout, the largest block, the peak to expect, and the memory Slurm allocated to the job. A run that cannot fit stops there, before the members are rebuilt. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the number of samples, or raise `CPU_MEM`, until the anticipated peak fits.
+To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, what is held throughout, the largest block, the peak to expect, and the memory Slurm allocated to the job. A run that cannot fit stops there, before the members are rebuilt. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the ensemble size, or raise `CPU_MEM`, until the anticipated peak fits.
 
 `gwi.py` rebuilds the members and takes their percentiles on as many threads, and `combine_results_iterations.py` runs as many worker processes, as the CPUs Slurm allocates to the job, or, outside Slurm, as the CPUs of the machine; set the `GWI_NUM_WORKERS` environment variable to use a different number. `combine_results_iterations.py` needs far less memory than `gwi.py`, though projects requiring exceptionally large numbers of different scenarios, or individual member analyses, may require more resources than an interactive slurm node's default allocation. <!-- An interactive job with 8 CPUs and 2 GB per CPU has been enough for our largest sets for the post-processing combination script. -->
 
 
 ##### 2.4.8. Running the GWI for Individual Ensemble Members
 
-Normally (`ERF_MEMBERS=all`, `GMT_MEMBERS=all`) every member of each uncertainty source is sampled within the one Monte Carlo calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
+Normally (`ERF_MEMBERS=all`, `GMT_MEMBERS=all`) every member of each uncertainty source is sampled within the one calculation. Some projects instead need the full GWI calculated separately for each member of a dataset: for example, the Thorne et al. statistical analysis needed a GWI for each realisation of the observed temperatures. To do this:
 1. Set the members wanted on one side (e.g. `GMT_MEMBERS={1..100}`), and `all` on the other; or, to pair ERF and GMT members one-to-one (as `FutureVolc_ESM-rcp45-Volc` needs), the pairing keyword on the other (e.g. `ERF_MEMBERS=paired_with_GMT_member`).
 2. Allow enough `WALLTIME`: each job runs `gwi.py` once for every member, one after another.
 

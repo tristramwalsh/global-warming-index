@@ -231,7 +231,7 @@ def load_iteration_dfs(regressed_years, result_type, scenario,
 
     for iteration in iteration_files:
         fname = os.path.join(base_path, iteration)
-        ens_size = int(fname.split('ENSEMBLE-SIZE--')[-1].split('_')[0])
+        ens_size = results_layout.ensemble_size_from_name(iteration)
         df_iteration = pd.read_csv(
             fname, index_col=0,  header=[0, 1], skiprows=0)
         dict_iterations[iteration] = df_iteration

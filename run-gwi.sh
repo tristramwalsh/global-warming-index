@@ -109,6 +109,19 @@ check_recipe "${RECIPE}" "${TEMPLATE}" || exit 1
 # Read the recipe: from here on, every RECIPE_<NAME> holds its value.
 source "${RECIPE}"
 
+# Check each iteration's sampling before anything runs: a design and an
+# ensemble size joined by a dash (e.g. latin-1e6), or all, which rebuilds
+# every member and so takes no size. gwi.py checks the size's value.
+for sampling in "${RECIPE_SAMPLING_ITERATIONS[@]}"; do
+  if ! [[ "${sampling}" =~ ^(cube|mc|latin)-[0-9][0-9.eE+]*$ ||
+          "${sampling}" = "all" ]]; then
+    echo "Invalid entry in RECIPE_SAMPLING_ITERATIONS: '${sampling}'." \
+         "Use a design and an ensemble size, e.g. latin-1e6, cube-1e4 or" \
+         "mc-1000000, or all (see recipes/TEMPLATE.sh)." >&2
+    exit 1
+  fi
+done
+
 ###############################################################################
 ## Run ########################################################################
 
@@ -198,12 +211,20 @@ build_member_runs "${RECIPE_ERF_MEMBERS}" "${RECIPE_GMT_MEMBERS}" || exit 1
 VARS_TAG=$(echo "${RECIPE_VARS}" | tr ',' '\n' | sort | paste -sd- -)
 
 # The gwi.py call for one calculation, built here once for every mode.
-# Arguments: sample size, regression end year, ERF member, GMT member.
-# Sets the array GWI_COMMAND.
+# Arguments: sampling (e.g. latin-1e6, or all), regression end year, ERF
+# member, GMT member. Sets the array GWI_COMMAND.
 gwi_command() {
+  # The design, and its ensemble size (none for all, which rebuilds every
+  # member)
+  local design=${1%%-*}
+  local size_option=()
+  if [ "${design}" != "all" ]; then
+    size_option=(--ensemble-size="${1#*-}")
+  fi
   GWI_COMMAND=(
     python gwi.py
-    --samples="$1"
+    --sampling-design="${design}"
+    "${size_option[@]}"
     --seed="${RECIPE_SEED}"
     --regress-range="${RECIPE_START_REGRESS}-$2"
     --truncate="${RECIPE_TRUNCATION}"
@@ -241,13 +262,13 @@ print_gwi_command() {
 # Keep track of which iteration we are on (avoid overwriting log files)
 count=1
 # Run, or submit, each configuration
-for j in "${RECIPE_SUBSAMPLE_ITERATIONS[@]}"
+for j in "${RECIPE_SAMPLING_ITERATIONS[@]}"
 do
 
 for i in ${RECIPE_END_REGRESS}
 do
 
-echo "Iteration ${count}: ${j} samples, regressed years ${RECIPE_START_REGRESS}-${i}"
+echo "Iteration ${count}: sampling ${j}, regressed years ${RECIPE_START_REGRESS}-${i}"
 
 # Compose the identifier for this job. Core fields are always present; the
 # remaining flags are appended only when set away from their usual value, so
@@ -259,7 +280,7 @@ RUN_TAG="ERF--${RECIPE_ERF_DATASET}_GMT--${RECIPE_GMT_DATASET}"
 RUN_TAG="${RUN_TAG}_VARIABLES--${VARS_TAG}"
 RUN_TAG="${RUN_TAG}_REGRESSED-YEARS--${RECIPE_START_REGRESS}-${i}"
 RUN_TAG="${RUN_TAG}_TRUNCATED-YEARS--${RECIPE_TRUNCATION}"
-RUN_TAG="${RUN_TAG}_SAMPLES--${j}"
+RUN_TAG="${RUN_TAG}_SAMPLING--${j}"
 RUN_TAG="${RUN_TAG}_MEMBERS--${MEMBER_TAG}"
 RUN_TAG="${RUN_TAG}_ITER--${count}"
 if [ "${RECIPE_PREINDUSTRIAL_ERA}" != "1850-1900" ]; then
@@ -347,9 +368,8 @@ fi
 
 done
 
-# Increment the counter that keeps track of multiple runs at the same sample
-# size. i.e. for each member of RECIPE_SUBSAMPLE_ITERATIONS, this counter will
-# increment.
+# Increment the counter that keeps track of the iterations: once for each
+# entry of RECIPE_SAMPLING_ITERATIONS.
 count=$((count + 1))
 
 done

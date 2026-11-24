@@ -19,10 +19,10 @@
 # use them for your own development runs.
 #
 # As it stands, this file is itself a quick test: one regression end year and
-# 10 samples, which takes well under a minute on a laptop in direct mode.
+# 10,000 members, which takes well under a minute in direct mode.
 # WARNING: its results are not fit for any real use. The ensemble is
 # trivially small, so it only checks that everything runs; real results need
-# much larger ensembles (see RECIPE_SUBSAMPLE_ITERATIONS).
+# much larger ensembles (see RECIPE_SAMPLING_ITERATIONS).
 #
 # Adding a new setting: add it here, with its explanation, and to every
 # recipe in recipes/.
@@ -71,34 +71,45 @@ RECIPE_START_REGRESS=1850
 #                                                historical-only GWI)
 RECIPE_END_REGRESS=2025
 
-# Select the subsampling sizes: one iteration for each value, each sampling
-# up to that many members from each source of uncertainty (the ERF members,
-# the observed members and the piControl segments; every FaIR parameter set
-# is always used), and taking every combination of them: 28 × k³ members
-# for k samples, e.g. about 6 million for 60.
-# e.g. RECIPE_SUBSAMPLE_ITERATIONS=(10)                (a quick test)
-# e.g. RECIPE_SUBSAMPLE_ITERATIONS=(60 60 60)          (three repeat
-#                                                       iterations, averaged
-#                                                       by the combination
-#                                                       script)
-# e.g. RECIPE_SUBSAMPLE_ITERATIONS=(60 70 80 90 100)   (scaling up the
-#                                                       calculation)
-# e.g. RECIPE_SUBSAMPLE_ITERATIONS=(10000)             (maxing out the
-#                                                       calculation: every
-#                                                       member, about 790
-#                                                       million for IGCC-2025
-#                                                       with HadCRUT-2025,
-#                                                       which needs a
-#                                                       large-memory node)
-RECIPE_SUBSAMPLE_ITERATIONS=(10)
+# Select how to sample the ensemble: one iteration for each entry, each a
+# sampling design and the ensemble size N (the members to rebuild) joined by
+# a dash, or all. The complete ensemble is every combination of the members
+# of the four sources of uncertainty (FaIR parameter sets, ERF members,
+# observed members, piControl segments): about 790 million members for
+# IGCC-2025 with HadCRUT-2025. The designs, each treating the four sources
+# alike:
+#   latin   N members using every member of each source equally often, the
+#           sources paired at random (a Latin hypercube), and no member
+#           drawn twice until every member has been: at N = the complete
+#           ensemble's size it is the complete ensemble
+#   mc      N members drawn independently from the complete ensemble,
+#           with replacement (Monte Carlo)
+#   cube    every combination of k random members of each source, with the
+#           largest k that keeps it within N (so it can fall short of N);
+#           earlier GWI releases used a cube that kept every parameter set
+#   all     every member of the complete ensemble: no sampling error, the
+#           same every time; needs a large-memory node for IGCC-sized
+#           datasets (see the README's Memory and Computing Resources)
+# N is a whole number, or in e notation: 1e6 is 1,000,000.
+# e.g. RECIPE_SAMPLING_ITERATIONS=(latin-1e4)           (a quick test)
+# e.g. RECIPE_SAMPLING_ITERATIONS=(latin-1e6)           (a routine run)
+# e.g. RECIPE_SAMPLING_ITERATIONS=(latin-1e6 latin-1e6) (two repeat
+#                                                        iterations, averaged
+#                                                        by the combination
+#                                                        script)
+# e.g. RECIPE_SAMPLING_ITERATIONS=(latin-1e5 latin-1e6 latin-1e7)
+#                                                       (scaling up)
+# e.g. RECIPE_SAMPLING_ITERATIONS=(all)                 (every member)
+RECIPE_SAMPLING_ITERATIONS=(latin-1e4)
 
 # Select a seed for the random sampling of ensemble members, for exactly
 # reproducible runs: runs of the same configuration on the same inputs then
 # give identical results (e.g. to check that a code change leaves the results
-# unchanged). Leave empty for the usual, unseeded sampling, in which every run
-# samples afresh.
+# unchanged). Leave empty for the usual setting, in which every run draws
+# its own seed, and so samples afresh; the seed drawn is logged, and named
+# in the results files, so that any run can be reproduced.
 # NOTE: every run uses the same seed, so with a seed set, repeat iterations
-# of the same configuration in RECIPE_SUBSAMPLE_ITERATIONS give identical
+# of the same configuration in RECIPE_SAMPLING_ITERATIONS give identical
 # results.
 # e.g. RECIPE_SEED=     (unseeded; the usual setting)
 # e.g. RECIPE_SEED=42
@@ -289,10 +300,10 @@ RECIPE_HEADLINE_YEARS='end_regress'
 RECIPE_CLUSTER=htc
 
 # Select the resources for each Slurm job: time limit, CPUs, and memory per
-# CPU. 0:10:00, 28 and 9000M suit about 60 samples with every definition
-# (3 to 5 minutes, peaking near 5 GiB); the time and memory grow with the
-# number of members, and member-by-member runs need more time (see the
-# README's Memory and Computing Resources).
+# CPU. 0:10:00, 28 and 9000M suit about 6 million members with every
+# definition (3 to 5 minutes, peaking near 5 GiB); the time and memory grow
+# with the number of members, and member-by-member runs need more time (see
+# the README's Memory and Computing Resources).
 RECIPE_WALLTIME=0:10:00
 RECIPE_SIM_CPUS=28
 RECIPE_CPU_MEM=9000M

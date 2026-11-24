@@ -7,7 +7,7 @@ two output tags (recipes and run-gwi.sh, as usual). This script then says
 whether the two versions give the same results:
 
 - Files are paired by their path inside each folder, ignoring the
-  DATE-CALCULATED--<timestamp> part of the name, which differs on every run.
+  DATE--<timestamp> part of the name, which differs on every run.
 - Files present in only one folder are listed.
 - Paired CSV files are compared cell by cell. Cells that are numbers must
   agree to within an absolute tolerance (--atol, default 1e-5, in each
@@ -33,8 +33,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# e.g. _DATE-CALCULATED--2026-11-22-14-03-59, before the file extension
-DATE_PATTERN = re.compile(r'_DATE-CALCULATED--\d{4}(-\d{2}){5}')
+# e.g. _DATE--20261124-120244, before the file extension, or
+# _DATE-CALCULATED--2026-11-22-14-03-59 in names written before Phase 2
+DATE_PATTERN = re.compile(
+    r'_DATE--\d{8}-\d{6}|_DATE-CALCULATED--\d{4}(-\d{2}){5}')
 
 
 def index_files(root):

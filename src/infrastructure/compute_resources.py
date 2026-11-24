@@ -255,8 +255,9 @@ def check_memory(held_bytes, block_bytes):
     limit = job_memory_limit()
     # The expected peak
     expected = held_bytes + block_bytes
-    advice = ('lower the number of samples (--samples), or raise the '
-              'memory per CPU (RECIPE_CPU_MEM in a run-gwi.sh recipe)')
+    advice = ('lower the ensemble size (--ensemble-size, or the size in '
+              'RECIPE_SAMPLING_ITERATIONS), or raise the memory per CPU '
+              '(RECIPE_CPU_MEM in a run-gwi.sh recipe)')
 
     run_log.log_section('Memory usage anticipated')
     print(f'Held throughout (the sample and the coefficients): '

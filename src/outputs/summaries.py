@@ -113,9 +113,10 @@ def years_per_block(sample):
     since each member's scaling factors are summed once for the whole
     sample. Nor are the percentiles, once every thread has a calculation; a
     few calculations more than threads is slower, as the threads that finish
-    first then wait while the rest take a second one. Measured at
-    --samples=60 (6 million members, 6 variables, 28 threads): 4, 14 and 32
-    years per block take 35.6, 35.0 and 34.5 s for the timeseries, and 1.1,
+    first then wait while the rest take a second one. Measured at 6 million
+    members (the cube at --samples=60, before Phase 2; 6 variables, 28
+    threads): 4, 14 and 32 years per block take 35.6, 35.0 and 34.5 s for
+    the timeseries, and 1.1,
     3.8 and 8.7 GiB per block (a block's members, and the copy the
     percentiles make of them); 5 years (30 calculations) took 38.7 s.
 

@@ -174,11 +174,12 @@ WARMING_DEFINITIONS = {
 }
 
 # Every option gwi.py reads. Anything else on the command line stops the
-# run: an unknown option is most likely a typo (e.g. --sample=10000),
+# run: an unknown option is most likely a typo (e.g. --ensemble=1e6),
 # which would otherwise be ignored silently, leaving the default in its
 # place.
 KNOWN_OPTIONS = (
-    '--samples', '--seed', '--regress-range', '--truncate',
+    '--sampling-design', '--ensemble-size', '--seed', '--regress-range',
+    '--truncate',
     '--definitions', '--headline-years',
     '--regress-variables', '--erf-dataset', '--gmt-dataset',
     '--picontrol-dataset', '--committed', '--preindustrial-era',
@@ -324,6 +325,28 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
 # THE PIPELINE ################################################################
 ###############################################################################
 
+def parse_ensemble_size(text):
+    """The ensemble size from --ensemble-size: a whole number of members,
+    at least 1.
+
+    text:
+        the option's value, a whole number (e.g. 1000000) or in e notation
+        (e.g. 1e6)
+    Returns N, an int.
+    """
+    # The value as a number, if it is one
+    try:
+        value = float(text)
+    except ValueError:
+        value = None
+    # ... which must be a whole number of members, at least one
+    if value is None or not value.is_integer() or value < 1:
+        raise ValueError(
+            f'Invalid --ensemble-size {text!r}: use a whole number of '
+            'members, at least 1, e.g. 1000000 or 1e6.')
+    return int(value)
+
+
 def read_argv_config(argv):
     """Read the run's configuration from the command line.
 
@@ -340,7 +363,8 @@ def read_argv_config(argv):
     - committed warming:
         year_committed_from, year_committed_to, committed_str
     - sampling:
-        samples, seed
+        sampling_design, ensemble_size (None for the all design), seed
+        (drawn here if none was given), seed_given
     - outputs:
         definitions, headline_years, include_sub_vars, output_tag
     - inputs:
@@ -354,7 +378,7 @@ def read_argv_config(argv):
         if not equals:
             raise ValueError(
                 f'Invalid argument {argument!r}: give options as '
-                '--name=value (e.g. --samples=10).')
+                '--name=value (e.g. --ensemble-size=1e6).')
         if name not in KNOWN_OPTIONS:
             raise ValueError(
                 f'Unknown option {name!r}. The options are: '
@@ -437,13 +461,32 @@ def read_argv_config(argv):
         f'_COMMITTED--{cfg.year_committed_from}-{cfg.year_committed_to}'
         if cfg.year_committed_to else '')
 
-    # How many members to draw from each source (the whole source if it has
-    # fewer)
-    if '--samples' in argv_dict:
-        cfg.samples = int(argv_dict['--samples'])
+    # The sampling design: which members of the complete ensemble to
+    # rebuild (see sampling.DESIGNS)
+    if '--sampling-design' in argv_dict:
+        cfg.sampling_design = argv_dict['--sampling-design']
     else:
-        cfg.samples = int(input(
-            'Max number of samples for each source (int): '))
+        cfg.sampling_design = input(
+            f'Sampling design ({", ".join(sampling.DESIGNS)}): ')
+    if cfg.sampling_design not in sampling.DESIGNS:
+        raise ValueError(
+            f'Unknown --sampling-design {cfg.sampling_design!r}: use one of '
+            f'{", ".join(sampling.DESIGNS)}.')
+    # How many members to rebuild, N, as a whole number (e.g. 1000000) or
+    # in e notation (e.g. 1e6); none for the all design, which rebuilds
+    # every member
+    ensemble_size = argv_dict.get('--ensemble-size', '')
+    if cfg.sampling_design == 'all':
+        if ensemble_size != '':
+            raise ValueError(
+                f'--ensemble-size={ensemble_size} was given with '
+                '--sampling-design=all, which rebuilds every member: leave '
+                '--ensemble-size out.')
+        cfg.ensemble_size = None
+    else:
+        if ensemble_size == '':
+            ensemble_size = input('Ensemble size (e.g. 1e6): ')
+        cfg.ensemble_size = parse_ensemble_size(ensemble_size)
 
     # The label keeping this piece of work's outputs apart (results_<tag>/);
     # none for the plain results/ folder
@@ -451,16 +494,19 @@ def read_argv_config(argv):
 
     # The seed of the draws: with one, repeat runs of a configuration draw
     # the same members and give identical results; without (none, or
-    # empty), every run draws afresh
+    # empty), a seed is drawn here from the operating system's entropy, so
+    # every run draws afresh, and is logged and named in the outputs, so
+    # any run can be reproduced
     seed = argv_dict.get('--seed', '')
-    if seed == '':
-        cfg.seed = None
+    cfg.seed_given = seed != ''
+    if not cfg.seed_given:
+        cfg.seed = int(np.random.SeedSequence().generate_state(1)[0])
     elif seed.isdigit() and int(seed) < 2**32:
         cfg.seed = int(seed)
     else:
         raise ValueError(
             f'Invalid --seed {seed!r}: use a whole number from 0 to '
-            '2**32-1, or leave it empty for unseeded sampling.')
+            '2**32-1, or leave it empty for a seed drawn afresh.')
 
     # The warming definitions to give (see WARMING_DEFINITIONS): each gets
     # its own timeseries CSV, and its values at the headline years go into
@@ -692,10 +738,12 @@ def log_configuration(cfg, inputs, folders):
     print(f'Pre-industrial era: {cfg.start_pi}-{cfg.end_pi}')
     print(f'Truncation range: {cfg.start_trunc}-{cfg.end_trunc}')
     print(f'Regression range: {cfg.start_regress}-{cfg.end_regress}')
-    print(f'Number of samples: {cfg.samples}')
-    seed_says = (cfg.seed if cfg.seed is not None
-                 else 'none (unseeded sampling)')
-    print(f'Random seed: {seed_says}')
+    print(f'Sampling design: {cfg.sampling_design}')
+    size_says = (f'{cfg.ensemble_size:,} asked for'
+                 if cfg.ensemble_size is not None else 'every member')
+    print(f'Ensemble size: {size_says}')
+    seed_says = 'given' if cfg.seed_given else 'drawn, as none was given'
+    print(f'Random seed: {cfg.seed} ({seed_says})')
     print(f'Warming definitions: {", ".join(cfg.definitions)}')
     print(f'Include pre-industrial offset: {cfg.inc_pi_offset}')
     print(f'Include constant term in regression: {cfg.inc_reg_const}')
@@ -704,9 +752,23 @@ def log_configuration(cfg, inputs, folders):
           f'{"" if cfg.output_tag else "  (no tag set)"}')
 
 
+def share(part, whole):
+    """part as a percentage of whole, for the log: e.g. '0.127%', '100%',
+    or '<0.001%' for a share too small to show (but not none).
+
+    part, whole:
+        two counts, whole at least 1 (a share of nothing is 0%)
+    """
+    # The percentage, to three significant figures, unless it is too small
+    # to show that way (0.001% and below would print as e.g. 8.11e-05%)
+    percent = 100 * part / max(whole, 1)
+    if 0 < percent < 0.001:
+        return '<0.001%'
+    return f'{percent:.3g}%'
+
+
 def draw_members(cfg, inputs):
-    """Draw the members to rebuild: every FaIR parameter set, and a random
-    subset of up to cfg.samples of each other source (the cube design).
+    """Draw the members to rebuild, with the configured sampling design.
 
     cfg:
         the configuration (see read_argv_config)
@@ -714,55 +776,66 @@ def draw_members(cfg, inputs):
         the inputs (see load_inputs)
     Returns the member index, (p, e, o, c):
         four arrays of positions along the whole axes, each (N,) (see
-        sampling.cube)
+        src/method/sampling.py)
 
-    Every parameter set is used, since there are few and their uncertainty
-    should be spanned fully; the ERF members, observed members and
-    piControl segments are drawn in equal numbers, to spread the
-    uncertainty evenly across the sources. The draws are
-    np.random.choice(n, k, replace=False) on numpy's global random state,
-    seeded here if asked: the draws the legacy code made, so the same seed
-    draws the same members, in the same order.
+    The draws are the run's only random numbers, all from one
+    np.random.default_rng(cfg.seed). The design treats the four sources
+    alike: e.g. at small N the cube and the Monte Carlo and Latin designs
+    may leave out some parameter sets, and the log says how many of each
+    source the members use.
     """
-    # Seed the draws, if asked: they are the run's only random draws
-    if cfg.seed is not None:
-        np.random.seed(cfg.seed)
     run_log.log_notes()
     run_log.log_section('Ensemble sampling')
-    # The sizes of the sources: E, P, O, C
-    n_erf = inputs.df_forc.columns.get_level_values('ensemble').nunique()
-    n_params = len(inputs.models)
-    n_obs = inputs.df_temp_Obs.shape[1]
-    n_pic = inputs.df_temp_PiC.shape[1]
+    # The sources' sizes, (P, E, O, C): the complete ensemble's axes
+    axis_lengths = (
+        len(inputs.models),
+        inputs.df_forc.columns.get_level_values('ensemble').nunique(),
+        inputs.df_temp_Obs.shape[1],
+        inputs.df_temp_PiC.shape[1])
+    n_complete = int(np.prod(axis_lengths, dtype=np.int64))
+    print(f'Complete ensemble: {n_complete:,} members (FaIR parameter sets '
+          f'x ERF members x observed members x piControl segments = '
+          f'{" x ".join(str(n) for n in axis_lengths)})')
 
-    # 1. A random subset of the ERF members: positions along e
-    print(f'Forcing ensemble all: {n_erf}')
-    erf_drawn = np.random.choice(n_erf, min(cfg.samples, n_erf),
-                                 replace=False)
-    print(f'Forcing ensemble pruned: {len(erf_drawn)}')
-    # 2. Every parameter set: positions along p
-    print(f'FaIR Parameters: {n_params}')
-    params_drawn = np.arange(n_params)
-    # 3. A random subset of the observed members: positions along o
-    print(f'Temperature ensembles all: {n_obs}')
-    obs_drawn = np.random.choice(n_obs, min(cfg.samples, n_obs),
-                                 replace=False)
-    print(f'Temperature ensembles pruned: {len(obs_drawn)}')
-    # 4. A random subset of the piControl segments: positions along c
-    print(f'Internal variability ensembles all: {n_pic}')
-    pic_drawn = np.random.choice(n_pic, min(cfg.samples, n_pic),
-                                 replace=False)
-    print(f'Internal variability ensembles pruned: {len(pic_drawn)}')
+    # The cube's members per source, which sets its size
+    if cfg.sampling_design == 'cube':
+        k = sampling.cube_samples_per_axis(cfg.ensemble_size, axis_lengths)
+        print(f'Cube: up to {k} members of each source')
+        if cfg.ensemble_size >= n_complete:
+            print(f'The ensemble size asked for, {cfg.ensemble_size:,}, '
+                  'reaches the complete ensemble, so the cube is every '
+                  'member.')
+    # The members, from the run's one random number generator
+    rng = np.random.default_rng(cfg.seed)
+    member_index = sampling.DESIGNS[cfg.sampling_design](
+        axis_lengths, cfg.ensemble_size, rng)
 
-    # Every combination of the drawn members (the cube design)
-    member_index = sampling.cube(params_drawn, erf_drawn, obs_drawn,
-                                 pic_drawn)
-    # The full ensemble's size, and the sample's
-    n_all = n_erf * n_params * n_obs * n_pic
-    n_sub = len(member_index[0])
-    print(f'Max available ensemble: {n_all:,}')
-    print(f'Sub-sampled ensemble size: {n_sub:,} '
-          f'({n_sub / n_all:.2%} of all possible combinations)')
+    # The sample's actual size, against the size asked for and the
+    # complete ensemble's
+    n_members = len(member_index[0])
+    asked_says = (f' ({cfg.ensemble_size:,} asked for)'
+                  if cfg.ensemble_size is not None else '')
+    print(f'Sampled ensemble: {n_members:,} members{asked_says}, '
+          f'{share(n_members, n_complete)} of the size of the complete '
+          f'ensemble')
+    # How much of the complete ensemble the sample covers, and how much of
+    # it is drawn more than once
+    n_different, n_repeated = sampling.describe_coverage(member_index,
+                                                         axis_lengths)
+    print(f'Different members drawn: {n_different:,}, covering '
+          f'{share(n_different, n_complete)} of the complete ensemble')
+    print(f'Members drawn more than once: {n_repeated:,} '
+          f'({share(n_repeated, n_complete)} of the complete ensemble), so '
+          f'{n_members - n_different:,} draws '
+          f'({share(n_members - n_different, n_members)} of the sample) '
+          f'repeat a member already drawn')
+    # How many of each source's members the sample uses: a position is
+    # used if it appears at all along its axis
+    for name, positions, n_axis in zip(
+            ('FaIR parameter sets', 'ERF members', 'Observed members',
+             'piControl segments'), member_index, axis_lengths):
+        n_used = np.count_nonzero(np.bincount(positions, minlength=n_axis))
+        print(f'{name} used: {n_used} of {n_axis}')
     return member_index
 
 
@@ -1008,16 +1081,19 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
     iterations of a configuration differ only in it; the observed ones are
     the same for every iteration, so have no date.
     """
-    # The names: the inputs, the regression, the sample's size and the
-    # time of the run
+    # The names: the inputs, the regression, the sample (its design, actual
+    # size and seed), and the time of the run, kept short since the names
+    # are close to the 255-byte limit (see results_layout.sample_name)
     inputs_name = (f'ERF--{cfg.erf_id}_GMT--{cfg.gmt_id}_'
                    f'PREINDUSTRIAL--{cfg.preindustrial_str}'
                    f'{cfg.committed_str}')
-    run_time = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    run_time = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    sample_name = results_layout.sample_name(
+        cfg.sampling_design, n_members, cfg.seed)
     gwi_name = (f'{inputs_name}_VARIABLES--{"-".join(cfg.regress_vars)}_'
-                f'ENSEMBLE-SIZE--{n_members}_'
+                f'{sample_name}_'
                 f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}_'
-                f'DATE-CALCULATED--{run_time}')
+                f'DATE--{run_time}')
     obs_name = f'{inputs_name}_ENSEMBLE-SIZE--{n_observed_members}'
     # The attributed warming: each definition's timeseries, the headlines
     gwi_timeseries, gwi_headlines = attributed
