@@ -180,7 +180,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 **`SEED`**: A seed for the random sampling of ensemble members, for exactly reproducible runs
 - Leave empty (the usual setting) for every run to draw its own seed, and so sample afresh: repeat iterations differ, and averaging them reduces the sampling noise. The seed drawn is logged, and named in the results files, so any run can be reproduced.
 - Set to a whole number (e.g. `42`) to draw exactly the same samples each time: runs of the same configuration on the same inputs then give identical results. This is useful for checking that a code change leaves the results unchanged.
-- Every run uses the same seed, so with a seed set, repeat iterations of the same configuration in `SAMPLING_ITERATIONS` give identical results.
+- With a seed set, each iteration in `SAMPLING_ITERATIONS` uses the seed plus its number less one (`SEED=42` gives seeds 42, 43, 44, ... to iterations 1, 2, 3, ...), so repeat iterations draw different members, and any one of them can be re-run on its own from the `gwi.py` command in its log. The end years of one iteration share its seed, so they draw the same members. Consecutive seeds give independent draws: numpy hashes each seed into its own stream of random numbers.
 
 
 **`PREINDUSTRIAL_ERA`**: Pre-industrial baseline period

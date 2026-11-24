@@ -122,6 +122,14 @@ for sampling in "${RECIPE_SAMPLING_ITERATIONS[@]}"; do
   fi
 done
 
+# Check the seed before anything runs: empty, or a whole number, from which
+# each iteration's seed is counted (see the iterations loop below)
+if ! [[ "${RECIPE_SEED}" =~ ^[0-9]*$ ]]; then
+  echo "Invalid RECIPE_SEED: '${RECIPE_SEED}'. Use a whole number, e.g. 42," \
+       "or leave it empty for every run to draw its own seed." >&2
+  exit 1
+fi
+
 ###############################################################################
 ## Run ########################################################################
 
@@ -225,7 +233,7 @@ gwi_command() {
     python gwi.py
     --sampling-design="${design}"
     "${size_option[@]}"
-    --seed="${RECIPE_SEED}"
+    --seed="${ITERATION_SEED}"
     --regress-range="${RECIPE_START_REGRESS}-$2"
     --truncate="${RECIPE_TRUNCATION}"
     --definitions="${RECIPE_DEFINITIONS}"
@@ -265,10 +273,25 @@ count=1
 for j in "${RECIPE_SAMPLING_ITERATIONS[@]}"
 do
 
+# This iteration's seed: the recipe's seed plus the iteration's number less
+# one (seeds 42, 43, 44 for iterations 1, 2, 3 of RECIPE_SEED=42), so that
+# repeat iterations draw different members, yet any one of them can be
+# re-run on its own by copying its gwi.py command. Every end year of an
+# iteration shares its seed, so they draw the same members. Consecutive
+# seeds give independent draws: numpy's default_rng hashes each seed into
+# its own stream. Empty if the recipe sets no seed: each run then draws its
+# own (and logs it).
+if [ -n "${RECIPE_SEED}" ]; then
+  # (10# reads the seed in base 10, even with a leading zero, e.g. 042)
+  ITERATION_SEED=$((10#${RECIPE_SEED} + count - 1))
+else
+  ITERATION_SEED=""
+fi
+
 for i in ${RECIPE_END_REGRESS}
 do
 
-echo "Iteration ${count}: sampling ${j}, regressed years ${RECIPE_START_REGRESS}-${i}"
+echo "Iteration ${count}: sampling ${j}, seed ${ITERATION_SEED:-drawn by gwi.py}, regressed years ${RECIPE_START_REGRESS}-${i}"
 
 # Compose the identifier for this job. Core fields are always present; the
 # remaining flags are appended only when set away from their usual value, so
@@ -292,8 +315,8 @@ fi
 if [ "${RECIPE_INCLUDE_SUB_VARS}" = "y" ]; then
   RUN_TAG="${RUN_TAG}_SUB-VARS--y"
 fi
-if [ -n "${RECIPE_SEED}" ]; then
-  RUN_TAG="${RUN_TAG}_SEED--${RECIPE_SEED}"
+if [ -n "${ITERATION_SEED}" ]; then
+  RUN_TAG="${RUN_TAG}_SEED--${ITERATION_SEED}"
 fi
 
 if [ "${MODE}" = "dry" ]; then

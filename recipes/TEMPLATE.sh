@@ -108,9 +108,10 @@ RECIPE_SAMPLING_ITERATIONS=(latin-1e4)
 # unchanged). Leave empty for the usual setting, in which every run draws
 # its own seed, and so samples afresh; the seed drawn is logged, and named
 # in the results files, so that any run can be reproduced.
-# NOTE: every run uses the same seed, so with a seed set, repeat iterations
-# of the same configuration in RECIPE_SAMPLING_ITERATIONS give identical
-# results.
+# With a seed set, each iteration in RECIPE_SAMPLING_ITERATIONS uses the
+# seed plus its number less one (42, 43, 44, ... for RECIPE_SEED=42), so
+# repeat iterations draw different members; the end years of one iteration
+# share its seed, and so its members.
 # e.g. RECIPE_SEED=     (unseeded; the usual setting)
 # e.g. RECIPE_SEED=42
 RECIPE_SEED=
