@@ -4,6 +4,8 @@ import os
 import re
 import uuid
 
+import xarray as xr
+
 
 def tagged_folder(base, tag):
     """Return the output folder for a run, optionally tagged.
@@ -149,11 +151,17 @@ def ensemble_size_from_name(file_name):
     return sample_from_name(file_name)[1]
 
 
-def write_csv(df, path):
-    """Write a DataFrame to a CSV file, so that no one ever sees half of it.
+def write_csv(table, path, year_heading=None):
+    """Write a table to a CSV file, so that no one ever sees half of it.
 
-    df: the DataFrame, written with df.to_csv(...)'s defaults
+    table: a DataFrame, written with its to_csv(...)'s defaults, or a 2-D
+        DataArray (year, member), written as one row per year and one
+        column per member (xarray has no CSV writer of its own, so it is
+        written through pandas, here)
     path: the CSV file to write; replaced if it exists
+    year_heading: for a DataArray, the heading of the year column ('Year'
+        for the observations, none for the piControl segments, as their
+        files have always had)
 
     Several Slurm jobs can write the same file at once: run-gwi.sh submits
     one job per (iteration, regression end year), and every one of them
@@ -170,13 +178,18 @@ def write_csv(df, path):
     are already close to the 255-byte limit) and hidden, ending in .tmp, so
     nothing that reads results picks it up.
     """
+    # A DataArray as a table: one row per year, one column per member, the
+    # year column headed year_heading, the member labels unheaded
+    if isinstance(table, xr.DataArray):
+        table = table.to_pandas().rename_axis(index=year_heading,
+                                              columns=None)
     # The folder the file goes in
     folder = os.path.dirname(os.path.abspath(path))
     # A temporary file beside it, under a name no other job will use
     temp_path = os.path.join(folder, f'.gwi-write-{uuid.uuid4().hex}.tmp')
     try:
         # Write the whole file under the temporary name
-        df.to_csv(temp_path)
+        table.to_csv(temp_path)
         # Move it onto the final name, in one atomic step
         os.replace(temp_path, path)
     finally:

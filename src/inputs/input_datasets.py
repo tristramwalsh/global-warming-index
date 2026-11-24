@@ -52,7 +52,8 @@ import src.method.warming_definitions as warming_definitions
 # its files in data/observed-2026/GMT/HadCRUT/, named as before (the version
 # number in a HadCRUT file name may change): no code changes are needed.
 # To add a new product, write its loader (load_ERF_<product> or
-# load_GMT_<product>), and call that loader from load_ERF or load_GMT.
+# load_GMT_<product>), returning a DataArray as the others do, and call that
+# loader from load_ERF or load_GMT.
 
 # Simulated datasets with one ERF member for each GMT member (with the same
 # labels), which must be attributed one-to-one
@@ -191,7 +192,7 @@ def describe_members(labels):
 
 
 def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
-    """Load an ERF metadata, keeping only the variables and member asked for.
+    """Load an ERF dataset, keeping only the variables and member asked for.
 
     erf_id: e.g. 'IGCC-2025' or 'SMILE_ESM-SSP245' (see INPUT DATASETS)
     regress_vars: e.g. ['GHG', 'Nat', 'OHF']
@@ -199,124 +200,95 @@ def load_ERF(erf_id, regress_vars, member, include_sub_vars=False):
     include_sub_vars: also keep the variables' sub-variables, e.g. co2 for
         GHG (see variables.SUB_VAR_MAPPING)
 
-    Returns the forcing, a DataArray (year, erf_member, forcing_variable)
-    (see erf_as_dataarray).
-
-    The products' loaders below read their files into DataFrames, with
-    columns (variable, ensemble); only here, at the edge, does the forcing
-    become a DataArray.
+    Returns the forcing, a DataArray (year, erf_member, forcing_variable):
+    year first, then members, then variables, as every input is (see
+    gwi.py's NAMING), the variables sorted, and the ERF members in the
+    order their product's loader gives them (the order of the e axis).
     """
     metadata = dataset_metadata(erf_id, 'ERF')
 
     # Load the whole dataset with its product's loader
     if metadata.product == 'IGCC':
-        df_ERF = load_ERF_IGCC(metadata, include_sub_vars=include_sub_vars)
+        erf = load_ERF_IGCC(metadata, include_sub_vars=include_sub_vars)
     elif metadata.product == 'SSP_extension':
-        df_ERF = load_ERF_SSP_extension(metadata)
+        erf = load_ERF_SSP_extension(metadata)
     elif metadata.product == 'SMILE_ESM':
-        df_ERF = load_ERF_SMILE_ESM(metadata)
+        erf = load_ERF_SMILE_ESM(metadata)
     elif metadata.product == 'FutureVolc_ESM':
-        df_ERF = load_ERF_FutureVolc_ESM(metadata)
+        erf = load_ERF_FutureVolc_ESM(metadata)
     else:
         raise ValueError(f'No ERF loader for {erf_id!r}.')
 
-    # Extract just the required variables
-    df_ERF = extract_ERF_variables(df_ERF,
-                                   regress_vars,
-                                   include_sub_vars=include_sub_vars)
-    # Extract just the required ensemble member(s)
-    df_ERF = extract_ERF_members(df_ERF, member, erf_id)
+    # Add any aggregate the file lacks but whose parts it has (e.g. GHG
+    # from co2, ch4, n2o and halogen)
+    erf = aggregate_missing_forcings(erf)
+    # Keep just the variables asked for, and the member(s)
+    erf = extract_ERF_variables(erf, regress_vars,
+                                include_sub_vars=include_sub_vars)
+    erf = extract_ERF_members(erf, member, erf_id)
 
-    # The forcing as a DataArray, with named dimensions
-    return erf_as_dataarray(df_ERF)
+    # The variables sorted, and the dimensions year first
+    return erf.sortby('forcing_variable').transpose(
+        'year', 'erf_member', 'forcing_variable').rename('erf')
 
 
-def erf_as_dataarray(df_ERF):
-    """The forcing as a DataArray with named dimensions.
+def forcing_from_table(df_ERF, erf_member='single'):
+    """One ERF member's forcing, from a table read from a CSV file.
 
-    df_ERF:
-        a DataFrame indexed by year, with columns (variable, ensemble), as
-        from the load_ERF_* loaders
-    Returns a DataArray (year, erf_member, forcing_variable): year first,
-    then members, then variables, as every input is (see gwi.py's NAMING),
-    the variables sorted, and the ERF members in the order they appear in
-    the DataFrame (the order of the e axis).
+    df_ERF: a DataFrame indexed by year, one column per variable, as the
+        simulated products' files hold them
+    erf_member: the member's label ('single' for a dataset with one)
+    Returns a DataArray (year, erf_member, forcing_variable), with one
+    member.
     """
-    # The variables, sorted, and the ERF members, in order
-    forcing_vars = sorted(df_ERF.columns.get_level_values(
-        'variable').unique())
-    erf_members = df_ERF.columns.get_level_values(
-        'ensemble').unique().to_list()
-    # Each ERF member's forcing of each variable: (t, e, v)
-    values = np.stack([
-        np.stack([df_ERF[(var, member)].to_numpy() for var in forcing_vars],
-                 axis=-1)
-        for member in erf_members], axis=1)
     return xr.DataArray(
-        values, dims=('year', 'erf_member', 'forcing_variable'),
-        coords={'erf_member': erf_members,
-                'year': df_ERF.index.to_numpy(),
-                'forcing_variable': forcing_vars},
-        name='erf')
+        df_ERF.to_numpy()[:, np.newaxis, :],
+        dims=('year', 'erf_member', 'forcing_variable'),
+        coords={'year': df_ERF.index.to_numpy(),
+                'erf_member': [erf_member],
+                'forcing_variable': df_ERF.columns.to_list()})
 
 
-def extract_ERF_variables(df_ERF, regress_vars, include_sub_vars=False):
-    """Keep only some variables of an ERF DataFrame.
+def extract_ERF_variables(erf, regress_vars, include_sub_vars=False):
+    """Keep the regressed variables of the forcing, and, if asked, their
+    sub-variables (those the dataset has).
 
-    df_ERF: columns (variable, ensemble), as from the load_ERF_* loaders
+    erf: the forcing, a DataArray (year, erf_member, forcing_variable), as
+        from the load_ERF_* loaders
     regress_vars: e.g. ['GHG', 'Nat', 'OHF']
-    include_sub_vars: also keep their sub-variables (see
-        variables.SUB_VAR_MAPPING)
+    include_sub_vars: also keep their sub-variables, e.g. co2, ch4, n2o and
+        halogen for GHG (see variables.SUB_VAR_MAPPING), and theirs in turn
     """
-    # Check that the regress_vars are present in the dataframe
-    available_vars = df_ERF.columns.get_level_values('variable').unique()
+    available_vars = erf['forcing_variable'].to_numpy().tolist()
+    # Stop if a regressed variable isn't there
     missing_vars = set(regress_vars) - set(available_vars)
     if missing_vars:
         raise ValueError(
             'The following regression variables are not available in the '
             f'ERF data: {missing_vars}')
 
-    # Select vars:
+    # The variables to keep: the regressed ones ...
+    vars_to_keep = list(regress_vars)
+    # ... and, if asked, every variable below each of them in the mapping
+    # (e.g. GHG's co2, ch4, n2o and halogen), found by walking down it
     if include_sub_vars:
-        # If including sub-variables, we need to keep the regression variables
-        # AND their sub-variables.
-
-        # Helper to recursively find all sub-variables
-        def get_all_sub_vars(var):
-            sub_vars = []
-            if var in variables.SUB_VAR_MAPPING:
-                direct_subs = variables.SUB_VAR_MAPPING[var]
-                sub_vars.extend(direct_subs)
-                for sv in direct_subs:
-                    sub_vars.extend(get_all_sub_vars(sv))
-            return sub_vars
-
-        # 1. We trivially need to keep the regress_vars
-        vars_to_keep = list(regress_vars)
-
-        # 2. For each regress_var, find and add its sub-variables
-        for rv in regress_vars:
-            vars_to_keep.extend(get_all_sub_vars(rv))
-
-        vars_to_keep = list(set(vars_to_keep))
-
-        # Filter dataframe
-        available_vars = df_ERF.columns.get_level_values('variable').unique()
-        vars_to_keep = [v for v in vars_to_keep if v in available_vars]
-
-        df_ERF = df_ERF.loc[:, (vars_to_keep, slice(None))]
-
-    else:
-        df_ERF = df_ERF.loc[:, (regress_vars, slice(None))]
-
-    return df_ERF
+        to_visit = list(regress_vars)
+        while to_visit:
+            sub_vars = variables.SUB_VAR_MAPPING.get(to_visit.pop(), [])
+            vars_to_keep += sub_vars
+            to_visit += sub_vars
+    # ... of those the dataset has, each once
+    vars_to_keep = [var for var in dict.fromkeys(vars_to_keep)
+                    if var in available_vars]
+    return erf.sel(forcing_variable=vars_to_keep)
 
 
-def extract_ERF_members(df_ERF, member, erf_id):
-    """Keep all members of an ERF DataFrame, or just one.
+def extract_ERF_members(erf, member, erf_id):
+    """Keep all members of the forcing, or just one.
     (For GMT members, see extract_GMT_members.)
 
-    df_ERF: columns (variable, ensemble), as from the load_ERF_* loaders
+    erf: the forcing, a DataArray (year, erf_member, forcing_variable), as
+        from the load_ERF_* loaders
     member: 'all', or one member's label, e.g. 'ens100' (IGCC) or '7'.
         Datasets with a single ERF timeseries (SMILE_ESM,
         FutureVolc_ESM-rcp45-VolcConst) label it 'single'.
@@ -324,12 +296,12 @@ def extract_ERF_members(df_ERF, member, erf_id):
     """
     # Keep everything
     if member == 'all':
-        return df_ERF
+        return erf
 
     # Find the member, matched as text, because the member comes from the
     # command line but some labels are numbers (SSP_extension)
-    available = df_ERF.columns.get_level_values('ensemble').unique()
-    matches = [ens for ens in available if str(ens) == member]
+    available = erf.erf_member.to_numpy().tolist()
+    matches = [label for label in available if str(label) == member]
 
     # Stop if it isn't there
     if not matches:
@@ -338,7 +310,7 @@ def extract_ERF_members(df_ERF, member, erf_id):
             f'{describe_members(available)}.')
 
     # Keep that member, for every variable
-    return df_ERF.loc[:, (slice(None), matches[0])]
+    return erf.sel(erf_member=matches[:1])
 
 
 def extend_ERF_to_committed_year(erf, year_committed_to,
@@ -370,119 +342,93 @@ def extend_ERF_to_committed_year(erf, year_committed_to,
     return erf
 
 
-def aggregate_missing_forcings(df_ERF,
-                               SUB_VAR_MAPPING=variables.SUB_VAR_MAPPING):
-    """Add any aggregate variable that is missing but whose sub-variables
+def aggregate_missing_forcings(erf):
+    """Add any aggregate variable the forcing lacks but whose sub-variables
     are all present, e.g. GHG from co2, ch4, n2o and halogen.
 
-    df_ERF: one column per variable (the loaders call this before adding the
-        ensemble column level)
+    erf: the forcing, a DataArray (year, erf_member, forcing_variable)
+    Returns it with the aggregates added, after its other variables.
+
+    The mapping is ordered so that an aggregate's parts come before it
+    (GHG, OHF, Nat, then Ant, then Tot), so an aggregate made here (e.g.
+    Ant) can be a part of a later one (Tot). If only some of an aggregate's
+    parts are present, it is not made, and a note says which are missing.
     """
-
-    # Iterate over SUB_VAR_MAPPING to calculate any possible aggregates
-    # This works because the mapping is ordered (GHG/OHF/Nat -> Ant -> Tot)
-    for agg_var, sub_vars in SUB_VAR_MAPPING.items():
-        # print('Preparing variable:', agg_var)
-
-        # Check that this doesn't already exist first
-        if agg_var not in df_ERF.columns:
-            # print("..", agg_var, "doesn't yet exist: calculating it now.")
-
-            # Check which sub-variables are present
-            present_sub_vars = [v for v in sub_vars if v in df_ERF.columns]
-
-            # If we have sub-variables, calculate the aggregate
-            if present_sub_vars:
-                # print("....", agg_var, 'has subvariables available:',
-                #       present_sub_vars)
-
-                # Check for missing sub-variables and warn if we have a partial
-                # set
-                missing_sub_vars = set(sub_vars) - set(present_sub_vars)
-
-                if missing_sub_vars:
-                    run_log.note(f'Missing sub-variables for {agg_var}: '
-                                 f'{missing_sub_vars}. Aggregating only the '
-                                 f'variables present: {present_sub_vars}.')
-                else:
-                    # Sum across the columns (variables) for each row.
-                    df_ERF[agg_var] = df_ERF[present_sub_vars].sum(axis=1)
-            else:
-                pass
-                # print("....", agg_var,
-                #       ' has no sub-variables present: skipping aggregation.')
-        else:
-            pass
-            # print("..", agg_var, 'already exists; skipping aggregation.')
-
-    return df_ERF
-
-
-def check_ensemble_matching(df_ERF):
-    """Check that every variable of an ERF DataFrame has the same members."""
-
-    forc_var_names = sorted(df_ERF.columns.get_level_values(
-        'variable').unique().to_list())
-
-    # Check that the ensemble names are the same for all variables.
-    dict_ensemble_names = {}
-    for var in forc_var_names:
-        # Select the variable 'OHF' from the dataframe, and get ensemble names.
-        forc_subset = df_ERF.loc[:, (var, slice(None))]
-        # print(forc_subset.head())
-        forc_ens_names = sorted(
-            list(forc_subset.columns.get_level_values("ensemble").unique()))
-        dict_ensemble_names[var] = forc_ens_names
-
-    check_ens = all(
-        [dict_ensemble_names[var] == dict_ensemble_names[forc_var_names[0]]
-            for var in forc_var_names]
-        )
-
-    if not check_ens:
-        raise ValueError('Ensemble names are not the same for all variables.')
-
-    return check_ens
+    for aggregate, sub_vars in variables.SUB_VAR_MAPPING.items():
+        present = erf['forcing_variable'].to_numpy().tolist()
+        # Nothing to do if the aggregate is already there
+        if aggregate in present:
+            continue
+        # The parts the forcing has
+        present_sub_vars = [var for var in sub_vars if var in present]
+        if not present_sub_vars:
+            continue
+        # Only some parts: say so, and leave the aggregate out
+        missing_sub_vars = set(sub_vars) - set(present_sub_vars)
+        if missing_sub_vars:
+            run_log.note(f'Missing sub-variables for {aggregate}: '
+                         f'{missing_sub_vars}. Aggregating only the '
+                         f'variables present: {present_sub_vars}.')
+            continue
+        # Every part: the aggregate is their sum, added one by one, in the
+        # mapping's order (as the files' own aggregates are), then put
+        # after the other variables
+        total = sum(erf.sel(forcing_variable=var, drop=True)
+                    for var in present_sub_vars)
+        erf = xr.concat(
+            [erf, total.expand_dims(forcing_variable=[aggregate])],
+            dim='forcing_variable')
+    return erf
 
 
 def load_ERF_IGCC(metadata, include_sub_vars=False):
-    """Load IGCC historical ERFs (supplied by Chris Smith).
+    """Load IGCC historical ERFs (supplied by Chris Smith), 1000 members,
+    labelled 'ens<configuration number>'.
 
     metadata: e.g. the DatasetMetadata for 'IGCC-2025'
     include_sub_vars: read the _full file, which also holds the
         sub-variables (only some years have one)
+    Returns a DataArray (year, erf_member, forcing_variable).
     """
     # Find the file: the _full file also holds the sub-variables
     full = '_full' if include_sub_vars else ''
     file_ERF = find_dataset_file(
         metadata, f'ERF_DAMIP_1000_1750-{metadata.year}{full}.nc')
 
-    # import ERF_file to xarray dataset and convert to pandas dataframe
-    df_ERF = xr.open_dataset(file_ERF).to_dataframe()
-    # assign the columns the name 'variable'
-    df_ERF.columns.names = ['variable']
+    # The file's variables, each over (time, ensemble), as one DataArray
+    # with the variables along a dimension of their own
+    ds = xr.load_dataset(file_ERF)
+    # ... without the total, which is made from its parts where needed
+    ds = ds.drop_vars('total', errors='ignore')
+    erf = ds.to_array(dim='forcing_variable')
 
-    # Drop total if exists
-    if 'total' in df_ERF.columns:
-        df_ERF = df_ERF.drop(columns='total')
+    # The engine's names: the years, the members labelled ens<number>, in
+    # order of their labels (as text), and the variables' internal names
+    erf = erf.rename({'time': 'year', 'ensemble': 'erf_member'})
+    erf = erf.assign_coords(
+        erf_member=['ens' + str(number)
+                    for number in erf.erf_member.to_numpy()])
+    erf = erf.sortby('erf_member')
+    rename_map = {'wmghg': 'GHG', 'other_ant': 'OHF', 'natural': 'Nat'}
+    return erf.assign_coords(forcing_variable=[
+        rename_map.get(var, var)
+        for var in erf['forcing_variable'].to_numpy()])
 
-    # Rename columns from file names to internal names
-    RENAME_MAP = {'wmghg': 'GHG', 'other_ant': 'OHF', 'natural': 'Nat'}
-    df_ERF = df_ERF.rename(columns=RENAME_MAP)
 
-    # Calculate aggregates if missing (works both with/without sub-var toggle)
-    df_ERF = aggregate_missing_forcings(df_ERF, variables.SUB_VAR_MAPPING)
+def load_ERF_simulated_table(file_ERF):
+    """A simulated product's ERF table, read from its CSV file, with the
+    engine's variable names.
 
-    # move the multi-index 'ensemble' level to a column,
-    # and then set the 'ensemble' column to second column level
-    df_ERF = df_ERF.reset_index(level='ensemble')
-    df_ERF['ensemble'] = 'ens' + df_ERF['ensemble'].astype(str)
-    df_ERF = df_ERF.pivot(columns='ensemble')
-
-    # Check that the ensembles names are all matching across variables
-    check_ensemble_matching(df_ERF)
-
-    return df_ERF
+    file_ERF: the CSV file, a column 'year' and a column per forcing
+    Returns a DataFrame indexed by year, one column per variable, without
+    the CO2 concentrations (the column 'CO2'), which are not forcing.
+    """
+    # The file's columns, renamed to the engine's names
+    df_ERF = pd.read_csv(file_ERF).rename(columns={
+        'ERF_anthro': 'Ant', 'ERF_natural': 'Nat', 'ERF_other_human': 'OHF',
+        'ERF_wmghg': 'GHG', 'ERF_CO2': 'co2'})
+    # ... indexed by year, without the CO2 concentrations
+    return df_ERF.set_index('year').drop(columns='CO2', errors='ignore')
 
 
 def load_ERF_SMILE_ESM(metadata):
@@ -491,37 +437,14 @@ def load_ERF_SMILE_ESM(metadata):
     'single'.
 
     metadata: e.g. the DatasetMetadata for 'SMILE_ESM-SSP245'
+    Returns a DataArray (year, erf_member, forcing_variable).
     """
     # Find the file for this SSP (named in lower case), in the model's folder
     file_ERF = find_dataset_file(
         metadata,
         f'MPI-ESM1.2-LR/ERF_ESM1-2-LR_{metadata.variant.lower()}.csv')
-
-    df_ERF = pd.read_csv(file_ERF
-                         ).rename(columns={'year': 'Year',
-                                           'ERF_anthro': 'Ant',
-                                           'ERF_natural': 'Nat',
-                                           'ERF_other_human': 'OHF',
-                                           'ERF_wmghg': 'GHG',
-                                           'ERF_CO2': 'co2'
-                                           }
-                                  ).set_index('Year')
-    # Drop the column named 'CO2' as this is concentrations, not ERF
-    if 'CO2' in df_ERF.columns:
-        df_ERF = df_ERF.drop(columns='CO2')
-
-    # Calculate aggregates if missing
-    df_ERF = aggregate_missing_forcings(df_ERF)
-
-    # Add a second level to the column names ,and set the name of the second
-    # level to 'ensemble'. Make the value of this 'single' for all of the
-    # columns. This keeps the data structure the same as the multi-ensemble
-    # data.
-    df_ERF.columns = pd.MultiIndex.from_tuples(
-        [(col, 'single') for col in df_ERF.columns],
-        names=['variable', 'ensemble'])
-
-    return df_ERF
+    # Its one timeseries, as the member 'single'
+    return forcing_from_table(load_ERF_simulated_table(file_ERF))
 
 
 def load_ERF_FutureVolc_ESM(metadata):
@@ -533,111 +456,40 @@ def load_ERF_FutureVolc_ESM(metadata):
         ERF member for each temperature member, labelled '1' to '60') or
         'FutureVolc_ESM-rcp45-VolcConst' (a single timeseries, labelled
         'single')
+    Returns a DataArray (year, erf_member, forcing_variable).
     """
     if metadata.variant == 'rcp45-VolcConst':
-        # In this case, the ERF components are all in one file, and there is
-        # only one ensemble member.
+        # Every forcing in one file, one timeseries: the member 'single'
         file_ERF = find_dataset_file(
             metadata, f'NorESM1-M/ERF_NorESM_{metadata.variant}.csv')
-
-        df_ERF = pd.read_csv(file_ERF
-                             ).rename(columns={'year': 'Year',
-                                               'ERF_anthro': 'Ant',
-                                               'ERF_natural': 'Nat',
-                                               'ERF_other_human': 'OHF',
-                                               'ERF_wmghg': 'GHG',
-                                               'ERF_CO2': 'co2'
-                                               }
-                                      ).set_index('Year')
-
-        # Drop the column named 'CO2' as this is concentrations, not ERF
-        if 'CO2' in df_ERF.columns:
-            df_ERF = df_ERF.drop(columns='CO2')
-
-        # Calculate aggregates if missing
-        df_ERF = aggregate_missing_forcings(df_ERF)
-
-        df_ERF.columns = pd.MultiIndex.from_tuples(
-            [(col, 'single') for col in df_ERF.columns],
-            names=['variable', 'ensemble'])
+        return forcing_from_table(load_ERF_simulated_table(file_ERF))
 
     elif metadata.variant == 'rcp45-Volc':
-        # In this case, there is a single timeseries for the various anthro
-        # components, and a whole ensemble of natural components.
-
-        # ERF location for NATURAL
-        file_ERF_natural = find_dataset_file(
-            metadata, f'NorESM1-M/ERF_natural_NorESM_{metadata.variant}.csv')
-        df_ERF_natural = pd.read_csv(file_ERF_natural, index_col=0)
-        # Rename index to 'Year'
-        df_ERF_natural.index.name = 'Year'
-        # Add a first level to the column names ,and set the name of the first
-        # level to 'variable'. Make the value of this 'Nat' for all of the
-        # columns. This keeps the data structure the same as the multi-ensemble
-        # data.
-        ens_num = df_ERF_natural.columns.to_list()
-
-        df_ERF_natural.columns = pd.MultiIndex.from_tuples(
-            [('Nat', col) for col in df_ERF_natural.columns],
-            names=['variable', 'ensemble'])
-
-        # There is only a single-level column name at the moment, with just
-        # ensemble numbers. Move this to the second level, and add in the
-        # first level the variable name]
-
-        # ERF location for ANTHRO
+        # The human forcings: one timeseries, shared by every member
         file_ERF_anthro = find_dataset_file(
             metadata, f'NorESM1-M/ERF_anthro_NorESM_{metadata.variant}.csv')
-        df_ERF_anthro = pd.read_csv(file_ERF_anthro
-                             ).rename(columns={'year': 'Year',
-                                               'ERF_anthro': 'Ant',
-                                               'ERF_other_human': 'OHF',
-                                               'ERF_wmghg': 'GHG',
-                                               'ERF_CO2': 'co2'
-                                               }
-                                      ).set_index('Year')
+        anthro = forcing_from_table(load_ERF_simulated_table(file_ERF_anthro))
 
-        # Drop CO2 column if exists, as this is concentrations not ERF
-        if 'CO2' in df_ERF_anthro.columns:
-            df_ERF_anthro = df_ERF_anthro.drop(columns='CO2')
+        # The natural forcing: one timeseries per member, the members as the
+        # file's columns: (year, erf_member), then with Nat as the one
+        # variable: (year, erf_member, forcing_variable)
+        file_ERF_natural = find_dataset_file(
+            metadata, f'NorESM1-M/ERF_natural_NorESM_{metadata.variant}.csv')
+        df_natural = pd.read_csv(file_ERF_natural, index_col=0)
+        natural = xr.DataArray(
+            df_natural.to_numpy()[:, :, np.newaxis],
+            dims=('year', 'erf_member', 'forcing_variable'),
+            coords={'year': df_natural.index.to_numpy(),
+                    'erf_member': df_natural.columns.to_list(),
+                    'forcing_variable': ['Nat']})
 
-        # At the moment we have a single level column name, with just variable
-        # names. Keep this in the first level, and add a second level with
-        # 'ensemble' as the name, and '1' as the  value:
-        df_ERF_anthro.columns = pd.MultiIndex.from_tuples(
-            [(col, 'single') for col in df_ERF_anthro.columns],
-            names=['variable', 'ensemble'])
-
-        # We currently have (var, 'single') as the column names. We need to
-        # copy this data to a new column, with the same variable name, but with
-        # 'ensemble' as the second level, and '1' as the value. Copy it 60
-        # times, so that the second levels are '0', '2', '3', ..., '59'.
-
-        copies = []
-        for ii in ens_num:
-            df_ERF_anthro_repeat = df_ERF_anthro.copy()
-            # Rename the values in the 'ensemble' column to 'ii'
-            df_ERF_anthro_repeat = df_ERF_anthro_repeat.rename(
-                columns={'single': str(ii)}, level=1)
-            copies.append(df_ERF_anthro_repeat)
-        df_ERF_anthro = pd.concat(copies, axis=1)        
-        # Check that '(GHG, i)' column is the same, regardless, of the number i:
-        # Check that I haven't made a mistake in copying.
-        check_ens = all(
-            [df_ERF_anthro['GHG', str(ens)].equals(df_ERF_anthro['GHG', '1'])
-             for ens in ens_num])
-        if not check_ens:
-            raise ValueError(
-                'Ensemble values are not the same for all variables.')
-
-        # Combine the two dataframes
-        df_ERF = pd.concat([df_ERF_anthro, df_ERF_natural], axis=1)
-
-        # Calculate aggregates if missing
-        # Stack to get variables as columns, aggregate, then unstack
-        df_ERF = df_ERF.stack(level='ensemble')
-        df_ERF = aggregate_missing_forcings(df_ERF)
-        df_ERF = df_ERF.unstack(level='ensemble')
+        # Every member: the human forcings repeated for each, beside its own
+        # natural forcing, the members in order of their labels (as text)
+        anthro = anthro.isel(erf_member=0, drop=True).expand_dims(
+            erf_member=natural.erf_member.to_numpy()).transpose(
+                'year', 'erf_member', 'forcing_variable')
+        return xr.concat([anthro, natural], dim='forcing_variable').sortby(
+            'erf_member')
 
     # Any other variant
     else:
@@ -645,65 +497,50 @@ def load_ERF_FutureVolc_ESM(metadata):
             f'Unknown FutureVolc_ESM variant {metadata.variant!r}: use '
             'rcp45-Volc or rcp45-VolcConst.')
 
-    return df_ERF
-
 
 def load_ERF_SSP_extension(metadata):
-    """Load observed ERFs extended along an SSP (supplied by Chris Smith).
+    """Load observed ERFs extended along an SSP (supplied by Chris Smith),
+    841 members, labelled by their configuration numbers.
 
     metadata: e.g. the DatasetMetadata for 'SSP_extension-2022-SSP245'.
         The SSPs share their history to 2022 and diverge from 2023, so the
         data is filed with the 2022 data.
+    Returns a DataArray (year, erf_member, forcing_variable).
     """
     # Find the file, whose name holds the FaIR and calibration versions
     file_ERF = find_dataset_file(metadata, 'ssp_forcing_*.nc')
-
-    # import ERF_file to xarray dataset and convert to pandas dataframe
-    df_ERF = xr.open_dataset(file_ERF).to_dataframe()
-    # Rename the 'config' column in the index to be 'ensemble'
-    df_ERF.index.names = ['year', 'scenario', 'ensemble']
-    # assign the columns the name 'variable'
-    df_ERF.columns.names = ['variable']
-    # Move the ensemble column from the index to the columns
-    df_ERF = df_ERF.unstack(level=2)
-    # Change the values of the index 'year' to be rounded down (ie. remove 0.5)
-    df_ERF.index = df_ERF.index.set_levels(
-        df_ERF.index.levels[0].astype(int), level=0)
+    ds = xr.load_dataset(file_ERF)
 
     # Select the SSP (named in lower case in the file), stopping if it isn't
     # there
     ssp = metadata.variant.lower()
-    available = df_ERF.index.get_level_values('scenario').unique().tolist()
+    available = ds.scenario.to_numpy().tolist()
     if ssp not in available:
         raise ValueError(
             f'{metadata.variant!r} is not in {file_ERF.name}, which has '
             f"{[a.replace('ssp', 'SSP') for a in available]}.")
-    df_ERF = df_ERF.loc[(slice(None), ssp), :]
-    # Drop the scenario level from the index
-    df_ERF.index = df_ERF.index.droplevel(1)
+    ds = ds.sel(scenario=ssp, drop=True)
 
-    # rename the variable columns
-    df_ERF = df_ERF.rename(columns={'ghg': 'GHG',
-                                    'natural': 'Nat',
-                                    'anthro': 'Ant',
-                                    'total': 'Tot'})
-
-    # Add 'OHF' variable as the sum of 'aerosol', and 'other':
-    df_ERF_OHF = df_ERF[['aerosol', 'other']].groupby(level='ensemble', axis=1
-                                                      ).sum()
-    # Add a new level to the columns, with the variable name 'OHF'
-    df_ERF_OHF.columns = pd.MultiIndex.from_product(
-        [['OHF'], df_ERF_OHF.columns])
-    df_ERF = pd.concat([df_ERF, df_ERF_OHF], axis=1)
-
-    # Check that the ensemble names are all matching across variables
-    check_ensemble_matching(df_ERF)
-
-    return df_ERF
+    # OHF, the human forcings other than the greenhouse gases: aerosol and
+    # other
+    ds['OHF'] = ds['aerosol'] + ds['other']
+    # The variables along a dimension of their own, with the engine's names:
+    # the years (mid-year in the file, e.g. 1750.5, so rounded down), the
+    # members in order of their configuration numbers, and the variables'
+    # internal names
+    erf = ds.to_array(dim='forcing_variable').rename(
+        {'time': 'year', 'config': 'erf_member'})
+    erf = erf.assign_coords(year=erf.year.to_numpy().astype(int))
+    erf = erf.sortby('erf_member')
+    rename_map = {'ghg': 'GHG', 'natural': 'Nat', 'anthro': 'Ant',
+                  'total': 'Tot'}
+    return erf.assign_coords(forcing_variable=[
+        rename_map.get(var, var)
+        for var in erf['forcing_variable'].to_numpy()])
 
 
 def load_GMT(gmt_id, member, start_pi, end_pi):
-    """Load a GMT metadata, keep the member asked for, and remove the
+    """Load a GMT dataset, keep the member asked for, and remove the
     pre-industrial baseline.
 
     gmt_id: e.g. 'HadCRUT-2025' or 'SMILE_ESM-SSP245' (see INPUT DATASETS)
@@ -715,90 +552,90 @@ def load_GMT(gmt_id, member, start_pi, end_pi):
     first, then members, as every input is (see gwi.py's NAMING), the
     members in the order they appear in the file (the order of the o
     axis).
-
-    The products' loaders below read their files into DataFrames, one
-    column per member; only here, at the edge, do the temperatures become
-    a DataArray.
     """
     metadata = dataset_metadata(gmt_id, 'GMT')
 
     # Load the whole dataset with its product's loader
     if metadata.product == 'HadCRUT':
-        df_temp = load_GMT_HadCRUT(metadata)
+        gmt = load_GMT_HadCRUT(metadata)
     elif metadata.product == 'JK_multi':
-        df_temp = load_GMT_JK_multi(metadata)
+        gmt = load_GMT_JK_multi(metadata)
     elif metadata.product == 'SMILE_ESM':
-        df_temp = load_GMT_SMILE_ESM(metadata)
+        gmt = load_GMT_SMILE_ESM(metadata)
     elif metadata.product == 'FutureVolc_ESM':
-        df_temp = load_GMT_FutureVolc_ESM(metadata)
+        gmt = load_GMT_FutureVolc_ESM(metadata)
     else:
         raise ValueError(f'No GMT loader for {gmt_id!r}.')
 
-    # Extract just the required ensemble member(s)
-    df_temp = extract_GMT_members(df_temp, member, gmt_id)
+    # Keep just the member(s) asked for
+    gmt = extract_GMT_members(gmt, member, gmt_id)
 
-    # Remove pre-industrial baseline from temperature data
-    df_temp = preindustrial_baseline(df_temp, start_pi, end_pi)
+    # Remove the pre-industrial baseline
+    return preindustrial_baseline(gmt, start_pi, end_pi).rename('gmt')
 
-    # The temperatures as a DataArray, with named dimensions
+
+def temperatures_from_table(df_temp):
+    """Temperatures read from a CSV file, as a DataArray.
+
+    df_temp: a DataFrame indexed by year, one column per member, labelled
+        as text
+    Returns a DataArray (year, gmt_member).
+    """
     return xr.DataArray(
         df_temp.to_numpy(), dims=('year', 'gmt_member'),
         coords={'year': df_temp.index.to_numpy(),
-                'gmt_member': df_temp.columns.to_list()},
-        name='gmt')
+                'gmt_member': df_temp.columns.to_list()})
 
 
-def extract_GMT_members(df_temp, member, gmt_id):
-    """Keep all members of a GMT DataFrame, or just one.
+def extract_GMT_members(gmt, member, gmt_id):
+    """Keep all members of the temperatures, or just one.
     (For ERF members, see extract_ERF_members.)
 
-    df_temp: one column per member, as from the load_GMT_* loaders
+    gmt: the temperatures, a DataArray (year, gmt_member), as from the
+        load_GMT_* loaders
     member: 'all', or one member's label, e.g. '7'
     gmt_id: e.g. 'HadCRUT-2025', for error messages
     """
     # Keep everything
     if member == 'all':
-        return df_temp
+        return gmt
 
     # Stop if the member isn't there
-    if member not in df_temp.columns:
+    available = gmt.gmt_member.to_numpy().tolist()
+    if member not in available:
         raise ValueError(
             f'GMT member {member!r} is not in {gmt_id}, which has '
-            f'{describe_members(df_temp.columns)}.')
+            f'{describe_members(available)}.')
 
     # Keep that member
-    return df_temp[[member]]
+    return gmt.sel(gmt_member=[member])
 
 
 def load_GMT_HadCRUT(metadata):
     """Load the HadCRUT5 ensemble, members labelled '1' to '200'.
 
     metadata: e.g. the DatasetMetadata for 'HadCRUT-2025'
+    Returns a DataArray (year, gmt_member).
     """
     # Find the ensemble file, whose name holds the HadCRUT version
     temp_ens_Path = find_dataset_file(
         metadata, 'HadCRUT.*.analysis.ensemble_series.global.annual.csv')
-    # read temp_Path into pandas dataframe, rename column 'Time' to 'Year'
-    # and set the index to 'Year', keeping only columns with 'Realization' in
-    # the column name, since these are the ensembles
-    df_temp_Obs = pd.read_csv(temp_ens_Path,
-                              ).rename(columns={'Time': 'Year'}
-                                       ).set_index('Year'
-                                                   ).filter(regex='Realization'
-                                                            )
-
-    # Rename the columns called "Realization_x" to just "x"
+    # The file's ensemble members: its columns named 'Realization x',
+    # indexed by its 'Time' column (the years) ...
+    df_temp_Obs = pd.read_csv(temp_ens_Path).set_index('Time').filter(
+        regex='Realization')
+    # ... each labelled just x
     df_temp_Obs.columns = [col.split(' ')[-1] for col in df_temp_Obs.columns]
 
     # Truncate to the final year in the dataset ID (the "vintage" of the
-    # metadata, eg 'HadCRUT-2025' means observations through 2025).
+    # dataset, eg 'HadCRUT-2025' means observations through 2025).
     #
     # HadCRUT ships a row for the year currently in progress, which is a mean
     # over an incomplete set of months and is therefore not a meaningful annual
     # value for us (eg HadCRUT 5.1.0.0 in data/observed-2025/ carries a 2026 row
     # whose coverage uncertainty is ~30x that of the complete years).
-
-    return truncate_to_end_year(df_temp_Obs, metadata, temp_ens_Path.name)
+    return truncate_to_end_year(temperatures_from_table(df_temp_Obs),
+                                metadata, temp_ens_Path.name)
 
 
 def load_GMT_JK_multi(metadata):
@@ -806,23 +643,20 @@ def load_GMT_JK_multi(metadata):
     labelled '1' to '100'.
 
     metadata: e.g. the DatasetMetadata for 'JK_multi-2025'
+    Returns a DataArray (year, gmt_member).
     """
     # Find the file
     temp_ens_Path = find_dataset_file(metadata, 'sst_pseudo.csv')
 
-    # Read the csv file into a pandas dataframe. But note that, unlike the
-    # HadCRUT metadata, there are no column names in this csv; we need the
-    # first column to be named 'Year', and the rest to be named 'Realization_x'
-    # for x=1,2,...,N where N is the number of columns that are not 'Year'.
-    df_temp_Obs = pd.read_csv(temp_ens_Path, header=None)
-    n_ens = df_temp_Obs.shape[1] - 1
-    col_names = ['Year'] + [str(realisation + 1)
-                            for realisation in range(n_ens)]
-    df_temp_Obs.columns = col_names
-    df_temp_Obs = df_temp_Obs.set_index('Year')
+    # The file has no header: its first column is the years, and each other
+    # column a member, labelled 1 to N in order
+    df_temp_Obs = pd.read_csv(temp_ens_Path, header=None, index_col=0)
+    df_temp_Obs.columns = [str(realisation + 1)
+                           for realisation in range(df_temp_Obs.shape[1])]
 
     # Same cut-off as HadCRUT (see load_GMT_HadCRUT)
-    return truncate_to_end_year(df_temp_Obs, metadata, temp_ens_Path.name)
+    return truncate_to_end_year(temperatures_from_table(df_temp_Obs),
+                                metadata, temp_ens_Path.name)
 
 
 def load_GMT_SMILE_ESM(metadata):
@@ -831,17 +665,13 @@ def load_GMT_SMILE_ESM(metadata):
     '49'.
 
     metadata: e.g. the DatasetMetadata for 'SMILE_ESM-SSP245'
+    Returns a DataArray (year, gmt_member).
     """
     # Find the file for this SSP (named in lower case), in the model's folder
     file_temp = find_dataset_file(
         metadata, f'MPI-ESM1.2-LR/ts_ESM1-2-LR_{metadata.variant.lower()}.csv')
-
-    df_temp = pd.read_csv(file_temp, index_col=0)
-
-    # Rename index to 'Year'
-    df_temp.index.name = 'Year'
-
-    return df_temp
+    # Its members as columns, indexed by year (the first column)
+    return temperatures_from_table(pd.read_csv(file_temp, index_col=0))
 
 
 def load_GMT_FutureVolc_ESM(metadata):
@@ -850,69 +680,63 @@ def load_GMT_FutureVolc_ESM(metadata):
     Nicklas, for Thorne et al.), members labelled '1' to '60'.
 
     metadata: e.g. the DatasetMetadata for 'FutureVolc_ESM-rcp45-Volc'
+    Returns a DataArray (year, gmt_member).
     """
     # Find the file for this variant, in the model's folder
     file_temp = find_dataset_file(
         metadata, f'NorESM1-M/ts_NorESM_{metadata.variant}.csv')
-
-    df_temp = pd.read_csv(file_temp, index_col=0)
-    # Rename index to 'Year'
-    df_temp.index.name = 'Year'
-
-    return df_temp
+    # Its members as columns, indexed by year (the first column)
+    return temperatures_from_table(pd.read_csv(file_temp, index_col=0))
 
 
-def truncate_to_end_year(df_temp_Obs, metadata, file_name):
+def truncate_to_end_year(gmt, metadata, file_name):
     """Cut observations off at the year in their dataset ID, e.g. at 2025
     for 'HadCRUT-2025'.
 
+    gmt: the temperatures, a DataArray (year, gmt_member)
     metadata: the DatasetMetadata of an observed dataset
     file_name: its file, for error messages
     """
     # Stop if the file ends before the year in the ID
     end_obs = metadata.year
-    if end_obs not in df_temp_Obs.index:
+    years = gmt.year.to_numpy()
+    if end_obs not in years:
         # The file is short of what the dataset ID claims: fail loudly
         # rather than silently analysing a shorter record than intended.
         raise ValueError(
             f"Dataset '{metadata.id}' declares observations through "
             f"{end_obs}, but {file_name} only covers "
-            f"{df_temp_Obs.index.min()}-{df_temp_Obs.index.max()}.")
+            f"{years.min()}-{years.max()}.")
 
     # Drop any later rows
-    return df_temp_Obs.loc[:end_obs]
+    return gmt.sel(year=slice(None, end_obs))
 
 
-def preindustrial_baseline(df_temp, start_pi, end_pi):
+def preindustrial_baseline(gmt, start_pi, end_pi):
     """Remove the pre-industrial baseline from temperatures.
 
-    df_temp: one column per member, indexed by year
+    gmt: the temperatures, a DataArray (year, gmt_member)
     start_pi, end_pi: e.g. 1850, 1900; None to leave the data unchanged
     """
     # Check if offsets are explicitly bypassed.
     if start_pi is None or end_pi is None:
-        return df_temp
-        
-    # Check that start_pi and end_pi are within the range of the data
+        return gmt
 
-    if ((start_pi in df_temp.index) and (end_pi in df_temp.index)):
-        # Find PI offset that is the PI-mean of the median (HadCRUT best estimate)
-        # of the ensemble and substract this from entire ensemble. Importantly,
-        # the same offset is applied to the entire ensemble to maintain accurate
-        # spread of HadCRUT (ie it is wrong to subtract the PI-mean for each
-        # ensemble member from itself).
-        ofst_Obs = df_temp.median(axis=1).loc[
-            (df_temp.index >= start_pi) &
-            (df_temp.index <= end_pi),
-            ].mean(axis=0)
-        df_temp -= ofst_Obs
-    else:
+    # Stop if the pre-industrial period isn't within the data
+    years = gmt.year.to_numpy()
+    if start_pi not in years or end_pi not in years:
         raise ValueError(
             f'Pre-industrial offsetting period {start_pi}-{end_pi} is not '
             f'within the temperature data, which covers '
-            f'{df_temp.index.min()}-{df_temp.index.max()}.')
+            f'{years.min()}-{years.max()}.')
 
-    return df_temp
+    # The offset is the pre-industrial mean of the ensemble's median (for
+    # HadCRUT, its best estimate), and the same offset is taken from every
+    # member, which keeps the ensemble's spread (it would be wrong to take
+    # each member's own pre-industrial mean from it)
+    offset = gmt.median('gmt_member').sel(
+        year=slice(start_pi, end_pi)).mean('year')
+    return gmt - offset
 
 
 def load_PiC(picontrol_id, years, start_pi, end_pi):
@@ -929,24 +753,18 @@ def load_PiC(picontrol_id, years, start_pi, end_pi):
     NAMING), the segments in the order the loader makes them (the order of
     the c axis).
     """
-    # Load with the dataset's loader, into a DataFrame, one column per
-    # segment
+    # Load with the dataset's loader
     if picontrol_id == 'CMIP6':
-        df_PiC = load_PiC_CMIP6(years, start_pi, end_pi)
+        return load_PiC_CMIP6(years, start_pi, end_pi).rename('pic')
     else:
         raise ValueError(
             f'No piControl loader for {picontrol_id!r}.')
-    # The segments as a DataArray, with named dimensions
-    return xr.DataArray(
-        df_PiC.to_numpy(), dims=('year', 'pic_member'),
-        coords={'year': df_PiC.index.to_numpy(),
-                'pic_member': df_PiC.columns.to_list()},
-        name='pic')
 
 
 def load_PiC_CMIP6(years, start_pi, end_pi):
     """Slice the CMIP6 piControl simulations (.MAG files) into segments as
-    long as `years`, overlapping by half, one column per segment.
+    long as `years`, overlapping by half: a DataArray (year, pic_member),
+    each member a segment.
 
     Each segment stands in for internal variability over `years`, and is
     indexed by them. Internal variability is a fluctuation about zero, so
@@ -988,14 +806,10 @@ def load_PiC_CMIP6(years, start_pi, end_pi):
         experiment = file.split('/')[-1].split('_')[4]
         model_name = '_'.join([group, model, member, var, experiment])
 
-        # use pymagicc to read the .MAG file
-        df_PiC = pymagicc.io.MAGICCData(file).to_xarray().to_dataframe()
-        # select only the data with keyword 'world' in the level 1 index
-        df_PiC = df_PiC.xs('World', level=1)
-        # replace the cftime index with an integer for the cftime year
-        df_PiC.index = df_PiC.index.year
-
-        temp = df_PiC.dropna().to_numpy().ravel()
+        # The simulation's global mean temperature, every year it has: read
+        # with pymagicc, which gives each region's variable over time
+        simulation = pymagicc.io.MAGICCData(file).to_xarray()
+        temp = simulation[var].sel(region='World').dropna('time').to_numpy()
 
         # Create multiple segments with 50% overlap from each other.
         # ie 0:173, 86:259, 172:345, etc
@@ -1008,7 +822,11 @@ def load_PiC_CMIP6(years, start_pi, end_pi):
                 f'{model_name}_slice-{s*(n_yrs//2)}:{s*(n_yrs//2)+n_yrs}'
                 ] = temp_s
 
-    return pd.DataFrame(dict_temp, index=years)
+    # The segments, one per column, indexed by the years given: (t, c)
+    return xr.DataArray(
+        np.stack(list(dict_temp.values()), axis=1),
+        dims=('year', 'pic_member'),
+        coords={'year': years, 'pic_member': list(dict_temp.keys())})
 
 
 def filter_PiControl(pic, timeframes):

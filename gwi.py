@@ -1039,17 +1039,16 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
     n_pairs = inputs.params.sizes['param_member'] * n_erf
 
     # The observed members used, relative to the pre-industrial period: one
-    # CSV row per year, one column per member, the year column headed
-    # 'Year' as before the inputs were DataArrays
+    # CSV row per year, one column per member
     results_layout.write_csv(
-        inputs.gmt.to_pandas().rename_axis(index='Year', columns=None),
+        inputs.gmt,
         f'{folders.obs}Obs_timeseries_{inputs_name}_'
-        f'ENSEMBLE-SIZE--{n_obs}.csv')
+        f'ENSEMBLE-SIZE--{n_obs}.csv', year_heading='Year')
 
     # The piControl segments, after filtering: one CSV row per year, one
-    # column per segment, the year column without a heading, as before
+    # column per segment
     results_layout.write_csv(
-        inputs.pic.to_pandas().rename_axis(index=None, columns=None),
+        inputs.pic,
         f'{folders.picontrol}PiControl_timeseries_{inputs_name}_'
         f'ENSEMBLE-SIZE--{n_pic}.csv')
 
