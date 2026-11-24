@@ -1,4 +1,5 @@
-"""Percentile summaries of the ensemble: the GWI's CSV outputs.
+"""Percentile summaries of the ensemble: the GWI's CSV outputs (the
+distributions are netCDF: see the output rule in distributions.py).
 
 The terms, as used throughout:
     ensemble            every drawn member's values, before percentiles

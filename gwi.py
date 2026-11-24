@@ -45,6 +45,10 @@ NAMING. The inputs (see load_inputs), each a labelled xarray DataArray:
 - DataArrays are named for their source, as above; numpy arrays by their
   symbols in the method's equations (T_mod, X, Y_obs, beta), with their
   shapes in a comment; DataFrames appear only as the CSV tables.
+
+OUTPUTS. Summaries (percentiles) are CSV; distributions (anything with a
+member axis) are netCDF, carrying the run's configuration as attributes:
+the output rule, in src/outputs/distributions.py.
 """
 
 import os
