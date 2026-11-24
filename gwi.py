@@ -1,16 +1,44 @@
-"""Script to generate global warming index."""
+"""The Global Warming Index (GWI): how much of the observed warming each
+cause (greenhouse gases, other human forcings, natural forcing) is
+responsible for, with its uncertainty.
+
+One run is a short pipeline (main, at the bottom):
+
+    read_argv_config            the command line (run-gwi.sh passes every
+                                option)
+    output_folders              where this run's outputs go
+    load_inputs                 the forcing, the observed temperatures, the
+                                piControl segments and the FaIR parameter
+                                sets
+    draw_members                which members of the full ensemble to
+                                rebuild
+    modelled_warming            stage A: FaIR's warming from each forcing
+                                variable
+    constrain                   stage B: the scaling factors that fit it to
+                                the observations
+    members.Sample              stage C: the drawn members, rebuilt as each
+                                output needs them
+    calculate_attributed_percentiles, calculate_observed_percentiles,
+    calculate_prior_and_erf_percentiles
+                                the percentile summaries
+    write_inputs_and_interims   the inputs as used, the priors and the ERF
+    write_outputs               each definition's timeseries and the
+                                headlines
+
+Each warming definition (annual, SR1.5, AR6, CGWL, rates) is described once,
+in WARMING_DEFINITIONS, and applied in the same way to the attributed
+warming and to the observations.
+"""
 
 import os
 import sys
+import types
 
 import datetime as dt
 
 import numpy as np
 import pandas as pd
 
-# import scipy.stats as ss
-
-import src.method.attribution as attribution
 import src.method.emulators as emulators
 import src.method.members as members
 import src.method.regression as regression
@@ -22,11 +50,145 @@ import src.method.warming_definitions as warming_definitions
 import src.outputs.summaries as summaries
 import src.inputs.input_datasets as datasets
 
-import models.AR5_IR.AR5_IR as AR5_IR
+
+###############################################################################
+# SETTINGS ####################################################################
+###############################################################################
+
+# Percentiles to calculate and use throughout analysis.
+# SIGMA_RANGES = [[32, 68], [5, 95], [0.3, 99.7]]
+# These are the percentile ranges used in the IPCC likelihood statements:
+# Typically, 17-83 is likely range, and 5-95 is very likely range.
+SIGMA_RANGES = [[17, 83], [5, 95]]
+# Every percentile the outputs give: the ends of the ranges, sorted, then
+# the median; this order is the order of the CSVs' percentile columns
+SIGMAS = list(
+    np.concatenate((np.sort(np.ravel(SIGMA_RANGES)), [50]), axis=0)
+    )
+
+# SR1.5 warming is defined as the 30-year mean human-induced warming, relative
+# to the pre-industrial period, centred using trend extrapolation where
+# necessary. Where that trend is linear, the 30-year mean is equivalent to the
+# end point of the trend line through the most recent 15 years.
+# NOTE: here we centre warming on the mid-point of a year (not the end), so a
+# 29 year mean of annual means is used instead of 30 years.
+# How many annual means the SR1.5 definition's mean takes: an odd number,
+# centred on the headline year:
+#   29: the mean over 2011-2039 for 2025, the trend through 2011-2025
+#   31: the mean over 2010-2040 for 2025, the trend through 2010-2025
+# (SR1.5, Ch.1, Sect. 1.2.1)
+SR15_MEAN_YEARS = 29
+if SR15_MEAN_YEARS % 2 == 0:
+    raise ValueError(
+        f'SR15_MEAN_YEARS must be odd, not {SR15_MEAN_YEARS}.')
+# How many annual means the trend is fitted through, which that mean
+# implies: the headline year and the (SR15_MEAN_YEARS - 1) / 2 years before
+# it (the line's value at the middle of the headline year equals its mean
+# over the SR15_MEAN_YEARS years centred there)
+SR15_TREND_YEARS = (SR15_MEAN_YEARS + 1) // 2
+
+# AR6 warming is defined as the lagged 10-year mean.
+# NOTE: here we index decade average warming as the mid-point of the end-year
+# How many annual means the AR6 definition averages: the headline year
+# and the AR6_MEAN_YEARS - 1 years before it, e.g. 2016-2025 for 2025
+# (AR6's decadal means, e.g. 2011-2020)
+# (AR6 WGI, Ch. 3, Table 3.1)
+AR6_MEAN_YEARS = 10
+
+# A new proposal, the CGWL (Betts et al., 2023), is defined as the 20 year
+# mean centred using warming projections after the current year.
+# NOTE: here we centre warming on the mid-point of a year (not the end), so a
+# 19 year mean of annual means is used instead of 20 years.
+# How many annual means the CGWL hybrid definition averages:
+#   19: 2016-2034 for 2025, centred on mid-2025
+#   20: 2016-2035 for 2025, centred on the end of 2025
+CGWL_MEAN_YEARS = 19
+if CGWL_MEAN_YEARS % 2 == 0:
+    raise ValueError(
+        f'CGWL_MEAN_YEARS must be odd, not {CGWL_MEAN_YEARS}.')
+# The CGWL's half-window: the years either side of the headline year
+HALF_CGWL = (CGWL_MEAN_YEARS - 1) // 2
+
+# AR6 defined rate as the 10 year trend.
+# How many annual means the AR6 rate definition's trend is fitted
+# through: the year and the AR6_RATE_YEARS - 1 years before it, e.g.
+# 2016-2025 for 2025; the rate is the line's slope, in °C per year
+# (AR6 WGI, Ch. 3, Table 3.1)
+AR6_RATE_YEARS = 10
+
+# Each warming definition, by its name in --definitions, as a dictionary:
+#   file_name     its name in the output files
+#   function      applies it to a window of years (see
+#                 src/method/warming_definitions.py)
+#   years_before  how many years before each year its window takes
+#   years_after   how many years after
+#   label         its label for a year, in the headlines CSVs
+#   ipcc_years    the headline years the IPCC reports assessed with it
+#                 (SR1.5's 2017, AR6's 2010-2019); --headline-years=IGCC
+#                 repeats them in each update, to validate it and show how
+#                 the assessment has changed since
+# The attributed warming and the observations both use it.
+WARMING_DEFINITIONS = {
+    'annual': {
+        'file_name': 'ANNUAL',
+        'function': warming_definitions.annual_value,
+        'years_before': 0,
+        'years_after': 0,
+        'label': lambda year: year,
+        'ipcc_years': [2017],
+    },
+    'SR1.5': {
+        'file_name': 'SR15',
+        'function': warming_definitions.final_value_of_trend_vectorised,
+        'years_before': SR15_TREND_YEARS - 1,
+        'years_after': 0,
+        'label': lambda year: f'{year} (SR15 definition)',
+        'ipcc_years': [2017],
+    },
+    'AR6': {
+        'file_name': 'AR6',
+        'function': warming_definitions.mean_over_years,
+        'years_before': AR6_MEAN_YEARS - 1,
+        'years_after': 0,
+        'label': lambda year: f'{year - (AR6_MEAN_YEARS - 1)}-{year}',
+        'ipcc_years': [2019],
+    },
+    'CGWL': {
+        'file_name': 'CGWL',
+        'function': warming_definitions.mean_over_years,
+        'years_before': HALF_CGWL,
+        'years_after': HALF_CGWL,
+        'label': lambda year: (f'{year - HALF_CGWL}-{year + HALF_CGWL} '
+                               '(CGWL definition)'),
+        'ipcc_years': [],
+    },
+    'rates': {
+        'file_name': 'RATES',
+        'function': warming_definitions.rate_func_vectorised,
+        'years_before': AR6_RATE_YEARS - 1,
+        'years_after': 0,
+        'label': lambda year: (f'{year - (AR6_RATE_YEARS - 1)}-{year} '
+                               '(AR6 rate definition)'),
+        'ipcc_years': [2019],
+    },
+}
+
+# Every option gwi.py reads. Anything else on the command line stops the
+# run: an unknown option is most likely a typo (e.g. --sample=10000),
+# which would otherwise be ignored silently, leaving the default in its
+# place.
+KNOWN_OPTIONS = (
+    '--samples', '--seed', '--regress-range', '--truncate',
+    '--definitions', '--headline-years',
+    '--regress-variables', '--erf-dataset', '--gmt-dataset',
+    '--picontrol-dataset', '--committed', '--preindustrial-era',
+    '--include-reg-const', '--erf-member', '--gmt-member',
+    '--include-sub-vars', '--output-tag',
+)
 
 
 ###############################################################################
-# DEFINE FUNCTIONS ############################################################
+# STAGES A AND B ##############################################################
 ###############################################################################
 def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
     """Stage A: the modelled warming from each forcing variable alone,
@@ -37,16 +199,19 @@ def modelled_warming(df_forc, df_params, inc_pi_offset, start_pi, end_pi):
     and every forcing variable v. Both the attribution (stages B and C) and
     the priors are built from it.
 
-    df_forc: forcing, columns (variable, ensemble), for every ERF member,
-        in the order of the e axis
-    df_params: FaIR thermal parameter sets, columns (set name, parameter),
-        in the order of the p axis
-    inc_pi_offset: whether to express the modelled warming relative to its
-        mean over the pre-industrial years, start_pi to end_pi (both ends
-        included); without it, it is relative to the first forcing year
-    Returns (T_mod, forcing_vars): T_mod is an array (p, e, t, v) over the
-    forcing years (df_forc's index), and forcing_vars the names along v,
-    sorted.
+    df_forc:
+        forcing, columns (variable, ensemble), for every ERF member, in the
+        order of the e axis
+    df_params:
+        FaIR thermal parameter sets, columns (set name, parameter), in the
+        order of the p axis
+    inc_pi_offset:
+        whether to express the modelled warming relative to its mean over the
+        pre-industrial years, start_pi to end_pi (both ends included); without
+        it, it is relative to the first forcing year
+    Returns (T_mod, forcing_vars):
+        T_mod: an array (p, e, t, v) over the forcing years (df_forc's index)
+        forcing_vars: the names along v, sorted.
     """
     # The forcing variables, sorted: the v axis
     forcing_vars = sorted(df_forc.columns.get_level_values(
@@ -102,18 +267,26 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
         k  regressor: one per regressed variable, plus one for the constant
            term if it is used
 
-    T_mod: array (p, e, t, v), stage A's modelled warming (see
-        modelled_warming)
-    forcing_vars: the names along its v axis
-    forc_Yrs: the years along its t axis
-    df_temp_Obs: every observed GMT member (columns, in the order of the o
-        axis), indexed by year
-    df_temp_PiC: every piControl segment (columns, in the order of the c
-        axis), indexed by the same years
-    regress_vars: the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
-    inc_reg_const: whether the regression has a constant term
-    start_regress, end_regress: the regression years (both included)
-    Returns regression.Coefficients: obs (p, e, o, k) and pic (p, e, c, k).
+    T_mod:
+        array (p, e, t, v), stage A's modelled warming (see modelled_warming)
+    forcing_vars:
+        the names along its v axis
+    forc_Yrs:
+        the years along its t axis
+    df_temp_Obs:
+        every observed GMT member (columns, in the order of the o axis),
+        indexed by year
+    df_temp_PiC:
+        every piControl segment (columns, in the order of the c axis),
+        indexed by the same years
+    regress_vars:
+        the regressed variables, e.g. ['GHG', 'Nat', 'OHF']
+    inc_reg_const:
+        whether the regression has a constant term
+    start_regress, end_regress:
+        the regression years (both included)
+    Returns regression.Coefficients:
+        obs (p, e, o, k) and pic (p, e, c, k).
     """
     # The years of the observations
     temp_Yrs = df_temp_Obs.index.to_numpy()  # observed GMT
@@ -148,109 +321,40 @@ def constrain(T_mod, forcing_vars, forc_Yrs, df_temp_Obs, df_temp_PiC,
 
 
 ###############################################################################
-# MAIN CODE BODY ##############################################################
+# THE PIPELINE ################################################################
 ###############################################################################
 
-if __name__ == "__main__":
+def read_argv_config(argv):
+    """Read the run's configuration from the command line.
 
-    time_alpha = dt.datetime.now()
-
-    # Percentiles to calculate and use throughout analysis.
-    # SIGMA_RANGES = [[32, 68], [5, 95], [0.3, 99.7]]
-    # These are the percentile ranges used in the IPCC likelihood statements:
-    # Typically, 17-83 is likely range, and 5-95 is very likely range.
-    SIGMA_RANGES = [[17, 83], [5, 95]]
-    # Every percentile the outputs give: the ends of the ranges, sorted, then
-    # the median; this order is the order of the CSVs' percentile columns
-    SIGMAS = list(
-        np.concatenate((np.sort(np.ravel(SIGMA_RANGES)), [50]), axis=0)
-        )
-
-    # How many annual means the SR1.5 definition's trend is fitted through:
-    # the headline year and the SR15_TREND_YEARS - 1 years before it. The
-    # warming in the year is the fitted line's value at the middle of the
-    # year (the time its annual mean stands for), which equals the mean of
-    # the line extended over the 2 * SR15_TREND_YEARS - 1 years centred on
-    # it. SR1.5's '30-year period centred on that time' starts and ends
-    # mid-year, so no whole number of annual means gives exactly 30 years:
-    #   15: data 2011-2025 for 2025, the mean over 29 years, 2011-2039
-    #   16: data 2010-2025 for 2025, the mean over 31 years, 2010-2040
-    SR15_TREND_YEARS = 15
-
-    # How many annual means the AR6 definition averages: the headline year
-    # and the AR6_MEAN_YEARS - 1 years before it, e.g. 2016-2025 for 2025
-    # (AR6's decadal means, e.g. 2011-2020)
-    AR6_MEAN_YEARS = 10
-
-    # How many annual means the CGWL definition (current global warming
-    # level, Betts et al., 2023) averages: an odd number, centred on the
-    # headline year, (CGWL_MEAN_YEARS - 1) / 2 years either side of it.
-    # Centred on the middle of the headline year, the time its annual mean
-    # stands for, as the annual, SR1.5 and AR6 definitions are (an even
-    # number of annual means would be centred on a year's end):
-    #   19: 2016-2034 for 2025, centred on mid-2025
-    #   20: 2016-2035 for 2025, centred on the end of 2025
-    CGWL_MEAN_YEARS = 19
-    if CGWL_MEAN_YEARS % 2 == 0:
-        raise ValueError(
-            f'CGWL_MEAN_YEARS must be odd, not {CGWL_MEAN_YEARS}.')
-
-    # How many annual means the AR6 rate definition's trend is fitted
-    # through: the year and the AR6_RATE_YEARS - 1 years before it, e.g.
-    # 2016-2025 for 2025; the rate is the line's slope, in °C per year (AR6
-    # WGI, Ch. 3, Table 3.1)
-    AR6_RATE_YEARS = 10
-
-    # The emulator: FaIR v2.0 ('FaIR_V2'). The AR5 impulse response model
-    # ('AR5_IR') has no adapter in src/method/emulators.py, so it can't run.
-    # emulator_choice = 'AR5_IR'
-    emulator_choice = 'FaIR_V2'
-
-    # Use command line arguments instead of interactivity, so that we can
-    # run the script using nohup and later slurm.
-
-    # TODO: switch to using docopt for command line arguments.
-    # For now just use sys.argv while HPC conda is having installation issues.
-
-    # argv format:
-    # python gwi.py
-    # --samples=<n> (default interactive)
-    # --preindustrial-era=<start-end> (default 1850-1900)
-    # --regress-range=<start-end> (default 1850-2023)
-    # --truncate=<start-end> (default 1850-2023)
-    # --definitions=<annual,SR1.5,AR6,CGWL,rates, or a subset> (default
-    #   interactive)
-    # --erf-dataset=<id> (required, e.g. IGCC-2025)
-    # --gmt-dataset=<id> (required, e.g. HadCRUT-2025)
-    # --picontrol-dataset=<id> (required, e.g. CMIP6)
-    # --erf-member=<member or all> (default all)
-    # --gmt-member=<member or all> (default all)
-    # (every option is listed in KNOWN_OPTIONS below; run-gwi.sh passes them
-    # all)
-
-    # Every option gwi.py reads. Anything else on the command line stops the
-    # run: an unknown option is most likely a typo (e.g. --sample=10000),
-    # which would otherwise be ignored silently, leaving the default in its
-    # place.
-    KNOWN_OPTIONS = (
-        '--samples', '--seed', '--regress-range', '--truncate',
-        '--definitions', '--headline-years',
-        '--regress-variables', '--erf-dataset', '--gmt-dataset',
-        '--picontrol-dataset', '--committed', '--preindustrial-era',
-        '--include-reg-const', '--erf-member', '--gmt-member',
-        '--include-sub-vars', '--output-tag',
-    )
-
-    # Separate out the name and value of each option, --name=value, into a
-    # dictionary for later use. Options left out are absent from it (most
-    # then fall back to a default, or to asking interactively).
+    argv:
+        the options, each --name=value (see KNOWN_OPTIONS; run-gwi.sh passes
+        them all); some missing options are asked for interactively
+    Returns cfg, a SimpleNamespace of the configuration:
+    - pre-industrial period:
+        inc_pi_offset, start_pi, end_pi, preindustrial_str
+    - regression:
+        inc_reg_const, start_regress, end_regress, regress_vars
+    - output years:
+        start_trunc, end_trunc
+    - committed warming:
+        year_committed_from, year_committed_to, committed_str
+    - sampling:
+        samples, seed
+    - outputs:
+        definitions, headline_years, include_sub_vars, output_tag
+    - inputs:
+        erf_id, gmt_id, picontrol_id, ensemble_members, ensemble_members_str
+    """
+    # Each option's value, by name: options left out are absent (most then
+    # fall back to a default, or to asking interactively)
     argv_dict = {}
-    for argv in sys.argv[1:]:
-        name, equals, value = argv.partition('=')
+    for argument in argv:
+        name, equals, value = argument.partition('=')
         if not equals:
             raise ValueError(
-                f'Invalid argument {argv!r}: give options as --name=value '
-                '(e.g. --samples=10).')
+                f'Invalid argument {argument!r}: give options as '
+                '--name=value (e.g. --samples=10).')
         if name not in KNOWN_OPTIONS:
             raise ValueError(
                 f'Unknown option {name!r}. The options are: '
@@ -258,597 +362,731 @@ if __name__ == "__main__":
         if name in argv_dict:
             raise ValueError(f'Option {name!r} is given more than once.')
         argv_dict[name] = value
+    cfg = types.SimpleNamespace()
 
-    # Define pre-industrial period for temperature offset.
-    # The average of this period is used as the offset, as standard in IPCC.
-    # Both years are included: 1850-1900 is 51 years (IPCC SR1.5, Ch. 1).
-    # This offset is applied to:
-    # 1. Modelled output temperatures from FaIR
-    # 2. Observed/Reference GMT dataset (df_temp_Obs)
-    # 3. piControl internal variability slices (df_temp_PiC)
+    # The pre-industrial period, whose mean is the zero of the modelled
+    # warming, the observations, and the piControl segments (both years
+    # included:
+    # 1850-1900 is 51 years, IPCC SR1.5, Ch. 1);
+    # 'n' for none
     if '--preindustrial-era' in argv_dict:
         if argv_dict['--preindustrial-era'].lower() in ['n', 'none', 'false']:
-            inc_pi_offset = False
-            start_pi, end_pi = None, None
+            cfg.inc_pi_offset = False
+            cfg.start_pi, cfg.end_pi = None, None
         else:
-            inc_pi_offset = True
-            start_pi = int(argv_dict['--preindustrial-era'].split('-')[0])
-            end_pi = int(argv_dict['--preindustrial-era'].split('-')[1])
+            cfg.inc_pi_offset = True
+            cfg.start_pi = int(argv_dict['--preindustrial-era'].split('-')[0])
+            cfg.end_pi = int(argv_dict['--preindustrial-era'].split('-')[1])
     else:
         # Defaults to the standard in IPCC AR6 Ch.3
-        inc_pi_offset = True
-        start_pi, end_pi = 1850, 1900  
+        cfg.inc_pi_offset = True
+        cfg.start_pi, cfg.end_pi = 1850, 1900
+    # ... as named in the outputs ('none' with no offset)
+    cfg.preindustrial_str = (f'{cfg.start_pi}-{cfg.end_pi}'
+                             if cfg.inc_pi_offset else 'none')
 
-    # Generate a string to identify the pre-industrial period ('none' if
-    # there is no offset).
-    preindustrial_str = f'{start_pi}-{end_pi}' if inc_pi_offset else 'none'
-
-    # Determine whether to include a constant term in the regression.
+    # Whether the regression has a constant term
     if '--include-reg-const' in argv_dict:
-        inc_reg_const = argv_dict['--include-reg-const']
-        inc_reg_const = True if inc_reg_const.lower() in ['y', 'yes', 'true'] else False
+        cfg.inc_reg_const = (argv_dict['--include-reg-const'].lower()
+                             in ['y', 'yes', 'true'])
     else:
-        inc_reg_const = True
-
-    if not inc_pi_offset and not inc_reg_const:
+        cfg.inc_reg_const = True
+    if not cfg.inc_pi_offset and not cfg.inc_reg_const:
         run_log.note('Both the preindustrial offset and the regression '
                      'constant are disabled. Without these centring factors '
                      'the regression attribution may behave unexpectedly.')
 
-    # Define the regression year range for the temperature attribution.
-    # This is the range over which the regression coefficients are calculated.
-    # For the full GWI, the regression range is the same as the length of the
-    # HadCRUT dataset, which is 1850-current.
-    # However, for other analyses, such as calculating a historical-only GWI,
-    # the regression range will vary. For use with slurm on HPC, these are
-    # provided as argvs by user.
+    # The regression years: for the full GWI, the whole observed record;
+    # for a historical-only GWI, each end year in turn
     if '--regress-range' in argv_dict:
-        start_regress = int(argv_dict['--regress-range'].split('-')[0])
-        end_regress = int(argv_dict['--regress-range'].split('-')[1])
+        regress_range = argv_dict['--regress-range']
     else:
-        # Fallback to requesting (interactive) input from user. This is safer
-        # than hardcoding a fallback such as 1850-2023
-        regress_input = input('Regression range (start-end): ')
-        start_regress, end_regress = regress_input.split('-')
+        regress_range = input('Regression range (start-end): ')
+    cfg.start_regress = int(regress_range.split('-')[0])
+    cfg.end_regress = int(regress_range.split('-')[1])
 
-    # Determine truncation year range for the analysis.
-    # Typically, for the full GWI calculation, we use the entire regressable
-    # range of the HadCRUT observations, which is 1850-current.
-    # Truncation has multiple benefits:
-    # 1. It reduces the memory requirements of the analysis, which is the main
-    #    bottleneck in the analysis.
-    # 2. It allows for a separation between the output dataset and the
-    #    regressed range, which is useful for using GWI to constrain future
-    #    projections (using longer ERF inputs) using a shorter reference
-    #    period for temperatures.
+    # The output years ("truncation"): may reach past the regression years,
+    # to give constrained projections where the forcing goes further;
+    # defaults to the regression years
     if '--truncate' in argv_dict:
-        start_trunc = int(argv_dict['--truncate'].split('-')[0])
-        end_trunc = int(argv_dict['--truncate'].split('-')[1])
+        cfg.start_trunc = int(argv_dict['--truncate'].split('-')[0])
+        cfg.end_trunc = int(argv_dict['--truncate'].split('-')[1])
     else:
-        # Fallback to clipping the data to the range of the regression.
-        start_trunc = start_regress
-        end_trunc = end_regress
+        cfg.start_trunc, cfg.end_trunc = cfg.start_regress, cfg.end_regress
 
-    # Determine whether to calculate committed warming.
+    # Committed warming: forcing held constant from one year to another,
+    # 'n' for none (e.g. end_regress-2300)
     if '--committed' in argv_dict:
         committed_arg = argv_dict['--committed']
     else:
-        committed_arg = input('Calculate committed warming? (n or start-end): ')
-
+        committed_arg = input(
+            'Calculate committed warming? (n or start-end): ')
     if committed_arg == 'n':
-        year_committed_to = False
-        year_committed_from = False
-    
+        cfg.year_committed_from, cfg.year_committed_to = False, False
     else:
-        # Parse the committed argument.
-        # Format: start_year-end_year (e.g. 2024-2300 or end_regress-2300)
-        if 'end_regress' in committed_arg:
-            committed_arg = committed_arg.replace(
-                'end_regress', str(end_regress))
-        
-        if '-' in committed_arg:
-            year_committed_from = int(committed_arg.split('-')[0])
-            year_committed_to = int(committed_arg.split('-')[1])
-        
-        else:
+        committed_arg = committed_arg.replace(
+            'end_regress', str(cfg.end_regress))
+        if '-' not in committed_arg:
             raise ValueError(
-                f'Invalid committed warming argument provided: {committed_arg}'
-                )
+                f'Invalid committed warming argument provided: '
+                f'{committed_arg}')
+        cfg.year_committed_from = int(committed_arg.split('-')[0])
+        cfg.year_committed_to = int(committed_arg.split('-')[1])
+    # ... as named in the outputs (empty with none)
+    cfg.committed_str = (
+        f'_COMMITTED--{cfg.year_committed_from}-{cfg.year_committed_to}'
+        if cfg.year_committed_to else '')
 
-    # Generate a string to identify the committed warming settings (empty if
-    # there is no committed warming).
-    committed_str = (
-        f'_COMMITTED--{year_committed_from}-{year_committed_to}'
-        if year_committed_to
-        else '')
-
-    # Determine the number of samples to take for each source.
-    # This is the number of ensemble members to subsample from the available
-    # ensemble members for each source. If this is larger than the ensemble for
-    # a particular source, the entire ensemble is used. If it is smaller, a
-    # random subset of the ensemble is used.
+    # How many members to draw from each source (the whole source if it has
+    # fewer)
     if '--samples' in argv_dict:
-        samples = int(argv_dict['--samples'])
+        cfg.samples = int(argv_dict['--samples'])
     else:
-        # If no command line argument passed, fallback to interactivity.
-        samples = int(input('Max number of samples for each source (int): '))
+        cfg.samples = int(input(
+            'Max number of samples for each source (int): '))
 
-    # Optional label that keeps one piece of work's output separate from
-    # another's. With no tag, output goes to the plain results/ and plots/
-    # folders exactly as before. Pass the same tag to
-    # combine_results_iterations.py so that it reads what this run writes.
-    output_tag = argv_dict.get('--output-tag')
+    # The label keeping this piece of work's outputs apart (results_<tag>/);
+    # none for the plain results/ folder
+    cfg.output_tag = argv_dict.get('--output-tag')
 
-    # Optional seed for the random sampling of ensemble members. With no seed
-    # (no --seed, or --seed= left empty) every run samples afresh, so repeat
-    # runs of the same configuration differ, as they always have. With a seed,
-    # runs of the same configuration on the same inputs draw exactly the same
-    # samples, and so give identical results: useful for checking that a code
-    # change leaves the results unchanged.
+    # The seed of the draws: with one, repeat runs of a configuration draw
+    # the same members and give identical results; without (none, or
+    # empty), every run draws afresh
     seed = argv_dict.get('--seed', '')
     if seed == '':
-        seed = None
+        cfg.seed = None
     elif seed.isdigit() and int(seed) < 2**32:
-        seed = int(seed)
+        cfg.seed = int(seed)
     else:
         raise ValueError(
-            f'Invalid --seed {seed!r}: use a whole number from 0 to 2**32-1, '
-            'or leave it empty for unseeded sampling.')
+            f'Invalid --seed {seed!r}: use a whole number from 0 to '
+            '2**32-1, or leave it empty for unseeded sampling.')
 
-    # The warming definitions to give: each gets its own timeseries CSV, and
-    # its values at the headline years go into the headlines CSV (the annual
-    # timeseries is always written, as the plots need it).
-    # Format: 'annual,SR1.5,AR6,CGWL,rates' or some subset.
+    # The warming definitions to give (see WARMING_DEFINITIONS): each gets
+    # its own timeseries CSV, and its values at the headline years go into
+    # the headlines CSV (the annual timeseries is always written, as the
+    # plots need it)
     if '--definitions' in argv_dict:
         definitions_argv = argv_dict['--definitions']
     else:
         definitions_argv = input(
             'Warming definitions? (annual, SR1.5, AR6, CGWL, rates): ')
-    # ... as a list of names
-    definitions = [d for d in definitions_argv.split(',') if d]
-    # Stop if there are none
-    known_definitions = ['annual', 'SR1.5', 'AR6', 'CGWL', 'rates']
-    if not definitions:
+    cfg.definitions = [d for d in definitions_argv.split(',') if d]
+    # Stop if there are none, or any isn't known
+    known_definitions = list(WARMING_DEFINITIONS)
+    if not cfg.definitions:
         raise ValueError(
             'No warming definitions chosen: choose at least one of '
             f'{known_definitions} (in a recipe, RECIPE_DEFINITIONS), e.g. '
             'annual for the basic annual timeseries.')
-    # Stop if any isn't known
-    unknown = [d for d in definitions if d not in known_definitions]
+    unknown = [d for d in cfg.definitions if d not in known_definitions]
     if unknown:
         raise ValueError(
             f'Unknown warming definition(s) {unknown}: use some of '
             f'{known_definitions}.')
 
-    # Determine whether to include sub-variables in the output.
-    if '--include-sub-vars' in argv_dict:
-        include_sub_vars = argv_dict['--include-sub-vars']
-        include_sub_vars = True if include_sub_vars == 'y' else False
-    else:
-        include_sub_vars = False
+    # Whether FaIR runs the regressed variables' sub-variables too
+    cfg.include_sub_vars = argv_dict.get('--include-sub-vars') == 'y'
 
-    # Specify years for headlines calculations
-    # Format '2024', '2022,2023,2024', etc.
+    # The headline years (e.g. '2024', '2022,2023,2024', 'end_regress',
+    # 'IGCC')
     if '--headline-years' in argv_dict:
         headline_years = argv_dict['--headline-years']
     else:
-        if definitions:
-            headline_years = input('Years for headlines: ')
-        else:
-            headline_years = None
-    headline_years = warming_definitions.check_headlines(
-        headline_years, end_regress, end_trunc)
+        headline_years = input('Years for headlines: ')
+    cfg.headline_years = warming_definitions.check_headlines(
+        headline_years, cfg.end_regress, cfg.end_trunc)
 
+    # The regressed variables, sorted
+    cfg.regress_vars = sorted(
+        argv_dict.get('--regress-variables', 'GHG,Nat,OHF').split(','))
 
-    # Specify regression variables:
-    if '--regress-variables' in argv_dict:
-        regress_vars = sorted(argv_dict['--regress-variables'].split(','))
-    else:
-        regress_vars = sorted(['GHG', 'Nat', 'OHF'])
-
-    # Specify the input datasets, by ID (see INPUT DATASETS in
-    # src/inputs/input_datasets.py): the ERFs, the reference temperatures (GMT), and
-    # the piControl simulations that sample internal variability.
-    #   e.g. --erf-dataset=IGCC-2025 --gmt-dataset=HadCRUT-2025
-    #   e.g. --erf-dataset=SSP_extension-2022-SSP245 --gmt-dataset=JK_multi-2025
-    #   e.g. --erf-dataset=SMILE_ESM-SSP245 --gmt-dataset=SMILE_ESM-SSP245
-    #   --picontrol-dataset=CMIP6 (the only one for now)
-
-    # Stop if any of the three is missing
+    # The input datasets, by ID (see INPUT DATASETS in
+    # src/inputs/input_datasets.py): e.g. --erf-dataset=IGCC-2025
+    # --gmt-dataset=HadCRUT-2025 --picontrol-dataset=CMIP6. Stop if any is
+    # missing.
     for flag in ['--erf-dataset', '--gmt-dataset', '--picontrol-dataset']:
         if not argv_dict.get(flag):
             raise ValueError(
                 f'{flag} is required, e.g. --erf-dataset=IGCC-2025 '
                 '--gmt-dataset=HadCRUT-2025 --picontrol-dataset=CMIP6.')
+    cfg.erf_id = argv_dict['--erf-dataset']
+    cfg.gmt_id = argv_dict['--gmt-dataset']
+    cfg.picontrol_id = argv_dict['--picontrol-dataset']
 
-    # Read the three dataset IDs
-    erf_id = argv_dict['--erf-dataset']
-    gmt_id = argv_dict['--gmt-dataset']
-    picontrol_id = argv_dict['--picontrol-dataset']
-
-    # Specify which ensemble members to use from each dataset: 'all' (the
-    # default), or a single member, by its label in the dataset. One gwi.py
-    # call takes one value for each; run-gwi.sh loops over member lists and
-    # pairs members. An empty value means 'all'.
-    ensemble_members = {
+    # The members of each dataset to use: 'all' (the default, also for an
+    # empty value), or one, by its label (run-gwi.sh loops over lists)
+    cfg.ensemble_members = {
         'ERF': argv_dict.get('--erf-member', 'all') or 'all',
         'GMT': argv_dict.get('--gmt-member', 'all') or 'all',
     }
-
-    # Stop now, before loading anything, if the datasets or members cannot
-    # be attributed against each other (e.g. a model's ERF with observations).
+    # Stop now, before loading anything, if the datasets or members can't
+    # be attributed against each other (e.g. a model's ERF with
+    # observations)
     datasets.check_dataset_pairing(
-        erf_id, gmt_id, ensemble_members['ERF'], ensemble_members['GMT'])
+        cfg.erf_id, cfg.gmt_id, cfg.ensemble_members['ERF'],
+        cfg.ensemble_members['GMT'])
+    # ... as named in the outputs, e.g. ERF-all_GMT-7
+    cfg.ensemble_members_str = (f'ERF-{cfg.ensemble_members["ERF"]}_'
+                                f'GMT-{cfg.ensemble_members["GMT"]}')
+    return cfg
 
-    # e.g. ERF-all_GMT-7 (always ERF first, as in ERF--<id>_GMT--<id>)
-    ensemble_members_str = (
-        f'ERF-{ensemble_members["ERF"]}_GMT-{ensemble_members["GMT"]}')
 
-    # Create directory structure based on the input parameters.
+def output_folders(cfg):
+    """Make the folders this run writes to, and return them.
 
-    # GWI timeseries, headlines and rates
-    output_path = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
-        f'VARIABLES--{"-".join(regress_vars)}/' +
-        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
+    cfg:
+        the configuration (see read_argv_config)
+    Returns a SimpleNamespace of folders, each ending in '/':
+    - root:
+        the results folder (results/ or results_<tag>/)
+    - gwi:
+        the attributed warming, by inputs, members, regressed variables and
+        regression years
+    - priors, erfs:
+        by inputs, members and regressed variables (whose forcing variables
+        they hold)
+    - obs:
+        the observations and their timeseries, by inputs and members
+    - obs_headlines:
+        the observed headlines, by inputs, members and regression years
+    - picontrol:
+        the piControl segments, by inputs only
+    """
+    # The results folder, tagged
+    root = results_layout.tagged_folder('results', cfg.output_tag)
+    # The folder names: the inputs, the members, the regressed variables
+    # and the regression years
+    inputs_folder = (f'ERF--{cfg.erf_id}_GMT--{cfg.gmt_id}_'
+                     f'PREINDUSTRIAL--{cfg.preindustrial_str}'
+                     f'{cfg.committed_str}/')
+    members_folder = f'ENSEMBLE-MEMBER--{cfg.ensemble_members_str}/'
+    variables_folder = f'VARIABLES--{"-".join(cfg.regress_vars)}/'
+    years_folder = (f'REGRESSED-YEARS--{cfg.start_regress}-'
+                    f'{cfg.end_regress}/')
+    folders = types.SimpleNamespace(
+        root=f'{root}/',
+        gwi=(f'{root}/iterations/{inputs_folder}{members_folder}'
+             f'{variables_folder}{years_folder}'),
+        priors=(f'{root}/priors/{inputs_folder}{members_folder}'
+                f'{variables_folder}'),
+        erfs=(f'{root}/erfs/{inputs_folder}{members_folder}'
+              f'{variables_folder}'),
+        obs=f'{root}/observations/{inputs_folder}{members_folder}',
+        obs_headlines=(f'{root}/observations/{inputs_folder}'
+                       f'{members_folder}{years_folder}'),
+        picontrol=f'{root}/picontrol/{inputs_folder}',
     )
-    # Prior (unconstrained) warming, under the regressed variables like the
-    # GWI's: its variables are the forcing variables they give, so runs with
-    # different regressed variables mustn't share a file
-    output_path_priors = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
-        f'VARIABLES--{"-".join(regress_vars)}/'
-    )
-    # ERF percentiles, likewise under the regressed variables
-    output_path_erfs = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/' +
-        f'VARIABLES--{"-".join(regress_vars)}/'
-    )
-    # Observation headlines, for the headline years of this regression
-    out_path_obs = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
-        f'REGRESSED-YEARS--{start_regress}-{end_regress}/'
-    )
-    # Observations themselves, which don't depend on the regression range
-    out_path_obs_timeseries = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/' +
-        f'ENSEMBLE-MEMBER--{ensemble_members_str}/'
-    )
-    # piControl segments, which depend only on the inputs (not on the members
-    # or the regression range)
-    out_path_picontrol = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}/'
-    )
+    # Make them all
+    for folder in vars(folders).values():
+        os.makedirs(folder, exist_ok=True)
+    return folders
 
-    # Create the results folders
-    results_root = results_layout.tagged_folder('results', output_tag)
-    results_folder = f'{results_root}/iterations/'
-    if not os.path.exists(f'{results_folder}{output_path}'):
-        os.makedirs(f'{results_folder}{output_path}',
-        exist_ok=True)
-    results_folder_picontrol = f'{results_root}/picontrol/'
-    os.makedirs(f'{results_folder_picontrol}{out_path_picontrol}',
-                exist_ok=True)
-    results_folder_priors = f'{results_root}/priors/'
-    if not os.path.exists(f'{results_folder_priors}{output_path_priors}'):
-        os.makedirs(f'{results_folder_priors}{output_path_priors}',
-        exist_ok=True)
-    results_folder_erfs = f'{results_root}/erfs/'
-    if not os.path.exists(f'{results_folder_erfs}{output_path_erfs}'):
-        os.makedirs(f'{results_folder_erfs}{output_path_erfs}',
-        exist_ok=True)
-    results_folder_obs = f'{results_root}/observations/'
-    if not os.path.exists(f'{results_folder_obs}{out_path_obs}'):
-        os.makedirs(f'{results_folder_obs}{out_path_obs}',
-        exist_ok=True)
 
-    ###########################################################################
-    # READ IN THE DATA ########################################################
-    ###########################################################################
+def load_inputs(cfg):
+    """Load the run's inputs, and check they fit the configuration.
 
-    # Effective Radiative Forcing
-    df_forc = datasets.load_ERF(erf_id, regress_vars, ensemble_members['ERF'],
-                                include_sub_vars=include_sub_vars)
+    cfg:
+        the configuration (see read_argv_config); its output years are
+        moved into the forcing years if they reach beyond them
+    Returns a SimpleNamespace:
+    - df_forc:
+        the forcing: columns (variable, ensemble), indexed by year
+    - df_temp_Obs:
+        the observed members, indexed by year
+    - df_temp_PiC:
+        the piControl segments, filtered, indexed by the same years
+    - df_params:
+        the FaIR parameter sets, sorted by model: the p axis
+    - models:
+        their names
+    """
+    inputs = types.SimpleNamespace()
 
-    if year_committed_to and year_committed_from:
-        # Ensure that the ERF data goes up to the committed year.
-        df_forc = datasets.extend_ERF_to_committed_year(
-            df_forc, year_committed_to, year_committed_from)
+    # The forcing, extended to the committed warming's end if asked
+    inputs.df_forc = datasets.load_ERF(
+        cfg.erf_id, cfg.regress_vars, cfg.ensemble_members['ERF'],
+        include_sub_vars=cfg.include_sub_vars)
+    if cfg.year_committed_to and cfg.year_committed_from:
+        inputs.df_forc = datasets.extend_ERF_to_committed_year(
+            inputs.df_forc, cfg.year_committed_to, cfg.year_committed_from)
+    # Its years
+    forc_Yrs = inputs.df_forc.index.to_numpy()
+    forc_Yrs_min, forc_Yrs_max = forc_Yrs.min(), forc_Yrs.max()
 
-    forc_var_names = sorted(
-        df_forc.columns.get_level_values('variable').unique())
-    # Obtain the ERF_start and ERF_end from the dataframe.
-    forc_Yrs = np.array(df_forc.index)
-    forc_Yrs_min = forc_Yrs.min()
-    forc_Yrs_max = forc_Yrs.max()
-
-    # Check that the truncation years are within the ERF data range.
-    # TODO: write down how and when the truncation happens (i.e. after the
-    # regression).
-    if start_trunc < forc_Yrs_min:
-        start_trunc = forc_Yrs_min
-        run_log.note('Truncation start year was before the ERF data range, so '
-                     f'it was moved to the ERF minimum: {start_trunc}.')
-    if end_trunc > forc_Yrs_max:
-        end_trunc = forc_Yrs_max
-        run_log.note('Truncation end year was after the ERF data range, so it '
-                     f'was moved to the ERF maximum: {end_trunc}.')
-    if year_committed_to and (year_committed_to != forc_Yrs_max):
+    # The output years, moved into the forcing years if they reach beyond
+    if cfg.start_trunc < forc_Yrs_min:
+        cfg.start_trunc = forc_Yrs_min
+        run_log.note('Truncation start year was before the ERF data range, '
+                     f'so it was moved to the ERF minimum: {cfg.start_trunc}.')
+    if cfg.end_trunc > forc_Yrs_max:
+        cfg.end_trunc = forc_Yrs_max
+        run_log.note('Truncation end year was after the ERF data range, so '
+                     f'it was moved to the ERF maximum: {cfg.end_trunc}.')
+    if cfg.year_committed_to and (cfg.year_committed_to != forc_Yrs_max):
         run_log.note('The ERF data end year does not match the committed '
                      'warming year.')
-    if year_committed_to and (end_trunc < year_committed_to):
-        run_log.note(f'Truncation end year {end_trunc} is before the '
-                     f'committed warming end year {year_committed_to}.')
+    if cfg.year_committed_to and (cfg.end_trunc < cfg.year_committed_to):
+        run_log.note(f'Truncation end year {cfg.end_trunc} is before the '
+                     f'committed warming end year {cfg.year_committed_to}.')
 
-    trunc_Yrs = np.arange(start_trunc, end_trunc+1)
+    # The observed temperatures, relative to the pre-industrial period
+    inputs.df_temp_Obs = datasets.load_GMT(
+        cfg.gmt_id, cfg.ensemble_members['GMT'], cfg.start_pi, cfg.end_pi)
+    temp_Yrs = inputs.df_temp_Obs.index.to_numpy()
 
-    # TEMPERATURE
-    df_temp_Obs = datasets.load_GMT(
-        gmt_id, ensemble_members['GMT'], start_pi, end_pi)
-    # Obtain the maximum regressable years from the dataframe.
-    temp_Yrs = np.array(df_temp_Obs.index)
-
-    # Check that the regression years are within both the temperature and
-    # the forcing data. Stop rather than shorten the range, which would
-    # silently run a different regression from the one asked for (and,
-    # before, filed it under the range asked for).
+    # Stop if the regression years aren't within both the observations and
+    # the forcing (rather than shorten them, which would run a different
+    # regression from the one asked for)
     for name, yrs_min, yrs_max in [
-            (f'GMT dataset {gmt_id}', temp_Yrs.min(), temp_Yrs.max()),
-            (f'ERF dataset {erf_id}', forc_Yrs_min, forc_Yrs_max)]:
-        # Stop if the regression starts before, or ends after, this dataset
-        if start_regress < yrs_min or end_regress > yrs_max:
+            (f'GMT dataset {cfg.gmt_id}', temp_Yrs.min(), temp_Yrs.max()),
+            (f'ERF dataset {cfg.erf_id}', forc_Yrs_min, forc_Yrs_max)]:
+        if cfg.start_regress < yrs_min or cfg.end_regress > yrs_max:
             raise ValueError(
-                f'Regression range {start_regress}-{end_regress} is not '
-                f'within the {name}, which covers {yrs_min}-{yrs_max}.')
-
-    # Check that the regression end year is not after the start of the
-    # committed warming period.
-    if year_committed_to and (end_regress > year_committed_from):
+                f'Regression range {cfg.start_regress}-{cfg.end_regress} is '
+                f'not within the {name}, which covers {yrs_min}-{yrs_max}.')
+    # Stop if the regression ends after the committed warming starts: from
+    # then on the forcing no longer matches the observed temperatures
+    if cfg.year_committed_to and (cfg.end_regress > cfg.year_committed_from):
         raise ValueError(
-            f'Regression end year ({end_regress}) cannot be after the '
-            f'start of the committed warming period ({year_committed_from}). '
-            'The regression must be performed on data consistent between the '
-            'reference/observed temperatures and forcing data; once the'
-            'constant ERF assumption begins, the scenario for forcing and'
-            'reference warming are no longer aligned.')
+            f'Regression end year ({cfg.end_regress}) cannot be after the '
+            f'start of the committed warming period '
+            f'({cfg.year_committed_from}). The regression must be performed '
+            'on data consistent between the reference/observed temperatures '
+            'and forcing data; once the constant ERF assumption begins, the '
+            'scenario for forcing and reference warming are no longer '
+            'aligned.')
 
-    # Save the reference temperatures as used: the selected members, cut off
-    # at the dataset's year, with the pre-industrial offset removed. The
-    # combination script plots these, so it need not reload them from data/.
-    # Identical for every iteration of a configuration, so (like the priors)
-    # the file has no date: each run overwrites it, atomically, since
-    # several jobs may write it at once (see results_layout.write_csv).
-    results_layout.write_csv(
-        df_temp_Obs,
-        f'{results_folder_obs}{out_path_obs_timeseries}' +
-        f'Obs_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'ENSEMBLE-SIZE--{df_temp_Obs.shape[1]}.csv')
+    # The piControl segments: as long as the observed record, indexed by
+    # its years, relative to the pre-industrial period, filtered for drift
+    # and variability
+    inputs.df_temp_PiC = datasets.filter_PiControl(
+        datasets.load_PiC(cfg.picontrol_id, temp_Yrs, cfg.start_pi,
+                          cfg.end_pi),
+        [1, 3, 30])
 
+    # The FaIR parameter sets, sorted by model name: the p axis
+    inputs.df_params, inputs.models = emulators.fair_parameter_sets()
+    return inputs
+
+
+def log_configuration(cfg, inputs, folders):
+    """Log the Slurm resources and the run's configuration."""
     compute_resources.log_slurm_configuration()
-
     run_log.log_section('Run configuration')
+    forc_Yrs = inputs.df_forc.index
+    temp_Yrs = inputs.df_temp_Obs.index
     print(f'Git commit: {run_log.describe_git_commit()}')
-    print(f'Regressed variables: {regress_vars}')
-    print(f'ERF dataset: {erf_id}')
-    print(f'GMT dataset: {gmt_id}')
-    print(f'piControl dataset: {picontrol_id}')
-    if year_committed_to:
-        print(f'Committed warming: forcing constant from:'
-              f'{year_committed_to} to {year_committed_from}')
-    print(f'Forcing range: {forc_Yrs_min}-{forc_Yrs_max}')
+    print(f'Regressed variables: {cfg.regress_vars}')
+    print(f'ERF dataset: {cfg.erf_id}')
+    print(f'GMT dataset: {cfg.gmt_id}')
+    print(f'piControl dataset: {cfg.picontrol_id}')
+    if cfg.year_committed_to:
+        print(f'Committed warming: forcing constant from '
+              f'{cfg.year_committed_from} to {cfg.year_committed_to}')
+    print(f'Forcing range: {forc_Yrs.min()}-{forc_Yrs.max()}')
     print(f'Reference temperature range: {temp_Yrs.min()}-{temp_Yrs.max()}')
-    print(f'Reference temperature realisation number: {ensemble_members["GMT"]}')
-    print(f'ERF realisation number: {ensemble_members["ERF"]}')
-    print(f'Pre-industrial era: {start_pi}-{end_pi}')
-    print(f'Truncation range: {start_trunc}-{end_trunc}')
-    print(f'Regression range: {start_regress}-{end_regress}')
-    print(f'Number of samples: {samples}')
-    print('Random seed: '
-          f'{seed if seed is not None else "none (unseeded sampling)"}')
-    print(f'Warming definitions: {", ".join(definitions) or "none"}')
-    print(f'Include pre-industrial offset: {inc_pi_offset}')
-    print(f'Include constant term in regression: {inc_reg_const}')
-    print(f'Using model: {emulator_choice}')
-    print(f'Output folder: {results_root}/'
-          f'{"" if output_tag else "  (no tag set)"}')
-
-    # CMIP6 PI-CONTROL
-    timeframes = [1, 3, 30]
-    # Segments as long as the GMT record, indexed by its years
-    df_temp_PiC = datasets.load_PiC(picontrol_id, temp_Yrs, start_pi, end_pi)
-    df_temp_PiC = datasets.filter_PiControl(df_temp_PiC, timeframes)
-    # NOTE: For 1850-2022, we get 183 realisations for piControl
-    # NOTE: For 1850-2023, we get 181 realisations for piControl
-
-    # Save the filtered piControl segments, for the internal-variability
-    # figures drawn by combine_results_iterations.py. Identical for every
-    # iteration of these inputs, so (like the priors) the file has no date:
-    # each run overwrites it, atomically, since several jobs may write it at
-    # once (see results_layout.write_csv).
-    results_layout.write_csv(
-        df_temp_PiC,
-        f'{results_folder_picontrol}{out_path_picontrol}' +
-        f'PiControl_timeseries_ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'ENSEMBLE-SIZE--{df_temp_PiC.shape[1]}.csv')
+    print('Reference temperature realisation number: '
+          f'{cfg.ensemble_members["GMT"]}')
+    print(f'ERF realisation number: {cfg.ensemble_members["ERF"]}')
+    print(f'Pre-industrial era: {cfg.start_pi}-{cfg.end_pi}')
+    print(f'Truncation range: {cfg.start_trunc}-{cfg.end_trunc}')
+    print(f'Regression range: {cfg.start_regress}-{cfg.end_regress}')
+    print(f'Number of samples: {cfg.samples}')
+    seed_says = (cfg.seed if cfg.seed is not None
+                 else 'none (unseeded sampling)')
+    print(f'Random seed: {seed_says}')
+    print(f'Warming definitions: {", ".join(cfg.definitions)}')
+    print(f'Include pre-industrial offset: {cfg.inc_pi_offset}')
+    print(f'Include constant term in regression: {cfg.inc_reg_const}')
+    print('Using model: FaIR_V2')
+    print(f'Output folder: {folders.root}'
+          f'{"" if cfg.output_tag else "  (no tag set)"}')
 
 
-    ###########################################################################
-    # CARRY OUT GWI CALCULATION ###############################################
-    ###########################################################################
+def draw_members(cfg, inputs):
+    """Draw the members to rebuild: every FaIR parameter set, and a random
+    subset of up to cfg.samples of each other source (the cube design).
 
-    # Set model parameters ####################################################
-    if emulator_choice == 'AR5_IR':
-        # We only use a[10], a[11], a[15], a[16]
-        # Defaults:
-        # AR5 thermal sensitivity coeffs
-        # a_ar5[10:12] = [0.631, 0.429]
-        # AR5 thermal time-inc_Constants -- could use Geoffroy et al [4.1,249.]
-        # a_ar5[15:17] = [8.400, 409.5]
-        # a_ar5 = np.zeros(20, 16)
-        # # Geoffrey 2013 paramters for a_ar5[15:17]
-        Geoff = np.array([[4.0, 5.0, 4.5, 2.8, 5.2, 3.9, 4.2, 3.6,
-                           1.6, 5.3, 4.0, 5.5, 3.5, 3.9, 4.3, 4.0],
-                          [126, 267, 193, 132, 289, 200, 317, 197,
-                           184, 280, 698, 286, 285, 164, 150, 218]])
+    cfg:
+        the configuration (see read_argv_config)
+    inputs:
+        the inputs (see load_inputs)
+    Returns the member index, (p, e, o, c):
+        four arrays of positions along the whole axes, each (N,) (see
+        sampling.cube)
 
-    elif emulator_choice == 'FaIR_V2':
-        # The original location of the FaIR tunings is here
-        # CMIP6_param_csv = ('models/FaIR_V2/FaIRv2_0_0_alpha1/fair/util/' +
-        #                    'parameter-sets/CMIP6_climresp.csv')
-        # Which is simply copied to the following location and committed
-        # to repo explicitly for transparency and convenience.
-        CMIP6_param_csv = ('models/FaIR_V2/FaIR_CMIP6_climresp.csv')
-        CMIP6_param_df = pd.read_csv(
-            CMIP6_param_csv, index_col=[0], header=[0, 1])
-
-    # Calculate GWI ###########################################################
-
-    # Select random sub-set sampling of all ensemble members:
-
-    # Note that we choose to select all possible parameterisations for FaIR,
-    # as the number of parameterisations is relatively small, and we wish to
-    # fully span model parameterisation uncertainty. For piControl (internal
-    # variability), observed temperature data, and ERFs, we select an identical
-    # number of ensemble members for each, (a) to evenly spread the uncertainty
-    # across all sources, and (b) because 60 members for each source is the
-    # maximum that can be handled by the HPC cluster RAM; 60 is already quite
-    # low, and choosing lower for a particular source seems problematic.
-    # However, for the resulting ensemble size (6 million), variance between
-    # results from repeat random subsampling leads to consistent results, and
-    # differences between samplings are well below the overall unceratinty
-    # range. Variance is compensated for by making several repeat calculations
-    # and averaging the resulting timeseries - see combine_results.py.
-
-    # Seed the random sampling, if asked to. All three draws below (forcing,
-    # temperature and internal variability members) use numpy's global
-    # random state, and they are the only random draws in a run, so seeding
-    # here, just before them, makes the whole run reproducible.
-    if seed is not None:
-        np.random.seed(seed)
-
-    # The draws choose which members are rebuilt (stage C). Stages A and B
-    # run on every member of every source, whatever is drawn. Each draw
-    # gives positions along its source's axis, in the order drawn:
-    # np.random.choice(n, k, replace=False) is the draw the legacy code made
-    # (np.random.choice on the ERF members' names, and DataFrame.sample on
-    # the GMT members and piControl segments, which draw positions the same
-    # way), so the same seed draws the same members, in the same order.
-
+    Every parameter set is used, since there are few and their uncertainty
+    should be spanned fully; the ERF members, observed members and
+    piControl segments are drawn in equal numbers, to spread the
+    uncertainty evenly across the sources. The draws are
+    np.random.choice(n, k, replace=False) on numpy's global random state,
+    seeded here if asked: the draws the legacy code made, so the same seed
+    draws the same members, in the same order.
+    """
+    # Seed the draws, if asked: they are the run's only random draws
+    if cfg.seed is not None:
+        np.random.seed(cfg.seed)
     run_log.log_notes()
     run_log.log_section('Ensemble sampling')
+    # The sizes of the sources: E, P, O, C
+    n_erf = inputs.df_forc.columns.get_level_values('ensemble').nunique()
+    n_params = len(inputs.models)
+    n_obs = inputs.df_temp_Obs.shape[1]
+    n_pic = inputs.df_temp_PiC.shape[1]
 
-    # 1. A random subset of the ERF members
-    # Every ERF member, in the order of the forcing's columns: the e axis
-    erf_members = df_forc.columns.get_level_values('ensemble').unique()
-    print(f'Forcing ensemble all: {len(erf_members)}')
-    # The positions drawn along the e axis: (up to samples,)
-    erf_drawn = np.random.choice(
-        len(erf_members), min(samples, len(erf_members)), replace=False)
+    # 1. A random subset of the ERF members: positions along e
+    print(f'Forcing ensemble all: {n_erf}')
+    erf_drawn = np.random.choice(n_erf, min(cfg.samples, n_erf),
+                                 replace=False)
     print(f'Forcing ensemble pruned: {len(erf_drawn)}')
-
-    # 2. Every parameter set, no sub-sampling.
-    print('FaIR Parameters: '
-          f'{len(CMIP6_param_df.columns.levels[0].unique())}')
-    if emulator_choice == 'AR5_IR':
-        params_subset = Geoff[:, :min(samples, Geoff.shape[1])]
-    elif emulator_choice == 'FaIR_V2':
-        # Every parameter set, no sub-sampling, sorted by name: the order of
-        # the p axis, and so of the blocks along the results' member axis
-        params_subset = CMIP6_param_df.sort_index(
-            axis=1, level=0, sort_remaining=False)
-        # The names of the CMIP6 models whose parameter sets are used
-        models = params_subset.columns.get_level_values(0).unique().to_list()
-    # Every position along the p axis: (P,)
-    params_drawn = np.arange(len(models))
-
-    # 3. A random subset of the observed GMT members
-    print(f'Temperature ensembles all: {df_temp_Obs.shape[1]}')
-    # The positions drawn along the o axis: (up to samples,)
-    obs_drawn = np.random.choice(
-        df_temp_Obs.shape[1], min(samples, df_temp_Obs.shape[1]),
-        replace=False)
+    # 2. Every parameter set: positions along p
+    print(f'FaIR Parameters: {n_params}')
+    params_drawn = np.arange(n_params)
+    # 3. A random subset of the observed members: positions along o
+    print(f'Temperature ensembles all: {n_obs}')
+    obs_drawn = np.random.choice(n_obs, min(cfg.samples, n_obs),
+                                 replace=False)
     print(f'Temperature ensembles pruned: {len(obs_drawn)}')
-
-    # 4. A random subset of the piControl segments
-    print(f'Internal variability ensembles all: {df_temp_PiC.shape[1]}')
-    # The positions drawn along the c axis: (up to samples,)
-    pic_drawn = np.random.choice(
-        df_temp_PiC.shape[1], min(samples, df_temp_PiC.shape[1]),
-        replace=False)
+    # 4. A random subset of the piControl segments: positions along c
+    print(f'Internal variability ensembles all: {n_pic}')
+    pic_drawn = np.random.choice(n_pic, min(cfg.samples, n_pic),
+                                 replace=False)
     print(f'Internal variability ensembles pruned: {len(pic_drawn)}')
 
-    # The sample's members: every combination of the drawn members (the
-    # cube design), as the member index (p, e, o, c): four arrays of
-    # positions along the whole axes, each (N,)
+    # Every combination of the drawn members (the cube design)
     member_index = sampling.cube(params_drawn, erf_drawn, obs_drawn,
                                  pic_drawn)
+    # The full ensemble's size, and the sample's
+    n_all = n_erf * n_params * n_obs * n_pic
+    n_sub = len(member_index[0])
+    print(f'Max available ensemble: {n_all:,}')
+    print(f'Sub-sampled ensemble size: {n_sub:,} '
+          f'({n_sub / n_all:.2%} of all possible combinations)')
+    return member_index
 
-    # Print the total available ensemble size
-    _n_all = (
-        len(erf_members) *
-        len(CMIP6_param_df.columns.levels[0].unique()) *
-        df_temp_Obs.shape[1] *
-        df_temp_PiC.shape[1]
-    )
-    print(f'Max available ensemble: {_n_all:,}')
 
-    # Print the randomly subsampled ensemble size
-    _n_sub = len(member_index[0])
-    print(f'Sub-sampled ensemble size: {_n_sub:,} '
-          f'({_n_sub / _n_all:.2%} of all possible combinations)')
+def get_headline_results_rows(name, timeseries, hl_years, headline_years):
+    """A definition's rows for a headlines CSV: its timeseries at the
+    headline years, labelled as WARMING_DEFINITIONS labels them.
 
-    T1a = dt.datetime.now()
-    # Stage A, once, for the attribution and the priors: the modelled
-    # warming for every parameter set and ERF member, (p, e, t, v)
+    name:
+        the definition, a key of WARMING_DEFINITIONS
+    timeseries:
+        its timeseries, indexed by year
+    hl_years:
+        the headline years (see warming_definitions.generate_headline_years)
+    headline_years:
+        the --headline-years setting: 'IGCC' adds the definition's IPCC
+        years
+    Returns a DataFrame of those rows:
+        or None if the timeseries has none of the years. Years whose window
+        reaches beyond the timeseries' years (e.g. a CGWL year without
+        forcing 9 years after it) are left out, with a note.
+    """
+    definition = WARMING_DEFINITIONS[name]
+    # The headline years, and the definition's IPCC years if asked
+    years = list(hl_years)
+    if headline_years == 'IGCC':
+        years += [y for y in definition['ipcc_years'] if y not in years]
+    # ... those the timeseries has a value for
+    missing = [y for y in years if y not in timeseries.index]
+    if missing:
+        print(f'({name}: no value for headline year(s) {missing}, whose '
+              'window reaches beyond the years available)', end=' ')
+    years = [y for y in years if y in timeseries.index]
+    if not years:
+        return None
+    # Its rows at those years, labelled
+    return summaries.headline_rows(
+        timeseries, years, [definition['label'](year) for year in years])
+
+
+def calculate_attributed_percentiles(sample, cfg):
+    """The attributed warming's percentile summaries: each warming
+    definition's timeseries, and their rows at the headline years.
+
+    sample:
+        members.Sample
+    cfg:
+        the configuration (see read_argv_config)
+    Returns (timeseries, headlines):
+        timeseries: maps each definition's file name (e.g. 'SR15') to its
+            timeseries, a DataFrame indexed by year: the annual definition's
+            always, the others' if asked for
+        headlines: the headlines CSV's DataFrame (every asked-for
+            definition's rows at the headline years), or None if empty
+    """
+    # The headline years
+    hl_years = warming_definitions.generate_headline_years(
+        cfg.headline_years, cfg.end_regress, cfg.end_trunc)
+    run_log.log_section(f'Definitions ({cfg.headline_years})')
+    timeseries, rows = {}, []
+    for name, definition in WARMING_DEFINITIONS.items():
+        # The annual timeseries always; the others if asked for
+        if name != 'annual' and name not in cfg.definitions:
+            continue
+        time_start = dt.datetime.now()
+        print(f'Calculating the {name} timeseries', end=' ')
+        # Every output year whose window fits: each member's value of the
+        # definition, rebuilt from T_mod and T_obs with it applied first,
+        # and the percentiles across the members
+        timeseries[definition['file_name']] = (
+            summaries.definition_timeseries_table(
+                sample, SIGMAS, definition['function'], cfg.start_trunc,
+                cfg.end_trunc, definition['years_before'],
+                definition['years_after']))
+        # Its rows at the headline years, if asked for
+        if name in cfg.definitions:
+            rows.append(get_headline_results_rows(
+                name, timeseries[definition['file_name']], hl_years,
+                cfg.headline_years))
+        print(f'... took {dt.datetime.now() - time_start}')
+    rows = [r for r in rows if r is not None]
+    return timeseries, (pd.concat(rows, axis=0) if rows else None)
+
+
+def calculate_observed_percentiles(df_temp_Obs, cfg):
+    """The observations' percentile summaries: each warming definition
+    applied to every observed member, with percentiles across them (no
+    rebuild), and their rows at the headline years.
+
+    df_temp_Obs:
+        the observed members, indexed by year
+    cfg:
+        the configuration (see read_argv_config)
+    Returns (timeseries, headlines):
+        timeseries: maps the file name of each definition asked for to its
+            timeseries
+        headlines: the rows of all five definitions at the headline years,
+            whatever was asked for (runs with different definitions share
+            the observed headlines file, which doesn't depend on the
+            regressed variables, so each must write the same contents), or
+            None if empty
+    """
+    # The headline years
+    hl_years = warming_definitions.generate_headline_years(
+        cfg.headline_years, cfg.end_regress, cfg.end_trunc)
+    run_log.log_section(
+        f'Definitions for observations ({cfg.headline_years})')
+    timeseries, rows = {}, []
+    for name, definition in WARMING_DEFINITIONS.items():
+        print(f'Calculating the {name} timeseries (Obs)', end=' ')
+        # Every year whose window lies within the observed years
+        observed = summaries.observed_timeseries_table(
+            df_temp_Obs, SIGMAS, definition['function'],
+            definition['years_before'], definition['years_after'])
+        # ... kept for its CSV if asked for
+        if name in cfg.definitions:
+            timeseries[definition['file_name']] = observed
+        # Its rows at the headline years
+        rows.append(get_headline_results_rows(
+            name, observed, hl_years, cfg.headline_years))
+        print('... done')
+    rows = [r for r in rows if r is not None]
+    return timeseries, (pd.concat(rows, axis=0) if rows else None)
+
+
+def calculate_prior_and_erf_percentiles(T_mod, forcing_vars, member_index,
+                                        cfg, inputs):
+    """The interim results' percentile summaries: the prior warming and the
+    forcing.
+
+    T_mod:
+        stage A's modelled warming, (p, e, t, v)
+    forcing_vars:
+        the names along its v axis
+    member_index:
+        the drawn members (see draw_members), for the log
+    cfg:
+        the configuration (see read_argv_config)
+    inputs:
+        the inputs (see load_inputs)
+    Returns (priors, erf):
+        priors: the prior warming, stage A's modelled warming itself (every
+            scaling factor 1), summarised over every (parameter set, ERF
+            member) pair, each counted once
+        erf: the forcing, summarised over the ERF members
+    """
+    run_log.log_section('Priors and ERF')
+    # How many (parameter set, ERF member) pairs the priors summarise, and
+    # how many the sample's members use: each pair as one number, p · E +
+    # e, in int64, since the member index is stored in small integer types
+    n_params, n_erf = T_mod.shape[:2]
+    p, e = member_index[:2]
+    pairs_used = np.unique(p.astype(np.int64) * n_erf + e)
+    print(f'The priors are every (parameter set, ERF member) pair, '
+          f'{n_params} x {n_erf} = {n_params * n_erf:,}, each counted once, '
+          f'which may differ from the pairs the attribution samples: its '
+          f'members use {len(pairs_used):,} of them.')
+    # The two summaries
+    priors = summaries.prior_timeseries_table(
+        T_mod, forcing_vars, cfg.regress_vars,
+        inputs.df_forc.index.to_numpy(), SIGMAS)
+    erf = summaries.erf_timeseries_table(
+        inputs.df_forc, forcing_vars, cfg.regress_vars, SIGMAS)
+    return priors, erf
+
+
+def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
+    """Write the inputs as used and the interim results: the observed
+    temperatures, the piControl segments, the prior warming and the
+    forcing.
+
+    cfg:
+        the configuration (see read_argv_config)
+    inputs:
+        the inputs (see load_inputs)
+    priors, erf:
+        the prior warming's and the forcing's summaries (see
+        calculate_prior_and_erf_percentiles)
+    folders:
+        the output folders (see output_folders)
+
+    Each is the same for every iteration of a configuration, so its name
+    has no date, and each run overwrites it in one step (see
+    results_layout.write_csv). The forcing's file holds its summary, not
+    every member (the members are in data/, unchanged).
+    """
+    # The inputs, as named in the outputs
+    inputs_name = (f'ERF--{cfg.erf_id}_GMT--{cfg.gmt_id}_'
+                   f'PREINDUSTRIAL--{cfg.preindustrial_str}'
+                   f'{cfg.committed_str}')
+
+    variables_name = f'VARIABLES--{"-".join(cfg.regress_vars)}'
+
+    # The sizes: the observed members, piControl segments, (parameter set,
+    # ERF member) pairs and ERF members
+    n_obs = inputs.df_temp_Obs.shape[1]
+    n_pic = inputs.df_temp_PiC.shape[1]
+    n_erf = inputs.df_forc.columns.get_level_values('ensemble').nunique()
+    n_pairs = len(inputs.models) * n_erf
+
+    # The observed members used, relative to the pre-industrial period
+    results_layout.write_csv(
+        inputs.df_temp_Obs,
+        f'{folders.obs}Obs_timeseries_{inputs_name}_'
+        f'ENSEMBLE-SIZE--{n_obs}.csv')
+
+    # The piControl segments, after filtering
+    results_layout.write_csv(
+        inputs.df_temp_PiC,
+        f'{folders.picontrol}PiControl_timeseries_{inputs_name}_'
+        f'ENSEMBLE-SIZE--{n_pic}.csv')
+
+    # The prior warming's summary
+    results_layout.write_csv(
+        priors,
+        f'{folders.priors}PRIOR_results_timeseries_{inputs_name}_'
+        f'{variables_name}_ENSEMBLE-SIZE--{n_pairs}_.csv')
+
+    # The forcing's summary
+    results_layout.write_csv(
+        erf,
+        f'{folders.erfs}ERF_results_timeseries_{inputs_name}_'
+        f'{variables_name}_ENSEMBLE-SIZE--{n_erf}_.csv')
+
+
+def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
+                  folders):
+    """Write the outputs: each warming definition's timeseries and the
+    headlines, for the attributed warming and for the observations.
+
+    cfg:
+        the configuration (see read_argv_config)
+    n_members:
+        the sample's size, N, for the attributed outputs' names
+    n_observed_members:
+        the observed members' number, for the observed outputs' names
+    attributed, observed:
+        each (timeseries, headlines) (see calculate_attributed_percentiles
+        and calculate_observed_percentiles)
+    folders:
+        the output folders (see output_folders)
+
+    The attributed outputs' names end in the time of the run, since
+    iterations of a configuration differ only in it; the observed ones are
+    the same for every iteration, so have no date.
+    """
+    # The names: the inputs, the regression, the sample's size and the
+    # time of the run
+    inputs_name = (f'ERF--{cfg.erf_id}_GMT--{cfg.gmt_id}_'
+                   f'PREINDUSTRIAL--{cfg.preindustrial_str}'
+                   f'{cfg.committed_str}')
+    run_time = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    gwi_name = (f'{inputs_name}_VARIABLES--{"-".join(cfg.regress_vars)}_'
+                f'ENSEMBLE-SIZE--{n_members}_'
+                f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}_'
+                f'DATE-CALCULATED--{run_time}')
+    obs_name = f'{inputs_name}_ENSEMBLE-SIZE--{n_observed_members}'
+    # The attributed warming: each definition's timeseries, the headlines
+    gwi_timeseries, gwi_headlines = attributed
+    for file_name, table in gwi_timeseries.items():
+        results_layout.write_csv(
+            table, f'{folders.gwi}GWI_results_timeseries-{file_name}_'
+            f'{gwi_name}.csv')
+    if gwi_headlines is not None:
+        results_layout.write_csv(
+            gwi_headlines, f'{folders.gwi}GWI_results_headlines_'
+            f'{gwi_name}.csv')
+    # The observations: each definition's timeseries, the headlines
+    obs_timeseries, obs_headlines = observed
+    for file_name, table in obs_timeseries.items():
+        results_layout.write_csv(
+            table, f'{folders.obs}Obs_results_timeseries-{file_name}_'
+            f'{obs_name}.csv')
+    if obs_headlines is not None:
+        results_layout.write_csv(
+            obs_headlines, f'{folders.obs_headlines}Obs_results_headlines_'
+            f'{obs_name}.csv')
+
+
+def main(argv):
+    """Run the GWI for the options in argv (see read_argv_config)."""
+    time_alpha = dt.datetime.now()
+
+    # Read the configuration, make the output folders, load the inputs
+    cfg = read_argv_config(argv)
+    folders = output_folders(cfg)
+    inputs = load_inputs(cfg)
+    log_configuration(cfg, inputs, folders)
+
+    # Draw the members to rebuild
+    member_index = draw_members(cfg, inputs)
+
+    run_log.log_section('Stages A, B and C')
+    time_start = dt.datetime.now()
+
+    # Stage A: the modelled warming for every parameter set and ERF member,
+    # (p, e, t, v)
     T_mod, forcing_vars = modelled_warming(
-        df_forc=df_forc,
-        df_params=params_subset,
-        inc_pi_offset=inc_pi_offset,
-        start_pi=start_pi,
-        end_pi=end_pi,
-    )
-    # Stage B, once: the scaling factors of every (parameter set, ERF
-    # member) against every observed member and piControl segment
+        df_forc=inputs.df_forc, df_params=inputs.df_params,
+        inc_pi_offset=cfg.inc_pi_offset, start_pi=cfg.start_pi,
+        end_pi=cfg.end_pi)
+
+    # Stage B: the scaling factors of every (parameter set, ERF member)
+    # against every observed member and piControl segment
     coefs = constrain(
-        T_mod=T_mod,
-        forcing_vars=forcing_vars,
-        forc_Yrs=df_forc.index.to_numpy(),
-        df_temp_Obs=df_temp_Obs,
-        df_temp_PiC=df_temp_PiC,
-        regress_vars=regress_vars,
-        inc_reg_const=inc_reg_const,
-        start_regress=start_regress,
-        end_regress=end_regress,
-    )
-    # Stage C, the sample: every drawn member, ready to be rebuilt for any
-    # block of years. The observed members are lined up with the forcing
-    # years (stage A's t axis), NaN after the observations end: (t, o)
-    T_obs = df_temp_Obs.reindex(df_forc.index).to_numpy()
+        T_mod=T_mod, forcing_vars=forcing_vars,
+        forc_Yrs=inputs.df_forc.index.to_numpy(),
+        df_temp_Obs=inputs.df_temp_Obs, df_temp_PiC=inputs.df_temp_PiC,
+        regress_vars=cfg.regress_vars, inc_reg_const=cfg.inc_reg_const,
+        start_regress=cfg.start_regress, end_regress=cfg.end_regress)
+
+    # Stage C: the drawn members, ready to be rebuilt as each output needs
+    # them; the observed members lined up with the forcing years (stage
+    # A's t axis), NaN after the observations end: (t, o)
     sample = members.Sample(
-        T_mod=T_mod,
-        coefs=coefs,
-        T_obs=T_obs,
-        member_index=member_index,
-        forcing_vars=forcing_vars,
-        regress_vars=regress_vars,
-        inc_reg_const=inc_reg_const,
-        years=df_forc.index.to_numpy(),
-        n_threads=compute_resources.n_workers(),
-    )
-    # The names along the members' variable axis
-    vars_list = sample.output_vars
+        T_mod=T_mod, coefs=coefs,
+        T_obs=inputs.df_temp_Obs.reindex(inputs.df_forc.index).to_numpy(),
+        member_index=member_index, forcing_vars=forcing_vars,
+        regress_vars=cfg.regress_vars, inc_reg_const=cfg.inc_reg_const,
+        years=inputs.df_forc.index.to_numpy(),
+        n_threads=compute_resources.n_workers())
+    print(f'Modelling, constraining and sampling ... took '
+          f'{dt.datetime.now() - time_start}')
+
+    # Stage D: prepare computing resources to rebuild the ensemble members
     # Stop now if the outputs can't fit, and log what they should need
     expected_memory = compute_resources.check_memory(
         held_bytes=sample.nbytes + coefs.obs.nbytes + coefs.pic.nbytes,
@@ -859,422 +1097,28 @@ if __name__ == "__main__":
                    else f'allows {by_memory}')
     print(f'Years per block: {summaries.years_per_block(sample)} (the '
           f'threads allow {by_threads}; the memory {memory_says})')
-    T1b = dt.datetime.now()
-    run_log.log_section('Timeseries')
-    print(f'Calculating GWI ... took {T1b - T1a}')
-    # The start of the PRIORS stage
-    T2a = T1b
-    # The number of members, for the output file names
-    n = sample.n_members
 
+    # Stage E: rebuild the ensemble: the percentile summaries of every
+    # definition, for the attributed warming and the observations, and of
+    # the interim results (the prior warming and the forcing)
+    attributed = calculate_attributed_percentiles(sample, cfg)
+    observed = calculate_observed_percentiles(inputs.df_temp_Obs, cfg)
+    priors, erf = calculate_prior_and_erf_percentiles(
+        T_mod, forcing_vars, member_index, cfg, inputs)
 
-    # PRIOR WARMING ###########################################################
-    # The prior warming is stage A's modelled warming itself, T_mod: the
-    # warming before the observational constraint (every scaling factor 1),
-    # so it needs no calculation of its own. Its summary is taken over every
-    # (parameter set, ERF member) pair, each counted once: the prior of the
-    # full ensemble, which may differ from the pairs the attribution's
-    # members use, which depend on the sampling design and its size. The
-    # priors are always written: they cost a second or so.
+    # Stage F: Write
+    # Write the inputs as used and the interim results
+    write_inputs_and_interims(cfg, inputs, priors, erf, folders)
+    # Write the attribution outputs, and post-processed observation outputs
+    write_outputs(cfg, sample.n_members, inputs.df_temp_Obs.shape[1],
+                  attributed, observed, folders)
 
-    print('Adding the aggregate variables to the PRIORS', end=' ')
-    # Every forcing variable plus the aggregates (Ant, Tot), as the
-    # attribution's outputs hold them: (p, e, t, v'), and the names along
-    # v', sorted
-    T_prior, prior_vars_all = attribution.add_aggregate_variables(
-        T_mod, forcing_vars, regress_vars)
-    T2b = dt.datetime.now()
-    print(f'... took {T2b - T2a}')
-    # How many (parameter set, ERF member) pairs there are, and how many the
-    # attribution's members use (each pair as one number, p · E + e)
-    n_erf = T_mod.shape[1]
-    n_pairs = T_mod.shape[0] * n_erf
-    # Each member's parameter set and ERF member: two (N,)
-    p, e = member_index[:2]
-    # ... in int64, since the member index is stored in small integer types
-    pairs_used = np.unique(p.astype(np.int64) * n_erf + e)
-    print(f'The priors are every (parameter set, ERF member) pair, '
-          f'{T_mod.shape[0]} x {n_erf} = {n_pairs:,}, each counted once, '
-          f'which may differ from the pairs the attribution samples: its '
-          f'members use {len(pairs_used):,} of them.')
-
-    # PRODUCE FINAL RESULTS DATASETS ######################################
-
-    # For multiple runs, we want to save the results with a unique identifier.
-    # Use the current date and time of calculation for simplicity.
-    current_time = dt.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    iteration_id = current_time
-
-    variation = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'VARIABLES--{"-".join(regress_vars)}_' +
-        f'ENSEMBLE-SIZE--{n}_' +
-        f'REGRESSED-YEARS--{start_regress}-{end_regress}_' +
-        f'DATE-CALCULATED--{iteration_id}'
-    )
-
-    full_prior_size = (
-        len(models) *
-        len(df_forc.columns.get_level_values("ensemble").unique()))
-    variation_priors = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'VARIABLES--{"-".join(regress_vars)}_' +
-        f'ENSEMBLE-SIZE--{full_prior_size}_'
-    )
-    full_erf_size = (
-        len(df_forc.columns.get_level_values("ensemble").unique())
-    )
-    variation_erfs = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'VARIABLES--{"-".join(regress_vars)}_' +
-        f'ENSEMBLE-SIZE--{full_erf_size}_'
-    )
-    full_obs_size = (df_temp_Obs.shape[1])
-    variation_obs = (
-        f'ERF--{erf_id}_GMT--{gmt_id}_' +
-        f'PREINDUSTRIAL--{preindustrial_str}{committed_str}_' +
-        f'ENSEMBLE-SIZE--{full_obs_size}'
-    )
-
-    # NOTE TO SELF: multidimensional np.percentile() changes the order of
-    # the axes, so that the axis along which you took the percentiles is
-    # now the first axis, and the other axes are the remaining axes...
-
-    # TIMESERIES RESULTS ######################################################
-    print('Calculating percentiles for GWI', end=' ')
-    # The percentiles of every output year, from the members rebuilt one
-    # block of years at a time
-    df_Results = summaries.gwi_timeseries_table(
-        sample, SIGMAS, start_trunc, end_trunc)
-    gwi_filename = (f'{results_folder}{output_path}' +
-                    f'GWI_results_timeseries-ANNUAL_{variation}.csv')
-    results_layout.write_csv(df_Results, gwi_filename)
-
-    T3a = dt.datetime.now()
-    print(f'... took {T3a - T2b}')
-
-    print('Calculating percentiles for priors', end=' ')
-    T_prior_start = dt.datetime.now()
-    # The percentiles over every parameter set and ERF member:
-    # (n_sigmas, years, v'), laid out as for the GWI
-    priors_timeseries_array = np.percentile(
-        T_prior, SIGMAS, axis=(0, 1))
-    dict_Results_priors = {
-        (var, sigma):
-        priors_timeseries_array[
-            SIGMAS.index(sigma), :, prior_vars_all.index(var)]
-        for var in prior_vars_all for sigma in SIGMAS
-    }
-    df_Results_priors = pd.DataFrame(
-        dict_Results_priors, index=df_forc.index.to_numpy())
-    df_Results_priors.columns.names = ['variable', 'percentile']
-    df_Results_priors.index.name = 'Year'
-    priors_filename = (
-        f'{results_folder_priors}{output_path_priors}' +
-        f'PRIOR_results_timeseries_{variation_priors}.csv'
-    )
-    # Every iteration of a configuration gives identical priors, so the
-    # file has no date: each run overwrites it, atomically, since several
-    # jobs may write it at once (see results_layout.write_csv).
-    results_layout.write_csv(df_Results_priors, priors_filename)
-    print(f'... took {dt.datetime.now() - T_prior_start}')
-
-    print('Calculating percentiles for ERF', end=' ')
-    # The forcing of every variable, for every ERF member: (t, e, v)
-    erf_all = emulators.forcing_array(
-        df_forc, forcing_vars,
-        df_forc.columns.get_level_values('ensemble').unique())
-    # ... plus the aggregates (Ant, Tot), as sums of their parts, as for the
-    # priors: (t, e, v'), and the names along v', sorted
-    erf_all, erf_vars = attribution.add_aggregate_variables(
-        erf_all, forcing_vars, regress_vars)
-    # The percentiles over the ERF members: (n_sigmas, years, v'), laid out
-    # as for the GWI and the priors
-    erf_timeseries_array = np.percentile(erf_all, SIGMAS, axis=1)
-    dict_Results_ERF = {
-        (var, sigma):
-        erf_timeseries_array[SIGMAS.index(sigma), :, erf_vars.index(var)]
-        for var in erf_vars for sigma in SIGMAS
-    }
-    df_Results_ERF = pd.DataFrame(
-        dict_Results_ERF, index=df_forc.index.to_numpy())
-    df_Results_ERF.columns.names = ['variable', 'percentile']
-    df_Results_ERF.index.name = 'Year'
-
-    erf_filename = (
-        f'{results_folder_erfs}{output_path_erfs}' +
-        f'ERF_results_timeseries_{variation_erfs}.csv'
-    )
-    results_layout.write_csv(df_Results_ERF, erf_filename)
-
-    T3b = dt.datetime.now()
-    print(f'... took {T3b - T3a}')
-
-    # HEADLINE RESULTS ########################################################
-    # Each warming definition's timeseries is written in full; the headlines
-    # CSV gathers every definition's rows at the headline years (e.g. the
-    # last output year, and the IPCC assessment years: see
-    # warming_definitions.generate_headline_years)
-
-    if definitions:
-        run_log.log_section(f'Headlines ({headline_years})')
-
-        hl_years = warming_definitions.generate_headline_years(
-            headline_years, end_regress, end_trunc)
-
-        dfs = []
-
-    if 'annual' in definitions:
-        T1 = dt.datetime.now()
-        # GWI-ANNUAL DEFINITION (SIMPLE VALUE IN A GIVEN YEAR) ################
-        print('Reading annual mean definition temps', end=' ')
-
-        hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
-        if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
-            hl_years_annual.append(2017)
-
-        # The annual timeseries' rows at the headline years, labelled by the
-        # year itself
-        dfs = [summaries.headline_rows(df_Results, hl_years_annual,
-                                       hl_years_annual)]
-
-        T2 = dt.datetime.now()
-        print(f'... took {T2 - T1}')
-
-    if 'SR1.5' in definitions:
-        T1 = dt.datetime.now()
-        # SR15 DEFINITION (CENTRE OF 30-YEAR TREND) ###########################
-        # The value at the middle of each headline year of the line fitted
-        # through its last SR15_TREND_YEARS annual means, the year included
-        # (see SR15_TREND_YEARS and summaries.sr15_timeseries_table)
-        print('Calculating SR15-definition temps', end=' ')
-
-        hl_years_annual = [y for y in hl_years if y in trunc_Yrs]
-        if ((headline_years == 'IGCC') and (2017 not in hl_years_annual)):
-            hl_years_annual.append(2017)
-
-        for year in hl_years_annual:
-            # The trend's first year
-            first_year = year - (SR15_TREND_YEARS - 1)
-            # ... must be an output year too (its last, the headline year,
-            # is one already)
-            if first_year not in trunc_Yrs:
-                raise ValueError(
-                    f'SR15 definition requires the years {first_year} and '
-                    f'{year} to be in the truncation years: '
-                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-
-        # The SR1.5 timeseries: every output year whose window fits
-        df_SR15 = summaries.sr15_timeseries_table(
-            sample, SIGMAS, start_trunc, end_trunc, SR15_TREND_YEARS)
-        results_layout.write_csv(
-            df_SR15, f'{results_folder}{output_path}' +
-            f'GWI_results_timeseries-SR15_{variation}.csv')
-        # Its rows at the headline years, for the headlines CSV
-        if hl_years_annual:
-            dfs.append(summaries.headline_rows(
-                df_SR15, hl_years_annual,
-                [f'{year} (SR15 definition)' for year in hl_years_annual]))
-
-        T2 = dt.datetime.now()
-        print(f'... took {T2 - T1}')
-
-    if 'AR6' in definitions:
-        T1 = dt.datetime.now()
-        # AR6 DEFINITION (DECADE MEAN) ########################################
-        # The headline years whose whole window is in the output years
-        hl_years_decadal = [y for y in hl_years
-                            if ((y in trunc_Yrs) and
-                                (y - (AR6_MEAN_YEARS - 1) in trunc_Yrs))]
-        if ((headline_years == 'IGCC') and (2019 not in hl_years_decadal)):
-            hl_years_decadal.append(2019)
-
-        print('Calculating AR6-definition temps', end=' ')
-
-        for year in hl_years_decadal:
-            # The window's first year (see AR6_MEAN_YEARS)
-            first_year = year - (AR6_MEAN_YEARS - 1)
-            # The window's first and last years must both be output years
-            # (2019, added for IGCC, may not be)
-            if (year not in trunc_Yrs) or (first_year not in trunc_Yrs):
-                raise ValueError(
-                    f'AR6 definition requires the years {first_year} and '
-                    f'{year} to be in the truncation years: '
-                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})')
-
-        # The AR6 timeseries: every output year whose window fits
-        df_AR6 = summaries.ar6_timeseries_table(
-            sample, SIGMAS, start_trunc, end_trunc, AR6_MEAN_YEARS)
-        results_layout.write_csv(
-            df_AR6, f'{results_folder}{output_path}' +
-            f'GWI_results_timeseries-AR6_{variation}.csv')
-        # Its rows at the headline years, for the headlines CSV
-        if hl_years_decadal:
-            dfs.append(summaries.headline_rows(
-                df_AR6, hl_years_decadal,
-                [f'{year - (AR6_MEAN_YEARS - 1)}-{year}'
-                 for year in hl_years_decadal]))
-
-        T2 = dt.datetime.now()
-        print(f'... took {T2 - T1}')
-
-    if 'CGWL' in definitions:
-        T1 = dt.datetime.now()
-        # CGWL DEFINITION (20YR MEAN CENTERED WITH PROJECTIONS) ###############
-        # This definition was propsoed in Betts et al., 2023, and is not
-        # currently used in the IPCC/IGCC assessments.
-
-        # The headline years whose whole window is in the output years
-        hl_years_cgwl = []
-        for year in hl_years:
-            # The window's first and last years (see CGWL_MEAN_YEARS)
-            first_year = year - (CGWL_MEAN_YEARS - 1) // 2
-            last_year = year + (CGWL_MEAN_YEARS - 1) // 2
-            if not ((first_year in trunc_Yrs) and (last_year in trunc_Yrs)):
-                # Often we can produce SR1.5 and AR6 definitions but not CGWL
-                # due to not having data off the end of the truncation period.
-                # Therefore, we simply print a warning rather than raising an
-                # error, so that we can still produce the headlines csv without
-                # the CGWL definition.
-                print(
-                    f'CGWL definition requires the years {first_year} and '
-                    f'{last_year} to be in the truncation years: '
-                    f'({min(trunc_Yrs)}-{max(trunc_Yrs)})', end=' ')
-            else:
-                print('Calculating CGWL-definition temps', end=' ')
-                hl_years_cgwl.append(year)
-
-        # The CGWL timeseries: every output year whose window fits
-        df_CGWL = summaries.cgwl_timeseries_table(
-            sample, SIGMAS, start_trunc, end_trunc, CGWL_MEAN_YEARS)
-        results_layout.write_csv(
-            df_CGWL, f'{results_folder}{output_path}' +
-            f'GWI_results_timeseries-CGWL_{variation}.csv')
-        # Its rows at the headline years, for the headlines CSV
-        half = (CGWL_MEAN_YEARS - 1) // 2
-        if hl_years_cgwl:
-            dfs.append(summaries.headline_rows(
-                df_CGWL, hl_years_cgwl,
-                [f'{year - half}-{year + half} (CGWL definition)'
-                 for year in hl_years_cgwl]))
-
-        T2 = dt.datetime.now()
-        print(f'... took {T2 - T1}')
-
-    if 'rates' in definitions:
-        T1 = dt.datetime.now()
-        # AR6 RATE DEFINITION (SLOPE OF THE DECADE'S TREND) ###################
-        print('Calculating AR6-definition attributed warming rates', end=' ')
-        # The rates timeseries: every output year whose window fits, every
-        # member's slope rebuilt from the slopes of T_mod and T_obs over the
-        # year's window
-        df_RATES = summaries.rates_timeseries_table(
-            sample, SIGMAS, start_trunc, end_trunc, AR6_RATE_YEARS)
-        results_layout.write_csv(
-            df_RATES, f'{results_folder}{output_path}' +
-            f'GWI_results_timeseries-RATES_{variation}.csv')
-        # The headline years whose whole window is in the output years
-        hl_years_rates = [
-            y for y in hl_years
-            if (y in trunc_Yrs) and (y - (AR6_RATE_YEARS - 1) in trunc_Yrs)]
-        # Its rows at those years, for the headlines CSV
-        if hl_years_rates:
-            dfs.append(summaries.headline_rows(
-                df_RATES, hl_years_rates,
-                [f'{year - (AR6_RATE_YEARS - 1)}-{year} (AR6 rate definition)'
-                 for year in hl_years_rates]))
-        T2 = dt.datetime.now()
-        print(f'... took {T2 - T1}')
-
-    # Every definition's rows at the headline years, in one CSV
-    if definitions and dfs:
-        df_headlines = pd.concat(dfs, axis=0)
-        results_layout.write_csv(
-            df_headlines,
-            f'{results_folder}{output_path}' +
-            f'GWI_results_headlines_{variation}.csv')
-
-    # OBSERVATIONS: EVERY DEFINITION ##########################################
-    # The warming definitions applied to the observed temperatures, every
-    # member, with percentiles across them: no rebuild. Each definition's
-    # timeseries is the same for every regression, so it is filed with the
-    # observations themselves; its rows at the headline years go into this
-    # regression's observed headlines CSV, as before. The timeseries CSVs are
-    # written for the definitions the recipe asks for; the headlines take all
-    # five, whatever the recipe asks for: they cost almost nothing, and runs
-    # with different definitions share the observed headlines file (it
-    # doesn't depend on the regressed variables), so each must write the
-    # same contents.
-    run_log.log_section(f'Definitions for observations ({headline_years})')
-    # Each definition: its file name, its function, the years before and
-    # after each year that its window takes, and its headline label
-    half_cgwl = (CGWL_MEAN_YEARS - 1) // 2
-    observed_definitions = {
-        'annual': ('ANNUAL', warming_definitions.annual_value, 0, 0,
-                   lambda year: year),
-        'SR1.5': ('SR15', warming_definitions.final_value_of_trend_vectorised,
-                  SR15_TREND_YEARS - 1, 0,
-                  lambda year: f'{year} (SR15 definition)'),
-        'AR6': ('AR6', warming_definitions.mean_over_years,
-                AR6_MEAN_YEARS - 1, 0,
-                lambda year: f'{year - (AR6_MEAN_YEARS - 1)}-{year}'),
-        'CGWL': ('CGWL', warming_definitions.mean_over_years,
-                 half_cgwl, half_cgwl,
-                 lambda year: (f'{year - half_cgwl}-{year + half_cgwl} '
-                               '(CGWL definition)')),
-        'rates': ('RATES', warming_definitions.rate_func_vectorised,
-                  AR6_RATE_YEARS - 1, 0,
-                  lambda year: (f'{year - (AR6_RATE_YEARS - 1)}-{year} '
-                                '(AR6 rate definition)')),
-    }
-    # The IGCC headline years add 2017 (annual and SR1.5) and 2019 (AR6),
-    # as for the attributed warming
-    igcc_years = {'annual': [2017], 'SR1.5': [2017], 'AR6': [2019]}
-
-    dfs_obs = []
-    for name in observed_definitions:
-        file_name, definition, years_before, years_after, label = (
-            observed_definitions[name])
-        print(f'Calculating {name}-definition temps (Obs)', end=' ')
-        # The definition's timeseries for the observations
-        df_obs_timeseries = summaries.observed_timeseries_table(
-            df_temp_Obs, SIGMAS, definition, years_before, years_after)
-        # ... written if the recipe asks for the definition
-        if name in definitions:
-            results_layout.write_csv(
-                df_obs_timeseries,
-                f'{results_folder_obs}{out_path_obs_timeseries}' +
-                f'Obs_results_timeseries-{file_name}_{variation_obs}.csv')
-        # The headline years it has a value for (its whole window observed)
-        obs_years = list(hl_years)
-        if headline_years == 'IGCC':
-            obs_years += [y for y in igcc_years.get(name, [])
-                          if y not in obs_years]
-        obs_years = [y for y in obs_years if y in df_obs_timeseries.index]
-        # Its rows at those years, for the observed headlines CSV
-        if obs_years:
-            dfs_obs.append(summaries.headline_rows(
-                df_obs_timeseries, obs_years,
-                [label(year) for year in obs_years]))
-        print('... done')
-
-    if dfs_obs:
-        df_headlines_obs = pd.concat(dfs_obs, axis=0)
-        results_layout.write_csv(
-            df_headlines_obs,
-            f'{results_folder_obs}{out_path_obs}' +
-            f'Obs_results_headlines_{variation_obs}.csv')
-
-
-    # What the run actually cost, to sit alongside the 'Memory usage
-    # anticipated' block
+    # What the run cost, beside the 'Memory usage anticipated' block
     run_log.log_section('Memory usage recorded')
     compute_resources.report_memory_used(expected_memory)
-
-    time_omega = dt.datetime.now()
-    total_time = time_omega - time_alpha
     run_log.log_section('Total')
-    print(f'Total time taken: {total_time}')
+    print(f'Total time taken: {dt.datetime.now() - time_alpha}')
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

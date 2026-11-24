@@ -18,6 +18,29 @@ import pandas as pd
 import models.FaIR_V2.FaIRv2_0_0_alpha1.fair.fair_runner as fair
 
 
+# The FaIR v2.0 thermal parameter sets, one per CMIP6 model, copied from
+# models/FaIR_V2/FaIRv2_0_0_alpha1/fair/util/parameter-sets/CMIP6_climresp.csv
+# and committed for transparency
+FAIR_PARAMETERS_CSV = 'models/FaIR_V2/FaIR_CMIP6_climresp.csv'
+
+
+def fair_parameter_sets():
+    """The FaIR v2.0 thermal parameter sets, sorted by model name: the
+    order of the p axis.
+
+    Returns (df_params, models):
+        df_params: DataFrame, columns (model, parameter)
+        models: the model names, in that order
+    """
+    # The parameter sets, sorted by model name
+    df_params = pd.read_csv(
+        FAIR_PARAMETERS_CSV, index_col=[0], header=[0, 1]).sort_index(
+            axis=1, level=0, sort_remaining=False)
+    # The model names
+    models = df_params.columns.get_level_values(0).unique().to_list()
+    return df_params, models
+
+
 def forcing_array(df_forc, variables, members):
     """Forcing as an array (t, e, v), from a DataFrame with columns
     (variable, ensemble), in the order of `members` and `variables`."""
