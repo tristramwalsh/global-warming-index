@@ -285,6 +285,13 @@ The following settings control the analysis. Every recipe sets each of them, nam
 - `$(seq -s, 1950 2024)` = all years in a range (expensive)
 
 
+**`QUANTILE_STEP`**: The quantiles: every definition's timeseries as percentiles every this many percent, from the 0th to the 100th, in one netCDF file (`GWI_results_timeseries-quantiles`; see **Output Structure**)
+- `0.1` = every 0.1 percentile, 1001 levels: the distribution finely, as the sampling studies compare it
+- `1` = every percentile, 101 levels
+- `none` (or empty) = no quantiles, only the summary CSVs (the median and likely and very likely ranges), which are always written
+- Taken in the same pass as the summary percentiles, which they make about twice as slow; the file's size depends on the number of levels, not of members.
+
+
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
 - Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
 - Usually the recipe's own name; recipes that make up one experiment share a tag.
@@ -317,8 +324,8 @@ Each `gwi.py` run attributes the observed warming once, for one configuration, a
 3. **Stage A, modelling warming priors**: FaIR runs on each forcing variable alone (e.g. GHG, OHF, Nat, and with `INCLUDE_SUB_VARS` their components), for every parameter set and ERF member, giving the modelled warming $T_\mathrm{mod}(p, e, t, v)$.
 4. **Stage B, constraining warming**: for every (parameter set, ERF member) pair, the least-squares fit of the observed temperatures onto the modelled warming of the regressed variables, over the regression years, gives the scaling factors that constrain it. The fit is made once for each observed member ($\beta_\mathrm{obs}$) and once for each piControl segment ($\beta_\mathrm{pic}$, the spread that internal variability adds); since the fit is linear in its target, a member's scaling factors are the sum of the two, $\beta = \beta_\mathrm{obs}[o] + \beta_\mathrm{pic}[c]$.
 5. **Stage C, drawing ensemble members**: member $n$'s attributed warming from each forcing variable is its scaling factor times its modelled warming, $\beta_n \, T_\mathrm{mod}(p_n, e_n, t, v)$ (a sub-variable takes the factor of the variable it is part of); `Tot` is their sum over the regressed variables (with the constant, if `INCLUDE_REG_CONST=y`), `Res` the observed temperature minus `Tot`, and `Ant` = GHG + OHF (see **Variable Regression Logic**). The members are never all held at once: `src/method/members.py` rebuilds them a block of years at a time, and only where each output needs them.
-6. **The percentile summaries**: each warming definition (see `DEFINITIONS`) is applied to every member, and the percentiles taken across the members, in every year whose window fits. The definitions are described once, in `WARMING_DEFINITIONS` in `gwi.py`, and applied in the same way to the observations. The prior warming (stage A's, before the constraint) and the ERFs have percentile summaries output as well.
-7. **Write** the inputs as used (the observed members and the piControl segments), the priors and the ERFs, then each definition's timeseries and the headlines (see **Output Structure**).
+6. **The percentiles**: each warming definition (see `DEFINITIONS`) is applied to every member, and the percentiles taken across the members, in every year whose window fits: the summary's (the median and likely and very likely ranges), and with them, if `QUANTILE_STEP` is set, the quantiles'. The definitions are described once, in `WARMING_DEFINITIONS` in `gwi.py`, and applied in the same way to the observations. The prior warming (stage A's, before the constraint) and the ERFs have percentile summaries output as well.
+7. **Write** the inputs as used (the observed members and the piControl segments), the priors and the ERFs, then each definition's timeseries and the headlines, and the quantiles (see **Output Structure**).
 
 The run's log is divided into labelled sections (`RUN CONFIGURATION`, `ENSEMBLE SAMPLING`, `STAGES A, B AND C`, `MEMORY USAGE ANTICIPATED`, `DEFINITIONS`, `DEFINITIONS FOR OBSERVATIONS`, `PRIORS AND ERF`, `MEMORY USAGE RECORDED` and `TOTAL`), with the time each step took.
 
@@ -409,7 +416,8 @@ global-warming-index/
 │                    └── REGRESSED-YEARS--{start}-{end}/
 │                        ├── GWI_results_timeseries-ANNUAL_*.csv
 │                        ├── GWI_results_timeseries-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
-│                        └── GWI_results_headlines_*.csv
+│                        ├── GWI_results_headlines_*.csv
+│                        └── GWI_results_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
 ├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
 └── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
@@ -424,12 +432,15 @@ The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-in
 - `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries_*.csv`, one per inputs folder), for the internal-variability figures.
 
 **Output formats.** Summaries are CSV; distributions are netCDF (`src/outputs/distributions.py`):
-- A *summary* is a table whose size doesn't depend on the number of members, e.g. the percentiles of every variable in every year. It is a CSV, readable in a spreadsheet; its configuration is in its folder and file names.
-- A *distribution* is anything with a member axis, e.g. individual members' warming over the years. It is netCDF (float32, compressed), with named dimensions, and it carries its configuration as attributes, since a distribution file is often sent on by itself: the input datasets and their members, the pre-industrial era, the regressed variables and years, the output years, the sampling design, the ensemble size $N$ and the seed, the git commit and the `gwi.py` command, with a `long_name` and `units` for every variable (`K` for warming, a temperature difference, following the [CF conventions](https://cfconventions.org/), 1.11). Every netCDF file is written by one function, which refuses a file missing any of these.
+- A *summary* is the median and the likely and very likely ranges (the 50th, 17th–83rd and 5th–95th percentiles across the members) of every variable in every year: a small table, readable in a spreadsheet, whose configuration is in its folder and file names.
+- A *distribution* is the ensemble's distribution in full: its *quantiles* (the percentiles at many levels, e.g. every 0.1 from the 0th to the 100th), or members themselves. It is netCDF (float32, compressed), with named dimensions, and it carries its configuration as attributes, since a distribution file is often sent on by itself: the input datasets and their members, the pre-industrial era, the regressed variables and years, the output years, the sampling design, the ensemble size $N$ and the seed, the git commit and the `gwi.py` command, with a `long_name` and `units` for every variable (`K` for warming, a temperature difference, following the [CF conventions](https://cfconventions.org/), 1.11). Every netCDF file is written by one function, which refuses a file missing any of these.
 
 The CSVs are:
 - **Timeseries** (`timeseries-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
 - **Headlines**: every definition's values at the headline years, in one table
+
+The netCDF file is:
+- **Quantiles** (`timeseries-quantiles`, when `QUANTILE_STEP` is set): every definition's timeseries as percentiles every `QUANTILE_STEP` percent from the 0th to the 100th (1001 levels for 0.1), for every variable: one data variable per definition (`ANNUAL`, `SR15`, `AR6`, `CGWL`, `RATES`, as asked for), each with dimensions (`year`, `percentile`, `output_variable`), on the years of them all (NaN where a definition's window doesn't fit). The summary CSVs' percentiles are among them, identical to the last bit. The 0th and 100th percentiles are the smallest and largest members, which spread further with more members; the levels within them settle as the ensemble grows. For example, in Python: `xr.open_dataset(path)['AR6'].sel(year=2025, output_variable='Ant')` is the AR6 Ant distribution in 2016-2025.
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 
@@ -490,6 +501,8 @@ The ensemble sizes for the GWI uncertainty calculations are extremely large, whi
 <!-- `gwi.py` never holds the whole ensemble of attributed warming (see **What the Scripts Do**). What it holds throughout is small: the modelled warming of every (parameter set, ERF member) pair, the scaling factors of every observed member and piControl segment for each pair, the observed temperatures, and each member's four positions (1 or 2 bytes each). The members' attributed warming is rebuilt a block of years at a time, and a block, with the copy that the percentiles make of it, takes 2 × years per block × variables × members × 4 bytes. So the memory grows with the number of members, through the blocks, whose size is chosen to fit. -->
 
 <!-- The years per block are as many as the threads can take percentiles of in one pass (⌊threads / variables⌋, e.g. 4 for 6 variables on 28 threads; bigger blocks are no faster), unless the memory free when the sample is made (stage C) allows fewer; the log's `Years per block` line says which limits it. For example, at about 6 million members (6 variables, 28 threads) the run holds 0.5 GiB, each block takes 1.1 GiB, and the measured peak is near 5 GiB, the inputs and stage A's FaIR runs coming on top. The complete ensemble (790 million members) needs about 19 GB for each year of a block (twice that with the percentiles' copy), and 4 GB for the members' positions. -->
+
+Roughly, on 28 CPUs with every definition and the quantiles at 0.1 (`QUANTILE_STEP`): `latin-1e6` takes 1.5 minutes, `latin-1e7` 6 minutes and `latin-1e8` about 50 minutes, the time growing in proportion to the number of members. **`all` needs a large-memory node**: for IGCC-2025's 790 million members, about 160 GB, so that each block holds 4 years and every thread takes percentiles, and about 6 hours (with less memory the blocks shrink to 1 year, only one thread per variable takes percentiles, and the run is several times slower). The quantiles make large runs up to 1.6 times as long as without them.
 
 To help choose an ensemble size that fits, each `gwi.py` log reports, under `MEMORY USAGE ANTICIPATED`, what is held throughout, the largest block, the peak to expect, and the memory Slurm allocated to the job. A run that cannot fit stops there, before the members are rebuilt. At the end of the run, `MEMORY USAGE RECORDED` gives the peak actually reached. Lower the ensemble size, or raise `CPU_MEM`, until the anticipated peak fits.
 

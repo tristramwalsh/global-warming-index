@@ -23,7 +23,8 @@ One run is a short pipeline (main, at the bottom):
                                 the percentile summaries
     write_inputs_and_interims   the inputs as used, the priors and the ERF
     write_outputs               each definition's timeseries and the
-                                headlines
+                                headlines (CSV), and the quantiles
+                                (netCDF)
 
 Each warming definition (annual, SR1.5, AR6, CGWL, rates) is described once,
 in WARMING_DEFINITIONS, and applied in the same way to the attributed
@@ -46,11 +47,13 @@ NAMING. The inputs (see load_inputs), each a labelled xarray DataArray:
   symbols in the method's equations (T_mod, X, Y_obs, beta), with their
   shapes in a comment; DataFrames appear only as the CSV tables.
 
-OUTPUTS. Summaries (percentiles) are CSV; distributions (anything with a
-member axis) are netCDF, carrying the run's configuration as attributes:
-the output rule, in src/outputs/distributions.py.
+OUTPUTS. Summaries (the median and the likely and very likely ranges)
+are CSV; distributions (the quantiles, and members) are netCDF, carrying
+the run's configuration as attributes: the output rule, in
+src/outputs/distributions.py.
 """
 
+import fractions
 import os
 import sys
 import types
@@ -59,6 +62,7 @@ import datetime as dt
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import src.method.emulators as emulators
 import src.method.members as members
@@ -68,6 +72,7 @@ import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
 import src.infrastructure.run_log as run_log
 import src.method.warming_definitions as warming_definitions
+import src.outputs.distributions as distributions
 import src.outputs.summaries as summaries
 import src.inputs.input_datasets as datasets
 
@@ -86,6 +91,9 @@ SIGMA_RANGES = [[17, 83], [5, 95]]
 SIGMAS = list(
     np.concatenate((np.sort(np.ravel(SIGMA_RANGES)), [50]), axis=0)
     )
+# The quantiles (the distribution finely, e.g. every 0.1 percentile) are
+# set per run, by --quantile-step (see parse_quantile_step), and taken in
+# the same call as SIGMAS
 
 # SR1.5 warming is defined as the 30-year mean human-induced warming, relative
 # to the pre-industrial period, centred using trend extrapolation where
@@ -144,6 +152,8 @@ AR6_RATE_YEARS = 10
 #   years_before  how many years before each year its window takes
 #   years_after   how many years after
 #   label         its label for a year, in the headlines CSVs
+#   description   what it is, for the quantiles netCDF's long_name
+#   units         its units there (see src/outputs/distributions.py)
 #   ipcc_years    the headline years the IPCC reports assessed with it
 #                 (SR1.5's 2017, AR6's 2010-2019); --headline-years=IGCC
 #                 repeats them in each update, to validate it and show how
@@ -156,6 +166,8 @@ WARMING_DEFINITIONS = {
         'years_before': 0,
         'years_after': 0,
         'label': lambda year: year,
+        'description': 'attributed warming in each year',
+        'units': distributions.WARMING_ATTRIBUTES,
         'ipcc_years': [2017],
     },
     'SR1.5': {
@@ -164,6 +176,13 @@ WARMING_DEFINITIONS = {
         'years_before': SR15_TREND_YEARS - 1,
         'years_after': 0,
         'label': lambda year: f'{year} (SR15 definition)',
+        'description': ('attributed warming, SR1.5 definition: the mean of '
+                        f'the {SR15_MEAN_YEARS} years centred on each year, '
+                        'using extrapolated warming for any future years; '
+                        'for linear extrapolation, this is equivalent to the '
+                        'end year of a line fit through the '
+                        f'{SR15_TREND_YEARS} years up to each year'),
+        'units': distributions.WARMING_ATTRIBUTES,
         'ipcc_years': [2017],
     },
     'AR6': {
@@ -172,6 +191,9 @@ WARMING_DEFINITIONS = {
         'years_before': AR6_MEAN_YEARS - 1,
         'years_after': 0,
         'label': lambda year: f'{year - (AR6_MEAN_YEARS - 1)}-{year}',
+        'description': ('attributed warming, AR6 definition: the mean of '
+                        f'the lagged {AR6_MEAN_YEARS} years up to each year'),
+        'units': distributions.WARMING_ATTRIBUTES,
         'ipcc_years': [2019],
     },
     'CGWL': {
@@ -181,6 +203,10 @@ WARMING_DEFINITIONS = {
         'years_after': HALF_CGWL,
         'label': lambda year: (f'{year - HALF_CGWL}-{year + HALF_CGWL} '
                                '(CGWL definition)'),
+        'description': ('attributed warming, CGWL definition: the mean of '
+                        f'the {CGWL_MEAN_YEARS} years centred on each year, '
+                        'using projected warming for any future years'),
+        'units': distributions.WARMING_ATTRIBUTES,
         'ipcc_years': [],
     },
     'rates': {
@@ -190,6 +216,10 @@ WARMING_DEFINITIONS = {
         'years_after': 0,
         'label': lambda year: (f'{year - (AR6_RATE_YEARS - 1)}-{year} '
                                '(AR6 rate definition)'),
+        'description': ('attributed warming rate, AR6 rate definition: the '
+                        'slope of the line fitted through the lagged '
+                        f'{AR6_RATE_YEARS} years up to each year'),
+        'units': distributions.RATE_ATTRIBUTES,
         'ipcc_years': [2019],
     },
 }
@@ -205,7 +235,7 @@ KNOWN_OPTIONS = (
     '--regress-variables', '--erf-dataset', '--gmt-dataset',
     '--picontrol-dataset', '--committed', '--preindustrial-era',
     '--include-reg-const', '--erf-member', '--gmt-member',
-    '--include-sub-vars', '--output-tag',
+    '--include-sub-vars', '--output-tag', '--quantile-step',
 )
 
 
@@ -359,6 +389,38 @@ def parse_ensemble_size(text):
     return int(value)
 
 
+def parse_quantile_step(text):
+    """The quantiles' levels from --quantile-step: every step percent from
+    the 0th to the 100th percentile.
+
+    text:
+        the option's value: a step in percent that divides 100 (e.g. 0.1
+        for 1001 levels, 1 for 101, 5 for 21), or 'none' (or empty) for no
+        quantiles
+    Returns the levels, an array, or None for no quantiles.
+
+    Each level is k × step, worked out exactly and then rounded once, so it
+    prints as it reads (0.3, where steps of 0.1 added up give
+    0.30000000000000004).
+    """
+    # No quantiles
+    if text in ('', 'none'):
+        return None
+    # The step, exactly (0.1 as 1/10), if it is a number
+    try:
+        step = fractions.Fraction(text)
+    except ValueError:
+        step = None
+    # ... more than zero, and dividing 100 into whole steps
+    if step is None or step <= 0 or (100 / step).denominator != 1:
+        raise ValueError(
+            f'Invalid --quantile-step {text!r}: use a step in percent that '
+            'divides 100 (e.g. 0.1 for every 0.1 percentile, 1 for every '
+            'percentile), or none.')
+    # Every step from 0 to 100, each rounded once
+    return np.array([float(k * step) for k in range(int(100 / step) + 1)])
+
+
 def read_argv_config(argv):
     """Read the run's configuration from the command line.
 
@@ -378,7 +440,8 @@ def read_argv_config(argv):
         sampling_design, ensemble_size (None for the all design), seed
         (drawn here if none was given), seed_given
     - outputs:
-        definitions, headline_years, include_sub_vars, output_tag
+        definitions, headline_years, include_sub_vars, output_tag,
+        quantile_step (as given), quantile_levels (None for no quantiles)
     - inputs:
         erf_id, gmt_id, picontrol_id, ensemble_members, ensemble_members_str
     """
@@ -545,6 +608,10 @@ def read_argv_config(argv):
 
     # Whether FaIR runs the regressed variables' sub-variables too
     cfg.include_sub_vars = argv_dict.get('--include-sub-vars') == 'y'
+
+    # The quantiles' levels (e.g. every 0.1 percentile), or none
+    cfg.quantile_step = argv_dict.get('--quantile-step', 'none') or 'none'
+    cfg.quantile_levels = parse_quantile_step(cfg.quantile_step)
 
     # The headline years (e.g. '2024', '2022,2023,2024', 'end_regress',
     # 'IGCC')
@@ -759,6 +826,11 @@ def log_configuration(cfg, inputs, folders):
     seed_says = 'given' if cfg.seed_given else 'drawn, as none was given'
     print(f'Random seed: {cfg.seed} ({seed_says})')
     print(f'Warming definitions: {", ".join(cfg.definitions)}')
+    quantiles_say = (
+        'none' if cfg.quantile_levels is None
+        else f'every {cfg.quantile_step} percentile '
+             f'({len(cfg.quantile_levels)} levels)')
+    print(f'Quantiles: {quantiles_say}')
     print(f'Include pre-industrial offset: {cfg.inc_pi_offset}')
     print(f'Include constant term in regression: {cfg.inc_reg_const}')
     print('Using model: FaIR_V2')
@@ -883,47 +955,96 @@ def get_headline_results_rows(name, timeseries, hl_years, headline_years):
 
 
 def calculate_attributed_percentiles(sample, cfg):
-    """The attributed warming's percentile summaries: each warming
-    definition's timeseries, and their rows at the headline years.
+    """The attributed warming's percentiles: each warming definition's
+    timeseries, summarised (SIGMAS) and as quantiles (cfg.quantile_levels),
+    and the summary's rows at the headline years.
 
     sample:
         members.Sample
     cfg:
         the configuration (see read_argv_config)
-    Returns (timeseries, headlines):
+    Returns (timeseries, headlines, quantiles):
         timeseries: maps each definition's file name (e.g. 'SR15') to its
-            timeseries, a DataFrame indexed by year: the annual definition's
-            always, the others' if asked for
+            summary timeseries, a DataFrame indexed by year: the annual
+            definition's always, the others' if asked for
         headlines: the headlines CSV's DataFrame (every asked-for
             definition's rows at the headline years), or None if empty
+        quantiles: maps the same file names to the same timeseries at the
+            quantiles' levels, each a DataArray (year, percentile,
+            output_variable) (see summaries.quantiles_dataarray), or None
+            if no quantiles were asked for
+
+    The summary and the quantiles come from one percentile call, at both
+    sets of levels together (each percentile is the same, to the last bit,
+    as on its own). At 1001 levels that call takes about twice as long as
+    at the summary's five, e.g. a block of 24 (year, variable) pairs of a
+    million members each takes 0.12 s against 0.05 s on 28 threads.
     """
+    # The levels to take the percentiles at (see summaries.py): the
+    # summary's, and the quantiles', if asked for
+    if cfg.quantile_levels is None:
+        levels_taken = SIGMAS
+    else:
+        levels_taken = np.union1d(SIGMAS, cfg.quantile_levels)
     # The headline years
     hl_years = warming_definitions.generate_headline_years(
         cfg.headline_years, cfg.end_regress, cfg.end_trunc)
     run_log.log_section(f'Definitions ({cfg.headline_years})')
-    timeseries, rows = {}, []
+    timeseries, rows, quantiles = {}, [], {}
     for name, definition in WARMING_DEFINITIONS.items():
         # The annual timeseries always; the others if asked for
         if name != 'annual' and name not in cfg.definitions:
             continue
         time_start = dt.datetime.now()
         print(f'Calculating the {name} timeseries', end=' ')
+        # Its name in the outputs, e.g. 'SR15'
+        file_name = definition['file_name']
+
         # Every output year whose window fits: each member's value of the
         # definition, rebuilt from T_mod and T_obs with it applied first,
-        # and the percentiles across the members
-        timeseries[definition['file_name']] = (
-            summaries.definition_timeseries_table(
-                sample, SIGMAS, definition['function'], cfg.start_trunc,
-                cfg.end_trunc, definition['years_before'],
-                definition['years_after']))
-        # Its rows at the headline years, if asked for
+        # and the percentiles across the members at every level taken:
+        # (levels_taken, t, variables)
+        years, percentiles = summaries.definition_timeseries(
+            sample, levels_taken, definition['function'], cfg.start_trunc,
+            cfg.end_trunc, definition['years_before'],
+            definition['years_after'])
+
+        # The summary: the percentiles at its levels, (SIGMAS, t,
+        # variables) ...
+        summary = summaries.select_levels(percentiles, levels_taken, SIGMAS)
+        # ... as its CSV lays it out
+        timeseries[file_name] = summaries.percentiles_as_csv_table(
+            summary, SIGMAS, sample.output_vars, years)
+
+        # The quantiles, if asked for: the percentiles at their levels,
+        # (quantile levels, t, variables) ...
+        if cfg.quantile_levels is not None:
+            quantile_values = summaries.select_levels(
+                percentiles, levels_taken, cfg.quantile_levels)
+            # ... what the definition is, for the netCDF ...
+            attributes = {
+                'long_name': definition['description'],
+                **definition['units'],
+                'window': f'{definition["years_before"]} years before each '
+                          f'year to {definition["years_after"]} after'}
+            # ... labelled
+            quantiles[file_name] = summaries.quantiles_dataarray(
+                quantile_values, cfg.quantile_levels, years,
+                sample.output_vars, file_name, attributes)
+
+        # The summary's rows at the headline years, if asked for
         if name in cfg.definitions:
             rows.append(get_headline_results_rows(
-                name, timeseries[definition['file_name']], hl_years,
-                cfg.headline_years))
+                name, timeseries[file_name], hl_years, cfg.headline_years))
         print(f'... took {dt.datetime.now() - time_start}')
+
+    # The headlines: every definition's rows in one table (None if none)
     rows = [r for r in rows if r is not None]
-    return timeseries, (pd.concat(rows, axis=0) if rows else None)
+    headlines = pd.concat(rows, axis=0) if rows else None
+    # The quantiles (None if not asked for)
+    if cfg.quantile_levels is None:
+        quantiles = None
+    return timeseries, headlines, quantiles
 
 
 def calculate_observed_percentiles(gmt, cfg):
@@ -1080,9 +1201,11 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         the sample's size, N, for the attributed outputs' names
     n_observed_members:
         the observed members' number, for the observed outputs' names
-    attributed, observed:
-        each (timeseries, headlines) (see calculate_attributed_percentiles
-        and calculate_observed_percentiles)
+    attributed:
+        (timeseries, headlines, quantiles) (see
+        calculate_attributed_percentiles)
+    observed:
+        (timeseries, headlines) (see calculate_observed_percentiles)
     folders:
         the output folders (see output_folders)
 
@@ -1104,8 +1227,9 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
                 f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}_'
                 f'DATE--{run_time}')
     obs_name = f'{inputs_name}_ENSEMBLE-SIZE--{n_observed_members}'
-    # The attributed warming: each definition's timeseries, the headlines
-    gwi_timeseries, gwi_headlines = attributed
+    # The attributed warming: each definition's timeseries, the headlines,
+    # the quantiles
+    gwi_timeseries, gwi_headlines, gwi_quantiles = attributed
     for file_name, table in gwi_timeseries.items():
         results_layout.write_csv(
             table, f'{folders.gwi}GWI_results_timeseries-{file_name}_'
@@ -1114,6 +1238,21 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         results_layout.write_csv(
             gwi_headlines, f'{folders.gwi}GWI_results_headlines_'
             f'{gwi_name}.csv')
+    if gwi_quantiles is not None:
+        # What the file is, and the run's configuration
+        title = ('Global Warming Index: the attributed warming of each '
+                 'warming definition, as percentiles across the '
+                 f'{n_members:,} members, every {cfg.quantile_step} percent '
+                 'from the 0th to the 100th')
+        attributes = {'title': title, 'quantile_step': cfg.quantile_step,
+                      **distributions.run_attributes(cfg, n_members)}
+        # Every definition's quantiles in one file, one data variable each,
+        # on the years of them all (NaN where a definition's window doesn't
+        # fit)
+        quantiles = xr.Dataset(gwi_quantiles, attrs=attributes)
+        distributions.write_netcdf(
+            quantiles, f'{folders.gwi}GWI_results_timeseries-quantiles_'
+            f'{gwi_name}.nc')
     # The observations: each definition's timeseries, the headlines
     obs_timeseries, obs_headlines = observed
     for file_name, table in obs_timeseries.items():

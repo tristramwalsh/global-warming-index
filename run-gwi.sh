@@ -130,6 +130,14 @@ if ! [[ "${RECIPE_SEED}" =~ ^[0-9]*$ ]]; then
   exit 1
 fi
 
+# Check the quantile step before anything runs: a number (in percent), none,
+# or empty. gwi.py checks that it divides 100.
+if ! [[ "${RECIPE_QUANTILE_STEP}" =~ ^(none|[0-9]*\.?[0-9]+)?$ ]]; then
+  echo "Invalid RECIPE_QUANTILE_STEP: '${RECIPE_QUANTILE_STEP}'. Use a step" \
+       "in percent, e.g. 0.1 or 1, or none (see recipes/TEMPLATE.sh)." >&2
+  exit 1
+fi
+
 ###############################################################################
 ## Run ########################################################################
 
@@ -249,6 +257,7 @@ gwi_command() {
     --gmt-member="$4"
     --include-sub-vars="${RECIPE_INCLUDE_SUB_VARS}"
     --output-tag="${RECIPE_OUTPUT_TAG}"
+    --quantile-step="${RECIPE_QUANTILE_STEP}"
   )
 }
 

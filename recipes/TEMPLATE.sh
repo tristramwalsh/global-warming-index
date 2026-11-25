@@ -285,6 +285,22 @@ RECIPE_DEFINITIONS='annual,SR1.5,AR6,CGWL,rates'
 # e.g. $(seq -s, 1950 2025) will create a comma-separated list of years
 RECIPE_HEADLINE_YEARS='end_regress'
 
+# The quantiles: every definition's timeseries as percentiles every this
+# many percent, from the 0th to the 100th, written to one netCDF file
+# (GWI_results_timeseries-quantiles), beside the summary CSVs (the median
+# and the likely and very likely ranges, which are always written). They
+# show the whole distribution finely: the sampling studies compare them,
+# and exceedance probabilities in each year can be read off them. Taken in
+# the same pass as the summary, at 0.1 they make the whole run about 1.25
+# times as long at a million members, and 1.6 times at ten million (latin,
+# every definition, 28 CPUs: 59 s to 73 s, 3.6 to 5.7 minutes); the file
+# grows with the number of levels, not the number of members (13 MB for
+# every definition at 0.1).
+# e.g. 0.1   every 0.1 percentile (1001 levels)
+# e.g. 1     every percentile (101 levels)
+# e.g. none  no quantiles: the summary CSVs only (also if left empty)
+RECIPE_QUANTILE_STEP=0.1
+
 ###############################################################################
 ## Slurm settings (slurm mode only) ###########################################
 
@@ -302,9 +318,15 @@ RECIPE_CLUSTER=htc
 
 # Select the resources for each Slurm job: time limit, CPUs, and memory per
 # CPU. 0:10:00, 28 and 9000M suit about 6 million members with every
-# definition (3 to 5 minutes, peaking near 5 GiB); the time and memory grow
-# with the number of members, and member-by-member runs need more time (see
-# the README's Memory and Computing Resources).
+# definition (3 to 5 minutes, about 1.5 times that with the quantiles at
+# 0.1, peaking near 5 GiB); the time and memory grow with the number of
+# members, and member-by-member runs need more time (see the README's Memory
+# and Computing Resources). Roughly, on 28 CPUs with every definition and
+# the quantiles at 0.1: latin-1e6 1.5 minutes, latin-1e7 6 minutes,
+# latin-1e8 50 minutes; all (790 million members for IGCC-2025) about 6
+# hours, and only on a large-memory node: about 160 GB, for blocks of 4
+# years (with less, the blocks shrink to 1 year and the run is several
+# times slower).
 RECIPE_WALLTIME=0:10:00
 RECIPE_SIM_CPUS=28
 RECIPE_CPU_MEM=9000M

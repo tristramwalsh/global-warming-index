@@ -1,5 +1,5 @@
-"""Percentile summaries of the ensemble: the GWI's CSV outputs (the
-distributions are netCDF: see the output rule in distributions.py).
+"""Percentiles of the ensemble: the GWI's summary CSVs, and the quantiles
+(its distribution, finely) that distributions.py writes to netCDF.
 
 The terms, as used throughout:
     ensemble            every drawn member's values, before percentiles
@@ -9,9 +9,20 @@ The terms, as used throughout:
                         the mean over a window (AR6's decade, the CGWL's
                         centred mean), the end point of a line fitted
                         through it (SR1.5) or its slope (the AR6 rate)
-    summary             the percentiles of the ensemble, taken along the
-                        member axis: what the CSVs give instead of the
-                        ensemble itself
+    summary             the median and the likely and very likely ranges
+                        of the ensemble (gwi.py's SIGMAS: the 50th, 17th
+                        to 83rd and 5th to 95th percentiles), taken along
+                        the member axis: what the CSVs give
+    quantiles           the ensemble's percentiles at many levels (e.g.
+                        every 0.1 from the 0th to the 100th: gwi.py's
+                        --quantile-step), its distribution finely, taken
+                        in the same call as the summary's
+    level               which percentile, in percent: 5 for the 5th
+                        percentile, 99.9 for the 99.9th (np.percentile's q).
+                        The summary's levels are SIGMAS (5, 17, 83, 95, 50),
+                        the quantiles' e.g. 0, 0.1, ..., 100; every
+                        percentile array here has the levels along its first
+                        axis
     headlines           the headline years (e.g. the latest, and the years
                         of IPCC assessments), whose values of every
                         definition the GWI_results_headlines CSV gathers
@@ -29,15 +40,22 @@ How the functions connect:
                                       as the CSVs are (a row per year or
                                       window, a column per (variable,
                                       percentile))
-    windowed_definition_table         both of the above, for any definition
-                                      linear in time, over a list of
-                                      windows, in blocks
-    definition_timeseries_table       a definition's value in every output
-                                      year whose window lies within the
-                                      output years: each definition's
-                                      GWI_results_timeseries-* CSV (gwi.py's
+    windowed_percentiles              the first, for any definition linear
+                                      in time, over a list of windows, in
+                                      blocks
+    definition_timeseries             ... over every output year whose
+                                      window lies within the output years:
+                                      each definition's timeseries (gwi.py's
                                       WARMING_DEFINITIONS gives each one's
-                                      function and window)
+                                      function and window), at the summary's
+                                      levels and the quantiles' together
+    select_levels                     those percentiles at some of the
+                                      levels: the summary's, for the
+                                      GWI_results_timeseries-* CSVs (laid out
+                                      by percentiles_as_csv_table), or the
+                                      quantiles'
+    quantiles_dataarray               the quantiles, labelled, for the
+                                      quantiles netCDF
     headline_rows                     a timeseries' rows at the headline
                                       years, labelled for a headlines CSV
     observed_timeseries_table         a definition's timeseries for the
@@ -56,6 +74,7 @@ sample.output_vars, and `sigmas` the axis along the percentiles asked for.
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import src.infrastructure.compute_resources as compute_resources
 import src.method.attribution as attribution
@@ -197,19 +216,22 @@ def percentiles_as_csv_table(percentiles, sigmas, output_vars, labels):
     return table
 
 
-def windowed_definition_table(sample, sigmas, definition, windows, labels):
+def windowed_percentiles(sample, levels, definition, windows):
     """The percentiles of a definition linear in time, e.g. the mean over a
-    decade, in each window of years: one CSV row per window.
+    decade, in each window of years.
 
-    sample: members.Sample
-    sigmas: the percentiles to take, e.g. gwi.py's SIGMAS
-    definition: a warming definition, a function of an array along its
-        first axis, the years, and linear (see
-        members.Sample.ensemble_definition), e.g.
+    sample:
+        members.Sample
+    levels:
+        the percentiles to take, e.g. gwi.py's SIGMAS, or those and the
+        quantiles' levels together
+    definition:
+        a warming definition, a function of an array along its first axis,
+        the years, and linear (see members.Sample.ensemble_definition), e.g.
         warming_definitions.mean_over_years
-    windows: the windows, (first_year, last_year) pairs, both included
-    labels: the rows' names, one per window
-    Returns a DataFrame (see percentiles_as_csv_table).
+    windows:
+        the windows, (first_year, last_year) pairs, both included
+    Returns an array (levels, windows, variables).
 
     The windows are taken years_per_block at a time: each block rebuilds
     the ensemble's value in its windows, (windows, variables, N), and takes
@@ -217,42 +239,41 @@ def windowed_definition_table(sample, sigmas, definition, windows, labels):
     """
     # How many windows to take at once
     windows_per_block = years_per_block(sample)
-    # The percentiles of each block of windows: one (sigmas, windows,
+    # The percentiles of each block of windows: one (levels, windows,
     # variables) array per block
     block_percentiles = []
     for start in range(0, len(windows), windows_per_block):
         # The ensemble's value in these windows: (windows, variables, N)
         ensemble = sample.ensemble_definition(
             definition, windows[start:start + windows_per_block])
-        # Its percentiles: (sigmas, windows, variables)
+        # Its percentiles: (levels, windows, variables)
         block_percentiles.append(
-            percentiles_by_year_and_variable(ensemble, sigmas))
-    # Every window's percentiles: (sigmas, windows, variables)
-    percentiles = np.concatenate(block_percentiles, axis=1)
-    # The table, one CSV row per window
-    return percentiles_as_csv_table(percentiles, sigmas,
-                                    sample.output_vars, labels)
+            percentiles_by_year_and_variable(ensemble, levels))
+    # Every window's percentiles: (levels, windows, variables)
+    return np.concatenate(block_percentiles, axis=1)
 
 
-def definition_timeseries_table(sample, sigmas, definition,
-                                first_output_year, last_output_year,
-                                years_before, years_after):
+def definition_timeseries(sample, levels, definition, first_output_year,
+                          last_output_year, years_before, years_after):
     """A definition's timeseries: its percentiles in every output year
     whose window lies within the output years.
 
     sample:
         members.Sample
-    sigmas:
-        the percentiles to take, e.g. gwi.py's SIGMAS
+    levels:
+        the percentiles to take: gwi.py's SIGMAS, for the summary, or those
+        and the quantiles' levels together, in one call (each percentile
+        is the same, to the last bit, whatever else is taken with it)
     definition:
-        a warming definition linear in time (see windowed_definition_table)
+        a warming definition linear in time (see windowed_percentiles)
     first_output_year, last_output_year:
         the output years (both included)
     years_before, years_after:
         each year's window, from years_before years before it to years_after
         years after it
-    Returns:
-        a DataFrame indexed by year ('Year').
+    Returns (years, percentiles):
+        years: the years, (t,)
+        percentiles: array (levels, t, variables)
     """
     # The years whose windows lie within the output years
     years = np.arange(first_output_year + years_before,
@@ -266,8 +287,66 @@ def definition_timeseries_table(sample, sigmas, definition,
     # Each year's window
     windows = [(year - years_before, year + years_after) for year in years]
     # The ensemble's value in each window, and its percentiles
-    return windowed_definition_table(sample, sigmas, definition, windows,
-                                     years)
+    return years, windowed_percentiles(sample, levels, definition, windows)
+
+
+def select_levels(percentiles, levels, wanted):
+    """The percentiles at some of the levels they were taken at, e.g. the
+    summary's five from among a thousand.
+
+    percentiles:
+        array (levels, ...), e.g. from definition_timeseries: the
+        percentiles at each level, along the first axis
+    levels:
+        the levels they were taken at, in percent, in the order of that
+        axis
+    wanted:
+        the levels to keep, in percent, each one of levels, in the order
+        wanted, e.g. gwi.py's SIGMAS for the summary
+    Returns an array (wanted, ...).
+
+    For example, percentiles taken at levels [0, 5, 17, 50, 83, 95, 100],
+    with wanted [5, 95, 50], gives the 5th, 95th and 50th percentiles:
+    percentiles[[1, 5, 3]].
+    """
+    # Each level's position along the first axis
+    position = {level: i for i, level in enumerate(levels)}
+    # The wanted levels' positions, in their order
+    return percentiles[[position[level] for level in wanted]]
+
+
+def quantiles_dataarray(percentiles, levels, years, output_vars, name,
+                        attributes):
+    """A definition's quantiles, labelled, as the quantiles netCDF holds
+    them (see distributions.py).
+
+    percentiles:
+        array (levels, t, variables), e.g. select_levels(...) at the
+        quantiles' levels
+    levels:
+        the levels along its first axis, in percent
+    years:
+        the years along t
+    output_vars:
+        the names along the variable axis
+    name:
+        the DataArray's name, e.g. 'ANNUAL'
+    attributes:
+        its attributes: at least long_name and units (see
+        distributions.WARMING_ATTRIBUTES)
+    Returns a DataArray (year, percentile, output_variable): year first,
+    then the distribution, then the variables, as the inputs are laid out.
+    """
+    # Year first: (t, levels, variables)
+    values = percentiles.transpose(1, 0, 2)
+    return xr.DataArray(
+        values, dims=('year', 'percentile', 'output_variable'),
+        coords={'year': years,
+                'percentile': ('percentile', np.asarray(levels, dtype=float),
+                               {'long_name': 'percentile across the '
+                                             'members', 'units': 'percent'}),
+                'output_variable': list(output_vars)},
+        name=name, attrs=attributes)
 
 
 def headline_rows(timeseries, headline_years, labels):
@@ -275,7 +354,7 @@ def headline_rows(timeseries, headline_years, labels):
     GWI_results_headlines CSV labels them.
 
     timeseries:
-        a DataFrame indexed by year, e.g. from definition_timeseries_table
+        a DataFrame indexed by year, e.g. a timeseries CSV's table
     headline_years:
         the years to take, each in timeseries' index
     labels:

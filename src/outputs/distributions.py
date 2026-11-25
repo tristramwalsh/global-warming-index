@@ -3,13 +3,15 @@ are CSV and which are netCDF.
 
 THE OUTPUT RULE
 
-    summaries      CSV     the percentiles of the ensemble, and any other
-                           table whose size doesn't depend on the number of
-                           members (src/outputs/summaries.py; written by
+    summary        CSV     the median and the likely and very likely ranges
+                           (the 50th, 17th to 83rd and 5th to 95th
+                           percentiles) of the ensemble: a small table,
+                           for people (src/outputs/summaries.py; written by
                            results_layout.write_csv)
-    distributions  netCDF  individual members' values, or anything else
-                           with a member axis (written here, by
-                           write_netcdf)
+    distributions  netCDF  the ensemble's distribution in full: its
+                           quantiles (the percentiles at many levels, e.g.
+                           every 0.1), or members themselves (written here,
+                           by write_netcdf)
 
 In plain words:
 
@@ -19,11 +21,13 @@ In plain words:
    file names (results_layout), so a CSV needs nothing more.
 
 2. A distribution is a block of numbers with several dimensions, e.g.
-   member × year × definition × variable, which grows with the number of
-   members. It is stored as float32 and compressed, it keeps its
-   dimensions' names and labels, and it carries its configuration inside
-   it, as attributes, because a distribution file gets sent on by itself,
-   away from the folder whose names describe it.
+   year × percentile × variable for each definition, or year × member ×
+   variable: too many for a table a person reads (1001 levels of 6
+   variables in 176 years is a million numbers per definition). It is
+   stored as float32 and compressed, it keeps its dimensions' names and
+   labels, and it carries its configuration inside it, as attributes,
+   because a distribution file gets sent on by itself, away from the
+   folder whose names describe it.
 
 3. So every netCDF file says, in its attributes (run_attributes):
    - which datasets it was made from, and which of their members;
