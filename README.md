@@ -118,13 +118,13 @@ Run `bash run-gwi.sh` with no arguments for a usage message, which also lists th
 
 A recipe sets every setting in the template, each once, and nothing else; the script checks this before running anything, and stops if a setting is missing, repeated or unknown (a typo, say). Comments are optional, so a recipe can be just the list of settings. When a new setting is added to the template, add it to every recipe in `recipes/` too. `recipes/dev*.sh` are ignored by git: use them for your own development runs.
 
-Several recipes can share the same `OUTPUT_TAG`. This is useful when one analysis needs runs that a single recipe can't describe: each recipe sets one ERF dataset, one temperature dataset, one set of regressed variables and so on, so an analysis that compares several of them needs one recipe for each. Give all of those recipes the same tag and run each of them. Their results all go into the same `results_<tag>/` folder, and the combination script then processes them together as one analysis (see **2.1.2**).
+Several recipes can share the same `OUTPUT_TAG`. This is useful when one analysis needs runs that a single recipe can't describe: each recipe sets one ERF dataset, one temperature dataset, one set of regressed variables and so on, so an analysis that compares several of them needs one recipe for each. Give all of those recipes the same tag and run each of them. Their results all go into the same `results/<tag>/` folder, and the combination script then processes them together as one analysis (see **2.1.2**).
 
 In direct and slurm mode, a copy of the recipe goes into the log folder, headed with the date, the host, the mode, and the git commit the run started from (noting any uncommitted changes to tracked files).
 
 **Run modes** (the second argument):
 - `slurm` = generate and submit one SLURM job per configuration. Use this for full-size runs.
-- `direct` = run each configuration now, one after another, in this shell: on a laptop or on an interactive node. Use this for quick tests and development. It stops at the first failure, and logs go to `logs_direct/` (or `logs_direct_<tag>/`).
+- `direct` = run each configuration now, one after another, in this shell: on a laptop or on an interactive node. Use this for quick tests and development. It stops at the first failure, and logs go to `logs/direct/<tag>/`.
 - `dry` (the default) = print the `gwi.py` commands that would run, and run nothing.
 
 For a quick test, run the template itself, whose values are a small, fast configuration (on a laptop this takes well under a minute):
@@ -299,10 +299,10 @@ The following settings control the analysis. Every recipe sets each of them, nam
 
 
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
-- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
+- Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results/<tag>/`, figures to `plots/<tag>/` and logs (with a copy of the recipe) to `logs/slurm/<tag>/` (or `logs/direct/<tag>/` in direct mode). So the top level of the working directory holds one folder of each kind, however many pieces of work there are.
 - Usually the recipe's own name; recipes that make up one experiment share a tag.
 - Pass the same tag to `combine_results_iterations.py` (`--output-tag=<tag>`); alternatively, give it one of the recipes (`--recipe=<recipe>`) and it reads the tag from there. `run-gwi.sh` prints the command when it finishes.
-- Left empty, the plain `results/`, `plots/` and `logs_slurm/` (or `logs_direct/`) folders are used.
+- Left empty, the tag is `untagged`: `results/untagged/`, `plots/untagged/` and `logs/slurm/untagged/` (or `logs/direct/untagged/`).
 
 
 **Slurm resources** (slurm mode only): `CLUSTER`, `SIM_CPUS`, `CPU_MEM` and `WALLTIME`
@@ -318,8 +318,8 @@ The `run-gwi.sh` script:
 1. Checks the recipe against `recipes/TEMPLATE.sh`, then reads it
 2. Loops over `END_REGRESS` values (regression end years) and `SAMPLING_ITERATIONS` (the sampling of each iteration)
 3. For each combination, calls `gwi.py` with the specified CLI arguments (once per selected member, one after another, when `ERF_MEMBERS` or `GMT_MEMBERS` list members; the list of runs is built in `src/infrastructure/prepare_ensemble_selections.sh`):
-    - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs_slurm/` (or `logs_slurm_<tag>/`)
-    - in direct mode, immediately in the current shell; each combination's log goes to `logs_direct/` (or `logs_direct_<tag>/`)
+    - in slurm mode, from a SLURM job named after the run's configuration, which it submits; each job's log goes to `logs/slurm/<tag>/`
+    - in direct mode, immediately in the current shell; each combination's log goes to `logs/direct/<tag>/`
 
 ##### 2.3.2. `gwi.py`
 
@@ -389,18 +389,16 @@ python combine_results_iterations.py --output-tag=<tag> --re-calculate=<y/n> --p
 ```
 
 All options are optional:
-- `--output-tag=<tag>` = the recipes' shared `OUTPUT_TAG`, so that the script reads and writes that piece of work's folders. Default: none (the plain `results/` and `plots/`).
+- `--output-tag=<tag>` = the recipes' shared `OUTPUT_TAG`, so that the script reads and writes that piece of work's folders. Default: none (`results/untagged/` and `plots/untagged/`).
 - `--recipe=<recipe>` = an alternative to `--output-tag`: a recipe file, e.g. `recipes/TEMPLATE.sh`, whose `OUTPUT_TAG` the script reads. Recipes in one experiment share a tag, so any of them will do. Give this or `--output-tag`, not both.
 - `--re-calculate=y|n` = `y` (default) recomputes the averages of the iterations, and the historical-only timeseries derived from them, and saves both to the aggregated folder. `n` reads both back from the aggregated folder, as written by an earlier `y` run, and only draws the figures.
 - `--plot-every=N` = thins the figures of member-by-member selections (see **Running the GWI for Individual Ensemble Members**). Default `10`; `1` draws every figure. The standard `ERF-all_GMT-all` selection is always plotted in full.
 
 ###### 2.4.3.1 Aggregating Iteration Outputs
 For iterations generated with `SAMPLING_ITERATIONS`, the script:
-1. Finds all iterations generated from `SAMPLING_ITERATIONS` in `results/iterations/`
+1. Finds all iterations generated from `SAMPLING_ITERATIONS` in `results/<tag>/iterations/`
 2. Combines them using a weighted average (weighted by ensemble size)
-3. Saves combined results to `results/aggregated/`
-
-(With a tag set, these are `results_<tag>/iterations/` and `results_<tag>/aggregated/`.)
+3. Saves combined results to `results/<tag>/aggregated/`
 
 ###### 2.4.3.2 Historical-Only Timeseries
 For iterations generated in order to provide different regression end years (e.g., `END_REGRESS=$(seq 1950 2024)`):
@@ -412,10 +410,10 @@ For iterations generated in order to provide different regression end years (e.g
 
 
 ##### 2.4.4. Output Structure
-Results are organized hierarchically (`results_<tag>/`, `plots_<tag>/` and `logs_slurm_<tag>/` or `logs_direct_<tag>/` when `OUTPUT_TAG` is set):
+Results are organized hierarchically, in a folder per `OUTPUT_TAG` (`untagged` when it is empty):
 ```
 global-warming-index/
-├── results/
+├── results/{tag}/
 │    └── {category}/
 │        └── ERF--{erf}_GMT--{gmt}_PREINDUSTRIAL--{start}-{end}/
 │            └── ENSEMBLE-MEMBER--ERF-{member}_GMT-{member}/
@@ -427,9 +425,9 @@ global-warming-index/
 │                        ├── GWI_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
 │                        ├── GWI_timeseries-members_*_RELEASE--*.nc  (one per size in RELEASE_MEMBERS)
 │                        └── GWI_headlines-fidelity_*_RELEASE--*.csv  (each release against the run, at the headline years)
-├── plots/        figures drawn by combine_results_iterations.py (see below)
-├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
-└── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
+├── plots/{tag}/        figures drawn by combine_results_iterations.py (see below)
+├── logs/slurm/{tag}/   one log per Slurm job, and a copy of each recipe run (slurm mode)
+└── logs/direct/{tag}/  one log per configuration, and a copy of each recipe run (direct mode)
 ```
 
 **File names.** Each file's name starts with what it holds: `<source>_<years>-<form>[-<DEFINITION>]_`, then the configuration. The *source* is `GWI` for the results (the attributed warming), `PRIOR` for the interim prior warming (FaIR's, before the constraint), or `ERF`, `Obs` or `PiControl` for the inputs as the run used them (the forcing, the observed temperatures, the piControl segments), which are processed only to be plotted beside the results, by the combination script, on the website and in papers. The *years* are the whole `timeseries` or the `headlines` years; the *form* is how the distribution across the members is given. The results:
@@ -467,7 +465,7 @@ The netCDF files are:
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 
-The figures in `plots/aggregated/` follow the same `ERF--…_GMT--…`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy, and their names carry the same labels. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
+The figures in `plots/<tag>/aggregated/` follow the same `ERF--…_GMT--…`/`ENSEMBLE-MEMBER--`/`VARIABLES--` hierarchy, and their names carry the same labels. For each regressed range (`REGRESSED-YEARS--{start}-{end}/`):
 - `Timeseries_*` = the attributed warming timeseries, with uncertainty, against the observations
 - `Rates_*` = warming rates (if `rates` is among the `DEFINITIONS`)
 - `SPM2_BarPlot_*` = one per headline period: a bar chart of the attributed warming, in the style of IPCC AR6 WGI Figure SPM.2
@@ -479,7 +477,7 @@ And for each selection as a whole:
 - `Historical_delta_contributions_*` = the sources of the change in the GWI from each year to the next
 - `Projected_warming_in_<year>_*` = the projected warming constrained by the final regressed range
 
-Alongside these, `plots/iterations/` holds `Compare-Iterations_*` figures showing the spread between repeat iterations (only where there are two or more), `plots/erfs/` and `plots/priors/` the ERF and prior timeseries, and `plots/picontrol/` two diagnostic figures of the piControl segments used for internal variability, against a rough estimate of the observed internal variability: `piControl_Selected_Segments_*` (running means) and `piControl_Internal_Variability_Distribution_*`.
+Alongside these, `plots/<tag>/iterations/` holds `Compare-Iterations_*` figures showing the spread between repeat iterations (only where there are two or more), `plots/<tag>/erfs/` and `plots/<tag>/priors/` the ERF and prior timeseries, and `plots/<tag>/picontrol/` two diagnostic figures of the piControl segments used for internal variability, against a rough estimate of the observed internal variability: `piControl_Selected_Segments_*` (running means) and `piControl_Internal_Variability_Distribution_*`.
 
 ##### 2.4.5. Data Inputs
 

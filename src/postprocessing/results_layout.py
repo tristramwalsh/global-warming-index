@@ -64,29 +64,39 @@ import uuid
 import xarray as xr
 
 
+# The folder of the outputs of runs given no --output-tag (or an empty one)
+UNTAGGED = 'untagged'
+
+
 def tagged_folder(base, tag):
-    """Return the output folder for a run, optionally tagged.
+    """Return the output folder for a run: base/<tag>.
+
+    base:
+        the kind of output: 'results' or 'plots' (run-gwi.sh puts the logs
+        in logs/slurm/<tag>/ or logs/direct/<tag>/ the same way)
+    tag:
+        the --output-tag; none, empty or 'none' for UNTAGGED
 
     Keeps separate pieces of work from overwriting one another, and from
-    being swept up together by the combination script. Without a tag the
-    folders are the plain ones they have always been, so existing behaviour
-    and existing directories are untouched:
+    being swept up together by the combination script, while the top level
+    of the working directory holds only one folder of each kind:
 
-        tagged_folder('results', None)          -> 'results'
-        tagged_folder('results', 'Thorne2025')  -> 'results_Thorne2025'
-        tagged_folder('plots', 'IGCC')          -> 'plots_IGCC'
+        tagged_folder('results', 'Thorne2025')  -> 'results/Thorne2025'
+        tagged_folder('plots', 'IGCC')          -> 'plots/IGCC'
+        tagged_folder('results', None)          -> 'results/untagged'
 
     Pass the same --output-tag to gwi.py and to combine_results_iterations.py
     so that the second reads what the first wrote.
     """
+    # No tag: the untagged folder
     if tag in (None, '', 'none'):
-        return base
+        return f'{base}/{UNTAGGED}'
+    # A tag is a folder name, so only characters safe in one
     if not re.fullmatch(r'[A-Za-z0-9._-]+', tag):
         raise ValueError(
-            f'Invalid --output-tag {tag!r}. It becomes part of a directory '
-            f'name, so use only letters, digits, dots, dashes and '
-            f'underscores.')
-    return f'{base}_{tag}'
+            f'Invalid --output-tag {tag!r}. It becomes a directory name, '
+            f'so use only letters, digits, dots, dashes and underscores.')
+    return f'{base}/{tag}'
 
 
 # Where combine_results_iterations.py reads and writes. PLOT_FOLDER,
@@ -100,11 +110,11 @@ def tagged_folder(base, tag):
 def set_output_folders(output_tag=None):
     """Point every output folder at this piece of work's own directory.
 
-    With no tag these are the plain results/ and plots/ folders this script
-    has always used. With one, they become results_<tag>/ and plots_<tag>/,
-    so that separate pieces of work -- a paper, an assessment, a
-    collaborator's runs, your own development -- neither overwrite each other
-    nor all get processed every time this script runs.
+    These are results/<tag>/ and plots/<tag>/ (results/untagged/ and
+    plots/untagged/ with no tag; see tagged_folder), so that separate
+    pieces of work -- a paper, an assessment, a collaborator's runs, your
+    own development -- neither overwrite each other nor all get processed
+    every time this script runs.
 
     Pass the same tag that was given to gwi.py, so that this reads what that
     wrote.

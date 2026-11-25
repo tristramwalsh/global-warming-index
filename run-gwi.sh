@@ -192,12 +192,12 @@ if [ "${MODE}" = "slurm" ]; then
          "or use direct mode to run in this shell instead." >&2
     exit 1
   fi
-  # ${RECIPE_OUTPUT_TAG:+_${RECIPE_OUTPUT_TAG}} appends '_<tag>' only when the
-  # tag is set, so an empty tag leaves the plain logs_slurm/ directory.
-  LOG_DIR=logs_slurm${RECIPE_OUTPUT_TAG:+_${RECIPE_OUTPUT_TAG}}
+  # ${RECIPE_OUTPUT_TAG:-untagged} is the tag, or 'untagged' when it is
+  # empty, as results/ and plots/ are named (results_layout.tagged_folder)
+  LOG_DIR=logs/slurm/${RECIPE_OUTPUT_TAG:-untagged}
   mkdir -p "${LOG_DIR}"
 elif [ "${MODE}" = "direct" ]; then
-  LOG_DIR=logs_direct${RECIPE_OUTPUT_TAG:+_${RECIPE_OUTPUT_TAG}}
+  LOG_DIR=logs/direct/${RECIPE_OUTPUT_TAG:-untagged}
   mkdir -p "${LOG_DIR}"
 fi
 

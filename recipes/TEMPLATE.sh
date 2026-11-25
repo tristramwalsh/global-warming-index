@@ -31,8 +31,8 @@
 ## Output #####################################################################
 
 # A label that keeps this piece of work's output away from everything else's:
-# logs go to logs_slurm_<TAG>/ (or logs_direct_<TAG>/ in direct mode),
-# results to results_<TAG>/ and plots to plots_<TAG>/. Use it to keep separate
+# logs go to logs/slurm/<TAG>/ (or logs/direct/<TAG>/ in direct mode),
+# results to results/<TAG>/ and plots to plots/<TAG>/. Use it to keep separate
 # projects apart -- Thorne et al, IGCC, a collaborator's runs, your own
 # development -- so that they neither overwrite each other nor all get swept
 # up every time the combination script runs. Usually the recipe's own name.
@@ -48,8 +48,8 @@
 #
 # run-gwi.sh prints the command when it finishes.
 #
-# Leave empty for the plain logs_slurm/ (or logs_direct/), results/ and plots/
-# folders. The option is always passed to gwi.py and its value says whether
+# Leave empty for logs/slurm/untagged/ (or logs/direct/untagged/),
+# results/untagged/ and plots/untagged/. The option is always passed to gwi.py and its value says whether
 # it applies, the same convention as COMMITTED=n or INCLUDE_SUB_VARS=n.
 # e.g. RECIPE_OUTPUT_TAG=Thorne2025
 # e.g. RECIPE_OUTPUT_TAG=IGCC2025

@@ -637,8 +637,8 @@ def read_argv_config(argv):
             ensemble_size = input('Ensemble size (e.g. 1e6): ')
         cfg.ensemble_size = parse_ensemble_size(ensemble_size)
 
-    # The label keeping this piece of work's outputs apart (results_<tag>/);
-    # none for the plain results/ folder
+    # The label keeping this piece of work's outputs apart (results/<tag>/);
+    # none for results/untagged/
     cfg.output_tag = argv_dict.get('--output-tag')
 
     # The seed of the draws: with one, repeat runs of a configuration draw
@@ -757,7 +757,7 @@ def output_folders(cfg):
         the configuration (see read_argv_config)
     Returns a SimpleNamespace of folders, each ending in '/':
     - root:
-        the results folder (results/ or results_<tag>/)
+        the results folder (results/<tag>/, or results/untagged/)
     - gwi:
         the attributed warming, by inputs, members, regressed variables and
         regression years

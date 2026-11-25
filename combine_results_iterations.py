@@ -32,7 +32,7 @@ def read_recipe_output_tag(recipe):
 
     The recipe is sourced by bash, as run-gwi.sh does, so the value is read
     exactly as the runs saw it, quoting and all. An empty tag returns None,
-    meaning the plain results/ and plots/ folders.
+    meaning results/untagged/ and plots/untagged/.
     """
     if not os.path.isfile(recipe):
         sys.exit(f'Recipe not found: {recipe}')
@@ -50,10 +50,10 @@ def parse_argvs():
 
     Options are given as --name=value, in any order. All of them are optional:
 
-      --output-tag=<tag>   read results_<tag>/ and write plots_<tag>/ instead
-                           of the plain results/ and plots/ folders. Use the
-                           same tag that was given to gwi.py. Empty or absent
-                           means the plain folders, as before.
+      --output-tag=<tag>   read results/<tag>/ and write plots/<tag>/. Use
+                           the same tag that was given to gwi.py. Empty or
+                           absent means results/untagged/ and
+                           plots/untagged/.
       --recipe=<file>      an alternative to --output-tag: take the tag
                            from a recipe instead, e.g.
                            --recipe=recipes/TEMPLATE.sh reads its

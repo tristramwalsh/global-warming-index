@@ -5,15 +5,17 @@
 # recipes for your own development runs
 /recipes/dev*.sh
 
-# logs: slurm mode and direct mode of run-gwi.sh
-/logs_slurm*/
-/logs_direct*/
-# logs from before the rename to logs_slurm
+# outputs, each in a folder per output tag: logs (logs/slurm/<tag>/,
+# logs/direct/<tag>/), results (results/<tag>/) and plots (plots/<tag>/)
+/logs/
+/results/
+/plots/
+# outputs from before they were grouped (logs_slurm_<tag>/, results_<tag>/,
+# plots_<tag>/, ...), and from before the rename to logs_slurm
+/logs_*/
+/results_*/
+/plots_*/
 /slurm_logs*/
-
-# outputs: results and plots
-/results*/
-/plots*/
 /outputs/
 
 # VS Code

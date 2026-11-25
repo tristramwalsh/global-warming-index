@@ -20,7 +20,7 @@ and 20 of another: 400 members, a 20 x 20 grid. The figure shows:
   source's counts (how evenly each source's members are used);
 - bottom row: those shares over N, averaged over 50 seeds.
 
-Writes plots_tests/latin_sampling_2d.png unless given another path.
+Writes plots/tests/latin_sampling_2d.png unless given another path.
 """
 
 import os
@@ -141,4 +141,4 @@ def main(path):
 
 if __name__ == '__main__':
     main(sys.argv[1] if len(sys.argv) > 1
-         else 'plots_tests/latin_sampling_2d.png')
+         else 'plots/tests/latin_sampling_2d.png')

@@ -1,6 +1,6 @@
 """Compare two results folders file by file, e.g. a check run against a baseline.
 
-    python tests/compare_to_baseline.py results_engine-baseline results_engine-check
+    python tests/compare_to_baseline.py results/engine-baseline results/engine-check
 
 Run the same seeded configurations twice, on two versions of the code, into
 two output tags (recipes and run-gwi.sh, as usual). This script then says
