@@ -44,6 +44,8 @@ How the functions connect:
     windowed_percentiles              the first, for any definition linear
                                       in time, over a list of windows, in
                                       blocks
+    definition_years                  the years a definition has a value
+                                      for, and their windows
     definition_timeseries             ... over every output year whose
                                       window lies within the output years:
                                       each definition's timeseries (gwi.py's
@@ -278,6 +280,28 @@ def definition_timeseries(sample, levels, definition, first_output_year,
         years: the years, (t,)
         percentiles: array (levels, t, variables)
     """
+    # The years whose windows lie within the output years, and each one's
+    # window
+    years, windows = definition_years(first_output_year, last_output_year,
+                                      years_before, years_after)
+    # The ensemble's value in each window, and its percentiles
+    return years, windowed_percentiles(sample, levels, definition, windows)
+
+
+def definition_years(first_output_year, last_output_year, years_before,
+                     years_after):
+    """The years a definition has a value for: those whose window lies
+    within the output years.
+
+    first_output_year, last_output_year:
+        the output years (both included)
+    years_before, years_after:
+        each year's window, from years_before years before it to years_after
+        years after it
+    Returns (years, windows):
+        years: array (t,)
+        windows: each year's window, a (first_year, last_year) pair
+    """
     # The years whose windows lie within the output years
     years = np.arange(first_output_year + years_before,
                       last_output_year - years_after + 1)
@@ -289,8 +313,7 @@ def definition_timeseries(sample, levels, definition, first_output_year,
             f'{years_after} after) within those years.')
     # Each year's window
     windows = [(year - years_before, year + years_after) for year in years]
-    # The ensemble's value in each window, and its percentiles
-    return years, windowed_percentiles(sample, levels, definition, windows)
+    return years, windows
 
 
 def select_levels(percentiles, levels, wanted):

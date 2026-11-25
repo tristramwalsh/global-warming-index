@@ -22,9 +22,11 @@ One run is a short pipeline (main, at the bottom):
     prior_and_erf_percentiles   the percentiles: the summaries (CSV), and
                                 the quantiles (netCDF)
     write_inputs_and_interims   the inputs as used, the priors and the ERF
+    make_releases               the release: a few representative members,
+                                rebuilt over every year and definition
     write_outputs               each definition's timeseries and the
-                                headlines (CSV), and the quantiles
-                                (netCDF)
+                                headlines (CSV), the quantiles and the
+                                releases (netCDF)
 
 Each warming definition (annual, SR1.5, AR6, CGWL, rates) is described once,
 in WARMING_DEFINITIONS, and applied in the same way to the attributed
@@ -67,6 +69,7 @@ import xarray as xr
 import src.method.emulators as emulators
 import src.method.members as members
 import src.method.regression as regression
+import src.method.release as release
 import src.method.sampling as sampling
 import src.infrastructure.compute_resources as compute_resources
 import src.postprocessing.results_layout as results_layout
@@ -94,6 +97,20 @@ SIGMAS = list(
 # The quantiles (the distribution finely, e.g. every 0.1 percentile) are
 # set per run, by --quantile-step (see parse_quantile_step), and taken in
 # the same call as SIGMAS
+
+# The largest release file to write (see make_releases): a guard against
+# asking by mistake for a release too big to hand anyone. 500 MB is about
+# 25,000 members with every year and definition (1000 members take ~21
+# MB); a run asking for more stops before rebuilding anything.
+MAX_RELEASE_BYTES = 500e6
+
+# How to use a release, in each release file's attributes
+RELEASE_USAGE = (
+    'Every member has equal weight: use all of them, and do not weight, '
+    'resample or subset them. Each member is one '
+    'consistent draw of the uncertain inputs (a FaIR parameter set, an ERF '
+    'member, an observed member and a piControl segment) across all its '
+    'years, variables and definitions.')
 
 # SR1.5 warming is defined as the 30-year mean human-induced warming, relative
 # to the pre-industrial period, centred using trend extrapolation where
@@ -236,6 +253,7 @@ KNOWN_OPTIONS = (
     '--picontrol-dataset', '--committed', '--preindustrial-era',
     '--include-reg-const', '--erf-member', '--gmt-member',
     '--include-sub-vars', '--output-tag', '--quantile-step',
+    '--release-members', '--release-method', '--release-target',
 )
 
 
@@ -421,6 +439,49 @@ def parse_quantile_step(text):
     return np.array([float(k * step) for k in range(int(100 / step) + 1)])
 
 
+def parse_release_sizes(text):
+    """The releases' sizes from --release-members: one release of M members
+    for each.
+
+    text:
+        the option's value: sizes separated by commas (e.g. 1000, or
+        100,1000,10000; e notation allowed, e.g. 1e3), or 0 (or empty) for
+        no release
+    Returns the sizes, a list of ints (empty for none).
+    """
+    # No release
+    if text in ('', '0'):
+        return []
+    # Each size, a whole number of members, at least 1
+    sizes = [parse_ensemble_size(size) for size in text.split(',')]
+    # Stop if any is given twice (its files would overwrite each other)
+    if len(set(sizes)) != len(sizes):
+        raise ValueError(f'--release-members={text} gives a size twice.')
+    return sizes
+
+
+def parse_release_target(text):
+    """What a release is made for, from --release-target: the variable and
+    year whose distribution it matches best (a stratified release is
+    stratified on it).
+
+    text:
+        the option's value: a variable and a year, e.g. Ant:2025 (the year
+        stated, never implied); empty (or just ':') for none
+    Returns (variable, year): e.g. ('Ant', 2025), or (None, None).
+    """
+    # None given
+    if text in ('', ':'):
+        return None, None
+    # The variable and the year, which must be a whole number
+    variable, colon, year = text.partition(':')
+    if not (variable and colon and year.isdigit()):
+        raise ValueError(
+            f'Invalid --release-target {text!r}: give a variable and a '
+            'year, e.g. Ant:2025.')
+    return variable, int(year)
+
+
 def read_argv_config(argv):
     """Read the run's configuration from the command line.
 
@@ -442,6 +503,10 @@ def read_argv_config(argv):
     - outputs:
         definitions, headline_years, include_sub_vars, output_tag,
         quantile_step (as given), quantile_levels (None for no quantiles)
+    - releases:
+        release_sizes (empty for none), release_method,
+        release_target_variable and release_target_year (None if not
+        given)
     - inputs:
         erf_id, gmt_id, picontrol_id, ensemble_members, ensemble_members_str
     """
@@ -612,6 +677,25 @@ def read_argv_config(argv):
     # The quantiles' levels (e.g. every 0.1 percentile), or none
     cfg.quantile_step = argv_dict.get('--quantile-step', 'none') or 'none'
     cfg.quantile_levels = parse_quantile_step(cfg.quantile_step)
+
+    # The releases (see make_releases): their sizes, how their members are
+    # chosen, and their target (what a stratified release is stratified on)
+    cfg.release_sizes = parse_release_sizes(
+        argv_dict.get('--release-members', ''))
+    cfg.release_method = argv_dict.get('--release-method', '') or 'stratified'
+    if cfg.release_method not in release.METHODS:
+        raise ValueError(
+            f'Unknown --release-method {cfg.release_method!r}: use one of '
+            f'{release.METHODS}.')
+    cfg.release_target_variable, cfg.release_target_year = (
+        parse_release_target(argv_dict.get('--release-target', '')))
+    # A stratified release must state its target: no default
+    if (cfg.release_sizes and cfg.release_method == 'stratified'
+            and cfg.release_target_variable is None):
+        raise ValueError(
+            'A stratified release needs a target, the variable and year to '
+            'stratify on, e.g. --release-target=Ant:2025 (in a recipe, '
+            'RECIPE_RELEASE_TARGET_VARIABLE and RECIPE_RELEASE_TARGET_YEAR).')
 
     # The headline years (e.g. '2024', '2022,2023,2024', 'end_regress',
     # 'IGCC')
@@ -831,11 +915,38 @@ def log_configuration(cfg, inputs, folders):
         else f'every {cfg.quantile_step} percentile '
              f'({len(cfg.quantile_levels)} levels)')
     print(f'Quantiles: {quantiles_say}')
+    print(f'Release: {describe_releases(cfg)}')
     print(f'Include pre-industrial offset: {cfg.inc_pi_offset}')
     print(f'Include constant term in regression: {cfg.inc_reg_const}')
     print('Using model: FaIR_V2')
     print(f'Output folder: {folders.root}'
           f'{"" if cfg.output_tag else "  (no tag set)"}')
+
+
+def describe_releases(cfg):
+    """The releases asked for, in words, e.g. '1000 members, stratified on
+    Ant in 2025', or 'none'.
+
+    cfg:
+        the configuration (see read_argv_config)
+    """
+    if not cfg.release_sizes:
+        return 'none'
+    sizes = ', '.join(f'{size:,}' for size in cfg.release_sizes)
+    return f'{sizes} members, {describe_release_method(cfg)}'
+
+
+def describe_release_method(cfg):
+    """How the releases' members are chosen, in words, e.g. 'stratified on
+    Ant in 2025', or 'random'.
+
+    cfg:
+        the configuration (see read_argv_config)
+    """
+    if cfg.release_method == 'stratified':
+        return (f'stratified on {cfg.release_target_variable} in '
+                f'{cfg.release_target_year}')
+    return cfg.release_method
 
 
 def share(part, whole):
@@ -954,6 +1065,19 @@ def get_headline_results_rows(name, timeseries, hl_years, headline_years):
         timeseries, years, [definition['label'](year) for year in years])
 
 
+def definition_attributes(definition):
+    """What a warming definition is, as the attributes of its data variable
+    in a netCDF file: its long_name, units and window.
+
+    definition:
+        an entry of WARMING_DEFINITIONS
+    """
+    return {'long_name': definition['description'],
+            **definition['units'],
+            'window': f'{definition["years_before"]} years before each year '
+                      f'to {definition["years_after"]} after'}
+
+
 def attributed_percentiles(sample, cfg):
     """The attributed warming's percentiles: each warming definition's
     timeseries, summarised (SIGMAS) and as quantiles (cfg.quantile_levels),
@@ -1021,16 +1145,11 @@ def attributed_percentiles(sample, cfg):
         if cfg.quantile_levels is not None:
             quantile_values = summaries.select_levels(
                 percentiles, levels_taken, cfg.quantile_levels)
-            # ... what the definition is, for the netCDF ...
-            attributes = {
-                'long_name': definition['description'],
-                **definition['units'],
-                'window': f'{definition["years_before"]} years before each '
-                          f'year to {definition["years_after"]} after'}
-            # ... labelled
+            # ... labelled, with what the definition is
             quantiles[file_name] = summaries.quantiles_dataarray(
                 quantile_values, cfg.quantile_levels, years,
-                sample.output_vars, file_name, attributes)
+                sample.output_vars, file_name,
+                definition_attributes(definition))
 
         # The summary's rows at the headline years, if asked for
         if name in cfg.definitions:
@@ -1129,6 +1248,157 @@ def prior_and_erf_percentiles(T_mod, forcing_vars, member_index,
     return priors, erf
 
 
+def check_releases(sample, cfg):
+    """Stop now, before anything is rebuilt, if the releases asked for
+    can't be made: the stratifying variable or year isn't in the outputs,
+    a release is bigger than the run, or a file would be too big.
+
+    sample:
+        members.Sample
+    cfg:
+        the configuration (see read_argv_config)
+    Logs each release file's size.
+    """
+    if not cfg.release_sizes:
+        return
+    run_log.log_section('Release check')
+    # What a stratified release is stratified on: one of the outputs'
+    # variables, in one of the output years
+    if cfg.release_method == 'stratified':
+        if cfg.release_target_variable not in sample.output_vars:
+            raise ValueError(
+                f'The release is stratified on '
+                f'{cfg.release_target_variable!r}, which this run '
+                f'doesn\'t give: use one of {sample.output_vars}.')
+        if not (cfg.start_trunc <= cfg.release_target_year
+                <= cfg.end_trunc):
+            raise ValueError(
+                f'The release is stratified on '
+                f'{cfg.release_target_variable} in '
+                f'{cfg.release_target_year}, outside the output years '
+                f'{cfg.start_trunc}-{cfg.end_trunc}.')
+    # Each member's values: every year of every definition given, for
+    # every variable
+    values_per_member = 0
+    for name, definition in WARMING_DEFINITIONS.items():
+        if name == 'annual' or name in cfg.definitions:
+            years, _ = summaries.definition_years(
+                cfg.start_trunc, cfg.end_trunc, definition['years_before'],
+                definition['years_after'])
+            values_per_member += len(years) * len(sample.output_vars)
+    # Each release file: its values as float32, and its members' four
+    # labels (about 8 bytes for each member), uncompressed
+    for size in cfg.release_sizes:
+        if size > sample.n_members:
+            raise ValueError(
+                f'A release of {size:,} members from a run of '
+                f'{sample.n_members:,}: a release can be at most as big as '
+                'its run.')
+        file_bytes = size * (values_per_member * 4 + 8)
+        print(f'Release of {size:,} members: about {file_bytes / 1e6:,.1f} '
+              f'MB uncompressed ({values_per_member:,} values per member)')
+        if file_bytes > MAX_RELEASE_BYTES:
+            raise ValueError(
+                f'A release of {size:,} members would be about '
+                f'{file_bytes / 1e6:,.0f} MB, more than '
+                f'{MAX_RELEASE_BYTES / 1e6:,.0f} MB (MAX_RELEASE_BYTES): '
+                'ask for fewer members.')
+
+
+def make_releases(sample, cfg, inputs):
+    """The releases: for each size asked for, M of the run's members chosen
+    to be representative (see src/method/release.py), rebuilt over every
+    year of every definition given.
+
+    sample:
+        members.Sample
+    cfg:
+        the configuration (see read_argv_config)
+    inputs:
+        the inputs (see load_inputs), for the members' labels
+    Returns a dict mapping each size M to its release, an xarray Dataset:
+    one data variable per definition (as the quantiles netCDF), each
+    (year, member, output_variable), and along member each member's FaIR
+    parameter set, ERF member, observed member and piControl segment, so
+    every member can be traced and rebuilt.
+
+    Its memory is within the blocks' (summaries.block_bytes): the
+    stratifying values of every member (4 bytes each), their positions in
+    rank order (8 bytes each), and one year of the ensemble, from which
+    the values are taken.
+    """
+    run_log.log_section('Release')
+    # The stratifying value of every member, for a stratified release: the
+    # annual value of the variable in the year: (N,)
+    stratify_values = None
+    if cfg.release_method == 'stratified':
+        year = cfg.release_target_year
+        # Every member's annual values in that year: (1, variables, N)
+        ensemble = sample.ensemble_definition(
+            warming_definitions.annual_value, [(year, year)])
+        # ... of the stratifying variable: (N,)
+        variable_position = sample.output_vars.index(
+            cfg.release_target_variable)
+        stratify_values = ensemble[0, variable_position].copy()
+        del ensemble
+        # Stop if any member has none (e.g. Res after the observations end)
+        if np.isnan(stratify_values).any():
+            raise ValueError(
+                f'{cfg.release_target_variable} has no value in {year} '
+                'for some members (e.g. Res after the observations end): '
+                'stratify on another variable or year.')
+
+    # The labels of every input's members, to label the released members
+    labels = {'param_member': inputs.params.param_member.to_numpy(),
+              'erf_member': inputs.erf.erf_member.to_numpy(),
+              'gmt_member': inputs.gmt.gmt_member.to_numpy(),
+              'pic_member': inputs.pic.pic_member.to_numpy()}
+
+    releases = {}
+    for size in cfg.release_sizes:
+        time_start = dt.datetime.now()
+        # Which members to keep: their positions in the member index, (M,)
+        positions = release.select(
+            cfg.release_method, sample.n_members, size,
+            release.release_rng(cfg.seed, size), stratify_values)
+        # Just those members, ready to be rebuilt
+        released = sample.subset(positions)
+
+        # Each definition's values for those members, in every year it has
+        # a value for, labelled
+        data = {}
+        for name, definition in WARMING_DEFINITIONS.items():
+            if name != 'annual' and name not in cfg.definitions:
+                continue
+            # The years, and each one's window
+            years, windows = summaries.definition_years(
+                cfg.start_trunc, cfg.end_trunc, definition['years_before'],
+                definition['years_after'])
+            # The released members' values: (t, variables, M)
+            values = released.ensemble_definition(definition['function'],
+                                                  windows)
+            # ... members before variables, as the quantiles' percentiles:
+            # (t, M, variables)
+            values = values.transpose(0, 2, 1)
+            data[definition['file_name']] = xr.DataArray(
+                values, dims=('year', 'member', 'output_variable'),
+                coords={'year': years,
+                        'output_variable': list(sample.output_vars)},
+                attrs=definition_attributes(definition))
+
+        # Each released member's inputs, by label: (M,) each
+        member_coords = {
+            'member': np.arange(size),
+            **{name: ('member', labels[name][member_positions])
+               for name, member_positions in zip(
+                   labels, released.member_index)}}
+        releases[size] = xr.Dataset(data, coords=member_coords)
+        print(f'Release of {size:,} members, {describe_release_method(cfg)}, '
+              f'from {sample.n_members:,} ... took '
+              f'{dt.datetime.now() - time_start}')
+    return releases
+
+
 def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
     """Write the inputs as used and the interim results: the observed
     temperatures, the piControl segments, the prior warming and the
@@ -1191,7 +1461,7 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
 
 
 def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
-                  folders):
+                  releases, folders):
     """Write the outputs: each warming definition's timeseries and the
     headlines, for the attributed warming and for the observations.
 
@@ -1206,6 +1476,8 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         attributed_percentiles)
     observed:
         (timeseries, headlines) (see observed_percentiles)
+    releases:
+        each release, by its size (see make_releases)
     folders:
         the output folders (see output_folders)
 
@@ -1258,6 +1530,29 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         distributions.write_netcdf(
             quantiles, f'{folders.gwi}GWI_timeseries-quantiles_'
             f'{gwi_name}.nc')
+    # The releases, each with what it is, how to use it, and the run's
+    # configuration
+    for size, members in releases.items():
+        target = (
+            f'{cfg.release_target_variable} in {cfg.release_target_year}'
+            if cfg.release_method == 'stratified' else 'none')
+        title = ('Global Warming Index: the attributed warming of '
+                 f'{size:,} representative members ({cfg.release_method}) '
+                 f'of the {n_members:,} of this run, every year of each '
+                 'warming definition')
+        members.attrs = {
+            'title': title, 'release_members': size,
+            'release_method': cfg.release_method,
+            'release_target': target,
+            'release_usage': RELEASE_USAGE,
+            **distributions.run_attributes(cfg, n_members)}
+        name = results_layout.release_name(
+            cfg.release_method, size, cfg.release_target_variable,
+            cfg.release_target_year)
+        distributions.write_netcdf(
+            members, f'{folders.gwi}GWI_timeseries-members_{inputs_name}_'
+            f'VARIABLES--{"-".join(cfg.regress_vars)}_{sample_name}_{name}_'
+            f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}.nc')
     # The observations: each definition's timeseries, the headlines
     obs_timeseries, obs_headlines = observed
     for file_name, table in obs_timeseries.items():
@@ -1326,6 +1621,8 @@ def main(argv):
                    else f'allows {by_memory}')
     print(f'Years per block: {summaries.years_per_block(sample)} (the '
           f'threads allow {by_threads}; the memory {memory_says})')
+    # Stop now if the releases asked for can't be made
+    check_releases(sample, cfg)
 
     # Stage E: rebuild the ensemble: the percentile summaries of every
     # definition, for the attributed warming and the observations, and of
@@ -1334,13 +1631,15 @@ def main(argv):
     observed = observed_percentiles(inputs.gmt, cfg)
     priors, erf = prior_and_erf_percentiles(
         T_mod, forcing_vars, member_index, cfg, inputs)
+    # The releases: a few representative members, rebuilt in full
+    releases = make_releases(sample, cfg, inputs) if cfg.release_sizes else {}
 
     # Stage F: Write
     # Write the inputs as used and the interim results
     write_inputs_and_interims(cfg, inputs, priors, erf, folders)
     # Write the attribution outputs, and post-processed observation outputs
     write_outputs(cfg, sample.n_members, inputs.gmt.sizes['gmt_member'],
-                  attributed, observed, folders)
+                  attributed, observed, releases, folders)
 
     # What the run cost, beside the 'Memory usage anticipated' block
     run_log.log_section('Memory usage recorded')

@@ -72,6 +72,7 @@ holds T_mod, β, T_obs and the member index for the whole sample, and
 rebuilds every member for whichever years an output asks for.
 """
 
+import copy
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -381,6 +382,25 @@ class Sample:
         variables × N numbers in MEMBER_DTYPE."""
         return (len(self.output_vars) * self.n_members *
                 np.dtype(MEMBER_DTYPE).itemsize)
+
+    def subset(self, members):
+        """The sample of just some of its members, e.g. a release's: a copy
+        of this one, with only those members' positions and scaling factors.
+
+        members:
+            their positions in the member index, (M,)
+        Returns a Sample of those M members, in that order, rebuilt from
+        the same T_mod and T_obs with the same machinery: each member's
+        values are the same, to the last bit, as in this sample's rebuild.
+        """
+        # A copy sharing T_mod, T_obs and the rest: no data copied
+        subset = copy.copy(self)
+        # Just those members' positions along each axis, and their scaling
+        # factors: (M,) each, and (M, k)
+        subset.member_index = tuple(positions[members]
+                                    for positions in self.member_index)
+        subset.beta = self.beta[members]
+        return subset
 
     def year_positions(self, first_year, last_year):
         """Where the years first_year to last_year (both included) sit

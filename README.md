@@ -292,6 +292,12 @@ The following settings control the analysis. Every recipe sets each of them, nam
 - Taken in the same pass as the summary percentiles, which they make about twice as slow; the file's size depends on the number of levels, not of members.
 
 
+**`RELEASE_MEMBERS`**, **`RELEASE_METHOD`**, **`RELEASE_TARGET_VARIABLE`**, **`RELEASE_TARGET_YEAR`**: The release: a few of the run's members, chosen to be representative of its whole ensemble, written whole to one netCDF file (`GWI_timeseries-members`) for users to take as an equal-weight ensemble of their own. The run's ensemble itself (e.g. a million members) is never written member by member.
+- `RELEASE_MEMBERS=(1000)` = one release of 1000 members (about 21 MB with every definition); `(100 1000 10000)` = one release of each size, from the same run; `(0)` = none. At most the run's number of members; a release over 500 MB stops the run before it starts.
+- `RELEASE_METHOD=stratified` = one member from each of `RELEASE_MEMBERS` bands of equal probability of the release's *target*, one variable in one year (`RELEASE_TARGET_VARIABLE` in `RELEASE_TARGET_YEAR`, its annual value; the year stated, within the truncation range): that variable's distribution in that year is then as close to the run's as so few members can be (for 1000 members from a million, Ant's 5th percentile within ~0.0005 °C against ~0.006 °C for a random choice), and the other variables are as good as a random choice, or better if correlated with it. `random` = at random, a baseline to judge stratified against, not for use.
+- The target goes into the file's name (e.g. `RELEASE--stratified-Ant2025-1000`) and attributes (`release_target`), so a release says what it was made for. The method is in `src/method/release.py`.
+
+
 **`OUTPUT_TAG`**: A name for this piece of work (e.g. `IGCC2025`)
 - Keeps separate pieces of work apart, so that they neither overwrite each other nor all get processed together: results go to `results_<tag>/`, figures to `plots_<tag>/` and logs (with a copy of the recipe) to `logs_slurm_<tag>/` (or `logs_direct_<tag>/` in direct mode).
 - Usually the recipe's own name; recipes that make up one experiment share a tag.
@@ -325,7 +331,8 @@ Each `gwi.py` run attributes the observed warming once, for one configuration, a
 4. **Stage B, constraining warming**: for every (parameter set, ERF member) pair, the least-squares fit of the observed temperatures onto the modelled warming of the regressed variables, over the regression years, gives the scaling factors that constrain it. The fit is made once for each observed member ($\beta_\mathrm{obs}$) and once for each piControl segment ($\beta_\mathrm{pic}$, the spread that internal variability adds); since the fit is linear in its target, a member's scaling factors are the sum of the two, $\beta = \beta_\mathrm{obs}[o] + \beta_\mathrm{pic}[c]$.
 5. **Stage C, drawing ensemble members**: member $n$'s attributed warming from each forcing variable is its scaling factor times its modelled warming, $\beta_n \, T_\mathrm{mod}(p_n, e_n, t, v)$ (a sub-variable takes the factor of the variable it is part of); `Tot` is their sum over the regressed variables (with the constant, if `INCLUDE_REG_CONST=y`), `Res` the observed temperature minus `Tot`, and `Ant` = GHG + OHF (see **Variable Regression Logic**). The members are never all held at once: `src/method/members.py` rebuilds them a block of years at a time, and only where each output needs them.
 6. **The percentiles**: each warming definition (see `DEFINITIONS`) is applied to every member, and the percentiles taken across the members, in every year whose window fits: the summary's (the median and likely and very likely ranges), and with them, if `QUANTILE_STEP` is set, the quantiles'. The definitions are described once, in `WARMING_DEFINITIONS` in `gwi.py`, and applied in the same way to the observations. The prior warming (stage A's, before the constraint) and the ERFs have percentile summaries output as well.
-7. **Write** the inputs as used (the observed members and the piControl segments), the priors and the ERFs, then each definition's timeseries and the headlines, and the quantiles (see **Output Structure**).
+7. **The release**, if `RELEASE_MEMBERS` asks for one: the members chosen (see `RELEASE_METHOD`), and just those rebuilt over every year of every definition.
+8. **Write** the inputs as used (the observed members and the piControl segments), the priors and the ERFs, then each definition's timeseries and the headlines, the quantiles and the releases (see **Output Structure**).
 
 The run's log is divided into labelled sections (`RUN CONFIGURATION`, `ENSEMBLE SAMPLING`, `STAGES A, B AND C`, `MEMORY USAGE ANTICIPATED`, `DEFINITIONS`, `DEFINITIONS FOR OBSERVATIONS`, `PRIORS AND ERF`, `MEMORY USAGE RECORDED` and `TOTAL`), with the time each step took.
 
@@ -417,7 +424,8 @@ global-warming-index/
 │                        ├── GWI_timeseries-summary-ANNUAL_*.csv
 │                        ├── GWI_timeseries-summary-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
 │                        ├── GWI_headlines-summary_*.csv
-│                        └── GWI_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
+│                        ├── GWI_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
+│                        └── GWI_timeseries-members_*_RELEASE--*.nc  (one per size in RELEASE_MEMBERS)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
 ├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
 └── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
@@ -427,7 +435,7 @@ global-warming-index/
 
 | | **summary** (CSV): median, likely and very likely ranges | **quantiles** (netCDF): percentiles every `QUANTILE_STEP` | **members** (netCDF): representative members |
 | --- | --- | --- | --- |
-| **timeseries** (every year) | `GWI_timeseries-summary-<DEFINITION>` (one per definition) | `GWI_timeseries-quantiles` (every definition) | `GWI_timeseries-members` (the release; to come) |
+| **timeseries** (every year) | `GWI_timeseries-summary-<DEFINITION>` (one per definition) | `GWI_timeseries-quantiles` (every definition) | `GWI_timeseries-members` (the release, one file per size) |
 | **headlines** (the headline years) | `GWI_headlines-summary` (every definition) | – (select the years from the timeseries) | – (select the years from the timeseries) |
 
 The interim results and the inputs follow the same scheme: `PRIOR_timeseries-summary` (the prior warming), `ERF_timeseries-summary` (the forcing), `Obs_timeseries-members` (the observed members used), `Obs_timeseries-summary-<DEFINITION>` and `Obs_headlines-summary` (each definition applied to the observed members), and `PiControl_timeseries-members` (the piControl segments used, after filtering). The configuration that follows is the inputs, the regressed variables, the sample (`ENSEMBLE--<design>-<N>-seed<seed>`, which tells iterations apart: a run repeated with the same seed gives the same results, and replaces its files) and the regressed years, as each file needs.
@@ -449,8 +457,9 @@ The CSVs are:
 - **Timeseries** (`timeseries-summary-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
 - **Headlines**: every definition's values at the headline years, in one table
 
-The netCDF file is:
+The netCDF files are:
 - **Quantiles** (`timeseries-quantiles`, when `QUANTILE_STEP` is set): every definition's timeseries as percentiles every `QUANTILE_STEP` percent from the 0th to the 100th (1001 levels for 0.1), for every variable: one data variable per definition (`ANNUAL`, `SR15`, `AR6`, `CGWL`, `RATES`, as asked for), each with dimensions (`year`, `percentile`, `output_variable`), on the years of them all (NaN where a definition's window doesn't fit). The summary CSVs' percentiles are among them, identical to the last bit. The 0th and 100th percentiles are the smallest and largest members, which spread further with more members; the levels within them settle as the ensemble grows. For example, in Python: `xr.open_dataset(path)['AR6'].sel(year=2025, output_variable='Ant')` is the AR6 Ant distribution in 2016-2025.
+- **Members** (`timeseries-members`, the release, one file per size in `RELEASE_MEMBERS`, named with its `RELEASE--<method>[-<variable><year>]-<size>` field): the released members' values, every year of every definition given, for every variable: one data variable per definition, as in the quantiles file, each with dimensions (`year`, `member`, `output_variable`). Along `member`, each member's FaIR parameter set, ERF member, observed member and piControl segment (`param_member`, `erf_member`, `gmt_member`, `pic_member`), so every member can be traced. The attributes add the release's size, method, what it was stratified on and how to use it: every member has equal weight; use them all, and don't weight, resample or subset them; a member is one consistent draw across all its years, variables and definitions.
 
 Column structure: Multi-index with (variable, percentile) pairs, including various percentiles (5th, 17th, 50th, 83rd, 95th, etc.) representing the uncertainty distribution.
 

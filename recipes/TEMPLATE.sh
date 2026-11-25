@@ -302,6 +302,39 @@ RECIPE_HEADLINE_YEARS='end_regress'
 # e.g. none  no quantiles: the summary CSVs only (also if left empty)
 RECIPE_QUANTILE_STEP=0.1
 
+# The release: a few of the run's members, chosen to be representative of
+# its whole ensemble, written whole (every year of every definition, every
+# variable) to a netCDF file (GWI_timeseries-members) for users to take as
+# an equal-weight ensemble of their own.
+# The run's ensemble itself is never written member by member; a large
+# ensemble (e.g., 1e6 to 1e8 members) is the wrong thing to provide because,
+# the user would inherit the problem of appropriately sampling a representative
+# sub-sample of members, which this setting therefore preemptively resolves.
+# How many members: one release for each size listed (e.g. a size study);
+# 0, or empty, for none. About 21 MB for 1000 members with every
+# definition; a run asking for a release over 500 MB stops before it
+# starts. At most the run's own number of members.
+# e.g. (1000)            one release of 1000 members
+# e.g. (100 1000 10000)  three releases, of 100, 1000 and 10,000 members
+# e.g. (0)               no release
+RECIPE_RELEASE_MEMBERS=(1000)
+# How the members are chosen:
+#   stratified  one member from each of RELEASE_MEMBERS bands of equal
+#               probability of one variable in one year (below): that
+#               variable's distribution in that year is then as close to
+#               the run's as so few members can be; other variables are as
+#               good as a random choice (better if correlated with it)
+#   random      at random: a baseline to judge stratified against, not for
+#               use
+RECIPE_RELEASE_METHOD=stratified
+# The release's target, what it is made for: one of the run's variables
+# (e.g. Ant, GHG, Tot), and a year within the truncation range, stated (no
+# keyword): its annual value in that year, which a stratified release is
+# stratified on. Both go into the file's name and attributes, so the release
+# says what it was made for. Not used by random.
+RECIPE_RELEASE_TARGET_VARIABLE=Ant
+RECIPE_RELEASE_TARGET_YEAR=2025
+
 ###############################################################################
 ## Slurm settings (slurm mode only) ###########################################
 

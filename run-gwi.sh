@@ -138,6 +138,29 @@ if ! [[ "${RECIPE_QUANTILE_STEP}" =~ ^(none|[0-9]*\.?[0-9]+)?$ ]]; then
   exit 1
 fi
 
+# Check the releases before anything runs: whole numbers of members (0 for
+# none), a known method, and a stratifying year that is a year (gwi.py
+# checks the variable, and that the year is within the output years). The
+# sizes go to gwi.py as one comma-separated list: one run, one release each.
+for size in "${RECIPE_RELEASE_MEMBERS[@]}"; do
+  if ! [[ "${size}" =~ ^[0-9][0-9.eE+]*$ ]]; then
+    echo "Invalid entry in RECIPE_RELEASE_MEMBERS: '${size}'. Use a number" \
+         "of members, e.g. 1000 or 1e3, or 0 for no release." >&2
+    exit 1
+  fi
+done
+RELEASE_MEMBERS_LIST=$(IFS=,; echo "${RECIPE_RELEASE_MEMBERS[*]}")
+if ! [[ "${RECIPE_RELEASE_METHOD}" =~ ^(stratified|random)$ ]]; then
+  echo "Invalid RECIPE_RELEASE_METHOD: '${RECIPE_RELEASE_METHOD}'. Use" \
+       "stratified or random (see recipes/TEMPLATE.sh)." >&2
+  exit 1
+fi
+if ! [[ "${RECIPE_RELEASE_TARGET_YEAR}" =~ ^[0-9]*$ ]]; then
+  echo "Invalid RECIPE_RELEASE_TARGET_YEAR:" \
+       "'${RECIPE_RELEASE_TARGET_YEAR}'. Use a year, e.g. 2025." >&2
+  exit 1
+fi
+
 ###############################################################################
 ## Run ########################################################################
 
@@ -258,6 +281,9 @@ gwi_command() {
     --include-sub-vars="${RECIPE_INCLUDE_SUB_VARS}"
     --output-tag="${RECIPE_OUTPUT_TAG}"
     --quantile-step="${RECIPE_QUANTILE_STEP}"
+    --release-members="${RELEASE_MEMBERS_LIST}"
+    --release-method="${RECIPE_RELEASE_METHOD}"
+    --release-target="${RECIPE_RELEASE_TARGET_VARIABLE}:${RECIPE_RELEASE_TARGET_YEAR}"
   )
 }
 

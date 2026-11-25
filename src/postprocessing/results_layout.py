@@ -31,7 +31,8 @@ The results, the attributed warming:
                 summary (CSV)        quantiles (netCDF)    members (netCDF)
     timeseries  GWI_timeseries-      GWI_timeseries-       GWI_timeseries-
                 summary-<DEFINITION> quantiles             members (the
-                                                           release; to come)
+                                                           release: see
+                                                           release_name)
     headlines   GWI_headlines-       -                     -
                 summary
 
@@ -174,6 +175,25 @@ def sample_name(sampling_design, n_members, seed):
     and replaces its files with the same results.
     """
     return f'ENSEMBLE--{sampling_design}-{n_members}-seed{seed}'
+
+
+def release_name(method, n_release, stratify_variable=None,
+                 stratify_year=None):
+    """The field naming a release in its file's name, e.g.
+    'RELEASE--stratified-Ant2025-1000', or 'RELEASE--random-1000'.
+
+    method:
+        how its members were chosen (see src/method/release.py)
+    n_release:
+        M, its number of members
+    stratify_variable, stratify_year:
+        what a stratified release was stratified on, e.g. 'Ant' and 2025
+        (in the name, so no one can miss what it was made for)
+    """
+    # What it was stratified on, if it was
+    stratified_on = (f'-{stratify_variable}{stratify_year}'
+                     if method == 'stratified' else '')
+    return f'RELEASE--{method}{stratified_on}-{n_release}'
 
 
 def sample_from_name(file_name):
