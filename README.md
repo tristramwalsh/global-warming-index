@@ -425,7 +425,8 @@ global-warming-index/
 │                        ├── GWI_timeseries-summary-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
 │                        ├── GWI_headlines-summary_*.csv
 │                        ├── GWI_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
-│                        └── GWI_timeseries-members_*_RELEASE--*.nc  (one per size in RELEASE_MEMBERS)
+│                        ├── GWI_timeseries-members_*_RELEASE--*.nc  (one per size in RELEASE_MEMBERS)
+│                        └── GWI_headlines-fidelity_*_RELEASE--*.csv  (each release against the run, at the headline years)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
 ├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
 └── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
@@ -437,6 +438,8 @@ global-warming-index/
 | --- | --- | --- | --- |
 | **timeseries** (every year) | `GWI_timeseries-summary-<DEFINITION>` (one per definition) | `GWI_timeseries-quantiles` (every definition) | `GWI_timeseries-members` (the release, one file per size) |
 | **headlines** (the headline years) | `GWI_headlines-summary` (every definition) | – (select the years from the timeseries) | – (select the years from the timeseries) |
+
+Each release comes with `GWI_headlines-fidelity` (CSV), which compares it with the run's whole ensemble at the headline years.
 
 The interim results and the inputs follow the same scheme: `PRIOR_timeseries-summary` (the prior warming), `ERF_timeseries-summary` (the forcing), `Obs_timeseries-members` (the observed members used), `Obs_timeseries-summary-<DEFINITION>` and `Obs_headlines-summary` (each definition applied to the observed members), and `PiControl_timeseries-members` (the piControl segments used, after filtering). The configuration that follows is the inputs, the regressed variables, the sample (`ENSEMBLE--<design>-<N>-seed<seed>`, which tells iterations apart: a run repeated with the same seed gives the same results, and replaces its files) and the regressed years, as each file needs.
 
@@ -456,6 +459,7 @@ The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-in
 The CSVs are:
 - **Timeseries** (`timeseries-summary-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
 - **Headlines**: every definition's values at the headline years, in one table
+- **Fidelity** (`headlines-fidelity`, one per release, named with its `RELEASE--` field): how close the release is to the run's whole ensemble at the headline years. For each definition asked for, each variable's 5th, 17th, 50th, 83rd and 95th percentiles, and the correlation of each pair of the regressed variables and the residual across the members: a row for each, with the run's (`parent`), the release's, their difference, and the difference for the release's first 100 and first 500 members (what a user taking only those gets).
 
 The netCDF files are:
 - **Quantiles** (`timeseries-quantiles`, when `QUANTILE_STEP` is set): every definition's timeseries as percentiles every `QUANTILE_STEP` percent from the 0th to the 100th (1001 levels for 0.1), for every variable: one data variable per definition (`ANNUAL`, `SR15`, `AR6`, `CGWL`, `RATES`, as asked for), each with dimensions (`year`, `percentile`, `output_variable`), on the years of them all (NaN where a definition's window doesn't fit). The summary CSVs' percentiles are among them, identical to the last bit. The 0th and 100th percentiles are the smallest and largest members, which spread further with more members; the levels within them settle as the ensemble grows. For example, in Python: `xr.open_dataset(path)['AR6'].sel(year=2025, output_variable='Ant')` is the AR6 Ant distribution in 2016-2025.

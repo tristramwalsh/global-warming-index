@@ -67,6 +67,13 @@ How the functions connect:
                                       across the observed members, no
                                       rebuild
                                       (Obs_timeseries-summary-*)
+    correlations                      the correlations between variables
+                                      across members, for any number of
+                                      members
+    fidelity_rows                     how close a release is to the run
+                                      (its parent): the
+                                      GWI_headlines-fidelity CSV's rows for
+                                      one headline year
     prior_timeseries_table,           the prior warming (stage A's T_mod)
     erf_timeseries_table              and the forcing, over every
                                       (parameter set, ERF member) pair and
@@ -443,6 +450,228 @@ def observed_timeseries_table(gmt, sigmas, definition, years_before,
     table.columns.names = ['variable', 'percentile']
     table.index.name = 'Year'
     return table
+
+
+# The memory of the one float64 copy correlations makes of a chunk of
+# members: 128 MiB. What it does and doesn't affect:
+# - The result: not at all, beyond the last digit or so of a float64. The
+#   chunks only split the sums over members into partial sums, which add up
+#   to the same totals in a different order.
+# - The memory: the values correlations is given are already in memory
+#   (float32, 4 bytes each: 19 GB for `all`, 790 million members × 6
+#   variables). Its sums need float64 (8 bytes each), so it copies the
+#   values to float64 first. Copying all of them at once would add 38 GB;
+#   copying one chunk at a time adds at most this, 128 MiB.
+# - The speed: each chunk is one matrix product, so above ~1e5 members a
+#   chunk the loop's own overhead is negligible. 128 MiB is ~2.8 million
+#   members with 6 variables: 3 chunks in production (6 million), ~280 for
+#   `all`. The production run's whole fidelity step takes ~2 s.
+# It is a size in bytes, not a number of members, so it adapts to the
+# number of variables (as members.EMPIRICALLY_TUNED_REBUILD_BLOCK_BYTES
+# does), and is a round number well below any node's memory, not tuned.
+CORRELATION_CHUNK_BYTES = 2**27
+
+
+def correlations(values):
+    """The correlations between variables across members.
+
+    values:
+        array (variables, members), e.g. every member's value of each
+        variable in one year
+    Returns an array (variables, variables): element [v, w] is the Pearson
+    correlation of variables v and w across the members; NaN where a
+    variable has a NaN (e.g. Res after the observations end).
+
+    THE MATHS, step by step (the comments in the code name each step):
+
+    1. The correlation. For two variables x and y over N members m, with
+       means x̄ and ȳ:
+
+           cov(x, y) = (1/N) Σₘ (xₘ − x̄)(yₘ − ȳ)   how they move together
+           var(x)    = cov(x, x)
+           r(x, y)   = cov(x, y) / √(var(x) · var(y))
+
+    2. Why in chunks, and the covariance rewritten for it.
+       - Written as in 1, it needs every member at once: first for x̄,
+         then to measure each member from it. The values are float32 and
+         the sums must be float64 (step 4), so that would mean a float64
+         copy of every member, twice the values' size: 38 GB for `all`.
+         So the members are taken a chunk at a time (see
+         CORRELATION_CHUNK_BYTES), which needs a form of the covariance
+         built from sums over members alone.
+       - Multiplying out (x̄ and ȳ are constants, so the mean of xₘȳ is
+         x̄ȳ):
+
+           (xₘ − x̄)(yₘ − ȳ) = xₘyₘ − xₘȳ − x̄yₘ + x̄ȳ
+
+           cov(x, y) = (1/N) Σₘ xₘyₘ − x̄ȳ − x̄ȳ + x̄ȳ
+                     = (1/N) Σₘ xₘyₘ − x̄ȳ,
+                       with x̄ = (1/N) Σₘ xₘ and ȳ = (1/N) Σₘ yₘ
+
+         the mean of the products less the product of the means. So r
+         needs only two kinds of sum over members: Σₘ xₘ for each variable,
+         and Σₘ xₘyₘ for each pair (Σₘ xₘ² being the pair x, x).
+       - A sum over all members is the sum of the chunks' sums. So each
+         chunk adds its sums to running totals, and the means, covariances
+         and correlations are formed once, from the totals, at the end.
+         (The chunks' own correlations couldn't be combined like this:
+         each sees only the spread within itself, not the spread between
+         the chunks' means.)
+
+    3. Every pair's sum of products, by one matrix product. With the chunk
+       as a matrix X, (variables, members), X Xᵀ is (variables, variables):
+
+           (X Xᵀ)[v, w] = Σₘ X[v, m] · X[w, m]
+
+       the sum over members of v times w. For two variables:
+
+           X = ⎡x₁ x₂ … xₙ⎤      X Xᵀ = ⎡Σ xₘxₘ  Σ xₘyₘ⎤
+               ⎣y₁ y₂ … yₙ⎦             ⎣Σ yₘxₘ  Σ yₘyₘ⎦
+
+       the sums of squares on the diagonal, the sums of cross products off
+       it (Σ xₘyₘ = Σ yₘxₘ, so it is symmetric): every sum step 2 needs
+       of a product, for every pair at once.
+
+    4. Precision. Step 2 subtracts x̄ȳ from (1/N) Σₘ xₘyₘ, and the two are
+       close when the mean is large next to the spread (e.g. Tot: mean
+       ~1.4 K, spread ~0.1 K, so (1/N) Σ xₘ² ≈ 1.97 and x̄² ≈ 1.96); every
+       digit they share is lost in the difference. Two safeguards:
+       - the sums are float64 (~16 significant digits), not float32 (~7);
+       - each variable is first shifted by a constant a (its first
+         member's value), so the values summed are small differences
+         around the distribution and nothing large cancels. A shift
+         changes no covariance, since each value's distance from the mean
+         is the same:
+
+           (xₘ − a) − mean(x − a) = xₘ − x̄
+           so cov(x − a, y − b) = cov(x, y), and r with it.
+
+       Together they keep r within ~1e-14 of np.corrcoef at any chunk
+       size; the chunk size changes only the order of the additions.
+    """
+    # The sizes: variables, members
+    n_vars, n_members = values.shape
+    # The members in each chunk, so its float64 copy (8 bytes a value) is
+    # CORRELATION_CHUNK_BYTES (step 2)
+    members_per_chunk = max(1, CORRELATION_CHUNK_BYTES // (8 * n_vars))
+    # Step 4: the constant a each variable is shifted by, its first
+    # member's value: (v,)
+    shift = values[:, 0].astype(np.float64)
+
+    # Step 2: the running totals over members, of Σₘ xₘ for each variable,
+    # (v,), and of Σₘ xₘyₘ for each pair, (v, v)
+    sums = np.zeros(n_vars)
+    product_sums = np.zeros((n_vars, n_vars))
+    for start in range(0, n_members, members_per_chunk):
+        # This chunk's values, copied to float64 (step 4): X, (v, chunk)
+        chunk = values[:, start:start + members_per_chunk].astype(np.float64)
+        # ... shifted by a (step 4), in place, so no second copy
+        chunk -= shift[:, None]
+        # Step 2: add this chunk's Σₘ xₘ for each variable
+        sums += chunk.sum(axis=1)
+        # Step 3: add this chunk's Σₘ xₘyₘ for every pair at once, X Xᵀ
+        product_sums += chunk @ chunk.T
+
+    # Step 2: the means from the totals, x̄ = (1/N) Σₘ xₘ (of the shifted
+    # values): (v,)
+    means = sums / n_members
+    # Step 2: the covariances, (1/N) Σₘ xₘyₘ − x̄ȳ for every pair, the
+    # outer product being the grid of x̄ȳ: (v, v), each variable's
+    # variance on the diagonal
+    covariances = product_sums / n_members - np.outer(means, means)
+    # Step 1: the standard deviations, √var(x): (v,)
+    deviations = np.sqrt(np.diag(covariances))
+    # Step 1: the correlations, cov(x, y) / √(var(x) · var(y)), the outer
+    # product being the grid of the deviations' products: (v, v), 1 on
+    # the diagonal
+    return covariances / np.outer(deviations, deviations)
+
+
+def fidelity_rows(label, parent_percentiles, parent_correlations, values,
+                  sigmas, output_vars, pairs, prefixes):
+    """How close a release is to its parent (the run's whole ensemble) in
+    one headline year: the GWI_headlines-fidelity CSV's rows for that year.
+
+    label:
+        the year's label, as in the headlines CSV (e.g. 2025, '2016-2025')
+    parent_percentiles:
+        array (sigmas, variables), the parent's percentiles (the summary's)
+    parent_correlations:
+        array (variables, variables), the parent's correlations (see
+        correlations)
+    values:
+        array (M, variables), the released members' values that year, in
+        the release's order
+    sigmas:
+        the percentiles, e.g. gwi.py's SIGMAS
+    output_vars:
+        the names along the variable axis
+    pairs:
+        the pairs of variables whose correlations to compare, e.g.
+        [('GHG', 'Nat'), ...]
+    prefixes:
+        the sizes of the release's first members to compare too (e.g. 100,
+        500), each taken only if smaller than the release
+    Returns a DataFrame: a row for each (label, variable, statistic), the
+    statistics each percentile ('5', '17', ...) of each variable and the
+    correlation of each pair ('GHG & Nat'); columns: parent, release,
+    release - parent, and first k - parent for each prefix.
+
+    Every number is a statistic across members of their one value for the
+    headline year, never along the timeseries. Each member has one value
+    per definition for that year, even where the definition draws on
+    several years' warming to make it (e.g. SR1.5 in 2025, the end point
+    of a trend fitted to 2011-2025).
+    Each column takes that statistic over a different set of members, and
+    the "- parent" columns are plain differences, in the statistic's own
+    units:
+    - a percentile row, e.g. (2025, GHG, 5): the 5th percentile of GHG in
+      2025 across the parent's members, across the release's, and each
+      subset's less the parent's, in K;
+    - a correlation row, e.g. (2025, GHG & OHF, correlation): the
+      correlation of GHG with OHF in 2025 across members (members with a
+      high GHG have a low OHF: -0.95), and each subset's less the
+      parent's. In production, the parent has -0.953 and first 100 -
+      parent is +0.013, so a user who takes only the first 100 members
+      would find -0.941.
+    """
+    # The sets of members compared with the parent: the release, and its
+    # first k members, (k, variables) each, which, in the release's order,
+    # are themselves spread across the distribution
+    subsets = {'release': values,
+               **{f'first {k}': values[:k] for k in prefixes
+                  if k < len(values)}}
+    # The percentiles across each set's members, (sigmas, variables)
+    percentiles = {name: np.percentile(subset, sigmas, axis=0)
+                   for name, subset in subsets.items()}
+    # ... and the correlations across them, (variables, variables)
+    correlation = {name: correlations(subset.T)
+                   for name, subset in subsets.items()}
+
+    # A row for each percentile of each variable
+    rows, index = [], []
+    for v, var in enumerate(output_vars):
+        for s, sigma in enumerate(sigmas):
+            # The parent's value, the release's, and each set's difference
+            # from the parent's
+            parent = parent_percentiles[s, v]
+            rows.append([parent, percentiles['release'][s, v]]
+                        + [percentiles[name][s, v] - parent
+                           for name in subsets])
+            index.append((label, var, str(sigma)))
+    # A row for each pair's correlation, in the same columns
+    for first, second in pairs:
+        v, w = output_vars.index(first), output_vars.index(second)
+        parent = parent_correlations[v, w]
+        rows.append([parent, correlation['release'][v, w]]
+                    + [correlation[name][v, w] - parent for name in subsets])
+        index.append((label, f'{first} & {second}', 'correlation'))
+    # The table
+    return pd.DataFrame(
+        rows, columns=['parent', 'release'] + [f'{name} - parent'
+                                               for name in subsets],
+        index=pd.MultiIndex.from_tuples(
+            index, names=['Year', 'variable', 'statistic']))
 
 
 def prior_timeseries_table(T_mod, forcing_vars, regress_vars, years, sigmas):

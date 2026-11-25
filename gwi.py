@@ -24,6 +24,8 @@ One run is a short pipeline (main, at the bottom):
     write_inputs_and_interims   the inputs as used, the priors and the ERF
     make_releases               the release: a few representative members,
                                 rebuilt over every year and definition
+    release_fidelity            how close each release is to the run's
+                                whole ensemble
     write_outputs               each definition's timeseries and the
                                 headlines (CSV), the quantiles and the
                                 releases (netCDF)
@@ -56,6 +58,7 @@ src/outputs/distributions.py.
 """
 
 import fractions
+import itertools
 import os
 import sys
 import types
@@ -103,6 +106,11 @@ SIGMAS = list(
 # 25,000 members with every year and definition (1000 members take ~21
 # MB); a run asking for more stops before rebuilding anything.
 MAX_RELEASE_BYTES = 500e6
+
+# The sizes of a release's first members whose fidelity (see
+# release_fidelity) is given too, each if smaller than the release: what a
+# user taking only the first of them gets
+FIDELITY_PREFIXES = (100, 500)
 
 # How to use a release, in each release file's attributes
 RELEASE_USAGE = (
@@ -1030,6 +1038,38 @@ def draw_members(cfg, inputs):
     return member_index
 
 
+def definition_headline_years(name, hl_years, headline_years,
+                              years_available, note_missing=True):
+    """A definition's headline years: those of the headlines CSV.
+
+    name:
+        the definition, a key of WARMING_DEFINITIONS
+    hl_years:
+        the headline years (see warming_definitions.generate_headline_years)
+    headline_years:
+        the --headline-years setting: 'IGCC' adds the definition's IPCC
+        years
+    years_available:
+        the years the definition has a value for (e.g. its timeseries')
+    note_missing:
+        whether to print a note of the years left out
+    Returns a list of the years: empty if none is available. Years whose
+    window reaches beyond the years available (e.g. a CGWL year without
+    forcing 9 years after it) are left out.
+    """
+    definition = WARMING_DEFINITIONS[name]
+    # The headline years, and the definition's IPCC years if asked
+    years = list(hl_years)
+    if headline_years == 'IGCC':
+        years += [y for y in definition['ipcc_years'] if y not in years]
+    # ... those the definition has a value for
+    missing = [y for y in years if y not in years_available]
+    if missing and note_missing:
+        print(f'({name}: no value for headline year(s) {missing}, whose '
+              'window reaches beyond the years available)', end=' ')
+    return [y for y in years if y in years_available]
+
+
 def get_headline_results_rows(name, timeseries, hl_years, headline_years):
     """A definition's rows for a headlines CSV: its timeseries at the
     headline years, labelled as WARMING_DEFINITIONS labels them.
@@ -1038,32 +1078,20 @@ def get_headline_results_rows(name, timeseries, hl_years, headline_years):
         the definition, a key of WARMING_DEFINITIONS
     timeseries:
         its timeseries, indexed by year
-    hl_years:
-        the headline years (see warming_definitions.generate_headline_years)
-    headline_years:
-        the --headline-years setting: 'IGCC' adds the definition's IPCC
-        years
-    Returns a DataFrame of those rows:
-        or None if the timeseries has none of the years. Years whose window
-        reaches beyond the timeseries' years (e.g. a CGWL year without
-        forcing 9 years after it) are left out, with a note.
+    hl_years, headline_years:
+        as definition_headline_years
+    Returns a DataFrame of those rows, or None if the timeseries has none of
+    the years (see definition_headline_years, which notes those left out).
     """
-    definition = WARMING_DEFINITIONS[name]
-    # The headline years, and the definition's IPCC years if asked
-    years = list(hl_years)
-    if headline_years == 'IGCC':
-        years += [y for y in definition['ipcc_years'] if y not in years]
-    # ... those the timeseries has a value for
-    missing = [y for y in years if y not in timeseries.index]
-    if missing:
-        print(f'({name}: no value for headline year(s) {missing}, whose '
-              'window reaches beyond the years available)', end=' ')
-    years = [y for y in years if y in timeseries.index]
+    # The headline years it has values for
+    years = definition_headline_years(name, hl_years, headline_years,
+                                      timeseries.index)
     if not years:
         return None
     # Its rows at those years, labelled
     return summaries.headline_rows(
-        timeseries, years, [definition['label'](year) for year in years])
+        timeseries, years,
+        [WARMING_DEFINITIONS[name]['label'](year) for year in years])
 
 
 def definition_attributes(definition):
@@ -1400,6 +1428,112 @@ def make_releases(sample, cfg, inputs):
     return releases
 
 
+def release_fidelity(releases, sample, cfg, timeseries):
+    """How close each release is to the run's whole ensemble (its parent),
+    at the headline years: the GWI_headlines-fidelity CSV of each release.
+
+    releases:
+        each release, by its size (see make_releases)
+    sample:
+        members.Sample, the parent
+    cfg:
+        the configuration (see read_argv_config)
+    timeseries:
+        the parent's summary timeseries, by file name (see
+        attributed_percentiles), for its percentiles
+    Returns a dict mapping each size to its table (see
+    summaries.fidelity_rows), one block of rows per headline year of each
+    definition asked for; empty if there are no headline years.
+
+    For each, the release's percentiles against the parent's (the
+    summary's), and the correlations of the regressed variables and Res
+    across the release's members against those across the parent's; the
+    same for the release's first 100 and 500 members (FIDELITY_PREFIXES),
+    which a user may take alone. The parent's correlations take one more
+    rebuild of every member in each headline year, one year at a time.
+
+    In plain words, for each definition and each of its headline years:
+    1. the parent's percentiles are read from its summary timeseries (no
+       work: they are the numbers already published);
+    2. the parent's correlations need every member's values that year,
+       which the run doesn't keep (it keeps only percentiles), so every
+       member is rebuilt in that one year (or window), as the summary
+       step did, and the values dropped once their correlations are taken;
+    3. each release's members that year are already at hand (the release
+       holds them), so its percentiles and correlations, and those of its
+       first 100 and 500 members, are taken directly; and each is set
+       against the parent's (summaries.fidelity_rows).
+    Step 2 is the only cost: one rebuild of one window per headline year,
+    holding the same (variables, N) array the summary step held, so it
+    adds no memory beyond the run's peak and ~2 s in production.
+    """
+    run_log.log_section('Release fidelity')
+    time_start = dt.datetime.now()
+    # The headline years, as for the headlines CSV
+    hl_years = warming_definitions.generate_headline_years(
+        cfg.headline_years, cfg.end_regress, cfg.end_trunc)
+    # The variables whose correlations are compared: the regressed ones,
+    # whose split the regression decides, and the residual (what is left
+    # of the observations); the sums of them (Tot, Ant) are left out,
+    # since they are correlated with their parts by construction
+    components = [var for var in sample.output_vars
+                  if var in cfg.regress_vars or var == 'Res']
+    # Every pair of them, each once, e.g. ('GHG', 'Nat'), ('GHG', 'OHF'),
+    # ...: 6 pairs for 3 regressed variables and Res
+    pairs = list(itertools.combinations(components, 2))
+
+    # Each release's blocks of rows, one per definition and headline year
+    tables = {size: [] for size in releases}
+    for name, definition in WARMING_DEFINITIONS.items():
+        # Only the definitions the run was asked for
+        if name not in cfg.definitions:
+            continue
+        # The parent's summary timeseries of this definition (a DataFrame,
+        # indexed by year, with a column for each (variable, percentile))
+        summary = timeseries[definition['file_name']]
+        # Its headline years, those its summary has (already noted when the
+        # headlines were written, so not again)
+        years = definition_headline_years(name, hl_years, cfg.headline_years,
+                                          summary.index, note_missing=False)
+        for year in years:
+            # 1. The parent's percentiles that year, read from the summary:
+            # (SIGMAS, variables)
+            parent_percentiles = np.array(
+                [[summary.loc[year, (var, sigma)]
+                  for var in sample.output_vars] for sigma in SIGMAS])
+            # 2. The parent's correlations that year. The years whose
+            # warming makes each member's one value for that year: 2025
+            # alone for the single-year value, 2016-2025 for AR6's mean,
+            # 2011-2025 for SR1.5's trend (its end point in 2025)
+            window = (year - definition['years_before'],
+                      year + definition['years_after'])
+            # Every member's value in that window, rebuilt: (1, variables,
+            # N); the window's alone, (variables, N)
+            parent_values = sample.ensemble_definition(
+                definition['function'], [window])
+            parent_values = parent_values[0]
+            # Their correlations across all N members: (variables,
+            # variables)
+            parent_correlations = summaries.correlations(parent_values)
+            # Free the values (N members' worth) before the next year
+            del parent_values
+            # 3. Each release's rows that year
+            for size, members in releases.items():
+                # The released members' values that year, in the release's
+                # order: (M, variables)
+                values = members[definition['file_name']].sel(
+                    year=year).to_numpy()
+                # Their percentiles and correlations (and those of the
+                # first 100 and 500), set against the parent's
+                tables[size].append(summaries.fidelity_rows(
+                    definition['label'](year), parent_percentiles,
+                    parent_correlations, values, SIGMAS, sample.output_vars,
+                    pairs, FIDELITY_PREFIXES))
+    print(f'Comparing {len(releases)} release(s) with the run, at the '
+          f'headline years ... took {dt.datetime.now() - time_start}')
+    return {size: pd.concat(rows) for size, rows in tables.items() if rows}
+
+
 def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
     """Write the inputs as used and the interim results: the observed
     temperatures, the piControl segments, the prior warming and the
@@ -1462,7 +1596,7 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
 
 
 def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
-                  releases, folders):
+                  releases, fidelity, folders):
     """Write the outputs: each warming definition's timeseries and the
     headlines, for the attributed warming and for the observations.
 
@@ -1479,6 +1613,8 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         (timeseries, headlines) (see observed_percentiles)
     releases:
         each release, by its size (see make_releases)
+    fidelity:
+        each release's fidelity table, by its size (see release_fidelity)
     folders:
         the output folders (see output_folders)
 
@@ -1550,10 +1686,17 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         name = results_layout.release_name(
             cfg.release_method, size, cfg.release_target_variable,
             cfg.release_target_year)
+        release_file = (
+            f'{inputs_name}_VARIABLES--{"-".join(cfg.regress_vars)}_'
+            f'{sample_name}_{name}_'
+            f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}')
         distributions.write_netcdf(
-            members, f'{folders.gwi}GWI_timeseries-members_{inputs_name}_'
-            f'VARIABLES--{"-".join(cfg.regress_vars)}_{sample_name}_{name}_'
-            f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}.nc')
+            members, f'{folders.gwi}GWI_timeseries-members_{release_file}.nc')
+        # ... and how close it is to the run's whole ensemble
+        if size in fidelity:
+            results_layout.write_csv(
+                fidelity[size],
+                f'{folders.gwi}GWI_headlines-fidelity_{release_file}.csv')
     # The observations: each definition's timeseries, the headlines
     obs_timeseries, obs_headlines = observed
     for file_name, table in obs_timeseries.items():
@@ -1634,13 +1777,16 @@ def main(argv):
         T_mod, forcing_vars, member_index, cfg, inputs)
     # The releases: a few representative members, rebuilt in full
     releases = make_releases(sample, cfg, inputs) if cfg.release_sizes else {}
+    # ... and how close each is to the whole ensemble
+    fidelity = (release_fidelity(releases, sample, cfg, attributed[0])
+                if releases else {})
 
     # Stage F: Write
     # Write the inputs as used and the interim results
     write_inputs_and_interims(cfg, inputs, priors, erf, folders)
     # Write the attribution outputs, and post-processed observation outputs
     write_outputs(cfg, sample.n_members, inputs.gmt.sizes['gmt_member'],
-                  attributed, observed, releases, folders)
+                  attributed, observed, releases, fidelity, folders)
 
     # What the run cost, beside the 'Memory usage anticipated' block
     run_log.log_section('Memory usage recorded')

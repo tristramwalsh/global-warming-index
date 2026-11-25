@@ -37,7 +37,8 @@ The results, the attributed warming:
                 summary
 
 (The headline years' quantiles and members are in the timeseries files:
-select the years.)
+select the years.) Each release comes with GWI_headlines-fidelity, a CSV
+comparing it with the run's whole ensemble at the headline years.
 
 The interim results and the inputs, in the same scheme:
 
