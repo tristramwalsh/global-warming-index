@@ -25,7 +25,45 @@ definition, and distributions.py writes them.
     random      M members at random, without repeats: a baseline, to
                 measure what stratified gains; not for production
 
-STRATIFIED, IN PLAIN WORDS
+ONE IDEA, DELIVERED IN TWO STEPS
+
+The stratified release rests on one idea: put the parent's members in
+nested order, an order by the target (e.g. Ant in 2025) in which every
+first k members, for any k, are spread evenly across its distribution.
+The release is the parent's first M members in that order; a user who
+takes the release's first k (e.g. 100 of 1000) takes the parent's first k.
+Choosing M from the parent's N, and a user's k from the release's M, are
+the same choice, made at two sizes.
+
+It is delivered in two steps, one at each size, by two techniques that give
+the same result (exactly, when N and M are powers of 2; otherwise step 1 is
+the more even of the two):
+
+    step 1, stratified selection (N to M; ours, inside the run): cut the
+        parent's ranks into M bands of equal probability, and keep one
+        member at random from each band
+    step 2, nested order (M to k; for the user, in the file): order the
+        M members by halving the bands again and again, interleaving the
+        halves with the leading half chosen at random
+
+These are the same thing: the first M members of the nested order of all N
+are one member, at random, from each of M blocks of consecutive ranks, the
+M bands of step 1. They need different techniques for two reasons:
+
+- Cost. Putting all N members in nested order needs every member ranked
+  (a full sort) and all N ordered: minutes for 6 million members in
+  Python, and out of reach for the complete ensemble's 790 million. Only
+  the first M are ever needed, and step 1 finds exactly those without
+  ordering the rest (np.argpartition, at M ranks, in time linear in N).
+  Ordering M = 1000 members (step 2) takes milliseconds.
+- Evenness at any size. Halving a block whose size isn't a power of 2
+  splits it unevenly (a block of 3 into 1 and 2, so its first member is one
+  of three with chances of 1/2, 1/4 and 1/4), so the halving is a little
+  uneven unless N is a power of 2. Step 1's bands are as even as N and M
+  allow, each member of a band equally likely. Step 2 halves only M's
+  bands, and leaves the choice within each band to step 1.
+
+STEP 1, STRATIFIED SELECTION (N TO M), IN PLAIN WORDS
 
 1. Rank the parent's N members by the stratifying value, e.g. each
    member's Ant in 2025, from the smallest (rank 0) to the largest
@@ -35,8 +73,10 @@ STRATIFIED, IN PLAIN WORDS
    b holds ranks ⌊b N / M⌋ to ⌊(b + 1) N / M⌋ - 1.
 
 3. Pick one rank in each band, uniformly at random, and keep the member
-   that has it. The release is in band order, from the smallest
-   stratifying value to the largest.
+   that has it.
+
+4. Put the members in nested order (step 2, below), so that the first k
+   of them, for any k, are spread across the distribution too.
 
 For example, 12 parent members into M = 4 bands. Their Ant in 2025, by
 position in the member index:
@@ -55,6 +95,44 @@ Picking ranks 1, 5, 6 and 10 at random, one in each band, releases the
 members at positions 6, 11, 4 and 2 (Ant 1.10, 1.25, 1.27, 1.45): one from
 each quarter of the distribution. A random choice of 4 could have taken
 all four from the top half.
+
+STEP 2, THE NESTED ORDER (M TO k), IN PLAIN WORDS
+
+A user may take only the first k members of a release (e.g. 100 of 1000).
+In band order (smallest value first) those would be the bottom tenth of
+the distribution. So the members are put in an order in which every first
+k is spread across all the bands:
+
+1. Split the bands into a lower half and an upper half.
+
+2. Order each half in the same way (steps 1 to 3, within the half).
+
+3. Interleave the two halves' orders, one from each in turn, the half that
+   goes first chosen at random.
+
+The first 2 members are then one from each half, the first 4 one from each
+quarter, the first 8 one from each eighth, and so on; which band in each
+quarter (or eighth) comes first is random. For example, for M = 8 bands
+(0 the lowest), one such order is
+
+    5 1 6 3 4 0 7 2
+
+The first 2 (5, 1) are one from each half; the first 4 (5, 1, 6, 3) one
+from each quarter (0-1, 2-3, 4-5, 6-7). When M isn't a power of 2, the
+halves differ by one band, and the spread of each first k is nearly as
+even.
+
+Why random: the plain van der Corput order (band b's place set by b's
+binary digits reversed, 0 4 2 6 1 5 3 7 for 8 bands) always takes the
+lowest band of each quarter first, so every first k leans low, by about
+half of a k-th of the distribution. Choosing at random which half leads
+removes the lean (Owen's scrambling of the van der Corput order, 1995),
+and keeps the spread. On a skewed test distribution with standard
+deviation 1, the first 100 of a 1000-member release (300 repeats): plain
+order, mean error of the 5th to 95th percentiles -0.02 to -0.12 and RMS
+error at the 5th 0.11; random-led order, -0.05 to +0.03 and 0.06; the
+first 10, -0.1 to -0.9 against -0.25 to +0.24. (Band order: -0.9 to
+-3.1 for the first 100.)
 
 WHY THIS DESIGN
 
@@ -133,16 +211,48 @@ def stratified(stratify_values, n_release, rng):
         M, the number of members to keep, at most N
     rng:
         a numpy random Generator
-    Returns the positions, (M,) int64, in band order: from the member with
-    the smallest stratifying value to the largest.
+    Returns the positions, (M,) int64, in nested order (see nested_order):
+    every first k of them spread across the bands.
     """
     # The rank to keep in each band: (M,)
     ranks = band_ranks(len(stratify_values), n_release, rng)
     # The parent's positions arranged so that those at the chosen ranks
     # are the members with those ranks (the rest only partly ordered): (N,)
     by_rank = np.argpartition(stratify_values, ranks)
-    # The members at the chosen ranks: (M,)
-    return by_rank[ranks]
+    # The members at the chosen ranks, in band order: (M,)
+    members = by_rank[ranks]
+    # ... in nested order
+    return members[nested_order(n_release, rng)]
+
+
+def nested_order(n_bands, rng):
+    """An order of the bands 0 to n_bands - 1 in which every first k of
+    them is spread across all of them (see STEP 2 in the module's
+    docstring).
+
+    n_bands:
+        M, the number of bands
+    rng:
+        a numpy random Generator
+    Returns the bands, (M,) int64, in that order: e.g. 5 1 6 3 4 0 7 2 for
+    8 bands.
+    """
+    def order(bands):
+        # One band (or none) is in order already
+        if len(bands) <= 1:
+            return list(bands)
+        # Each half of the bands, in order
+        middle = len(bands) // 2
+        first, second = order(bands[:middle]), order(bands[middle:])
+        # The half that leads, at random
+        if rng.random() < 0.5:
+            first, second = second, first
+        # One from each in turn (the longer half's last band at the end)
+        interleaved = []
+        for i in range(max(len(first), len(second))):
+            interleaved += first[i:i + 1] + second[i:i + 1]
+        return interleaved
+    return np.array(order(list(range(n_bands))), dtype=np.int64)
 
 
 def random(n_parent, n_release, rng):
@@ -155,7 +265,8 @@ def random(n_parent, n_release, rng):
         M, the number of members to keep, at most N
     rng:
         a numpy random Generator
-    Returns the positions, (M,) int64, in the order drawn.
+    Returns the positions, (M,) int64, in the order drawn, so every first k
+    of them is a random choice too.
     """
     return rng.choice(n_parent, size=n_release, replace=False)
 

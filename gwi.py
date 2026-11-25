@@ -106,11 +106,12 @@ MAX_RELEASE_BYTES = 500e6
 
 # How to use a release, in each release file's attributes
 RELEASE_USAGE = (
-    'Every member has equal weight: use all of them, and do not weight, '
-    'resample or subset them. Each member is one '
-    'consistent draw of the uncertain inputs (a FaIR parameter set, an ERF '
-    'member, an observed member and a piControl segment) across all its '
-    'years, variables and definitions.')
+    'Every member has equal weight: use all of them, or the first of them, '
+    'any number (they are in an order in which every first k is spread '
+    'across the distribution), and do not weight or resample them. Each '
+    'member is one consistent draw of the uncertain inputs (a FaIR '
+    'parameter set, an ERF member, an observed member and a piControl '
+    'segment) across all its years, variables and definitions.')
 
 # SR1.5 warming is defined as the 30-year mean human-induced warming, relative
 # to the pre-industrial period, centred using trend extrapolation where
