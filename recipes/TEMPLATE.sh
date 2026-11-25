@@ -258,11 +258,12 @@ RECIPE_COMMITTED=n
 # Select truncation range
 RECIPE_TRUNCATION=1850-2050
 
-# The warming definitions to give: at least one. Each gets its own
-# timeseries CSV (GWI_results_timeseries-<DEFINITION>), covering every year
-# for which it can be produced from the underlying annual timeseries (the
-# years whose whole window lies within the truncation range), and its values
-# at the headline years go into the headlines CSV. The annual timeseries is
+# The warming definitions to give: at least one. Each gets its own summary
+# timeseries CSV (GWI_timeseries-summary-<DEFINITION>), covering
+# every year for which it can be produced from the underlying annual
+# timeseries (the years whose whole window lies within the truncation
+# range), and its values at the headline years go into the headlines CSV
+# (GWI_headlines-summary). The annual timeseries is
 # always written, since the plots build on it.
 #   annual  the warming in each year
 #   SR1.5   the value at mid-year of the line fitted through the last 15 years
@@ -287,7 +288,7 @@ RECIPE_HEADLINE_YEARS='end_regress'
 
 # The quantiles: every definition's timeseries as percentiles every this
 # many percent, from the 0th to the 100th, written to one netCDF file
-# (GWI_results_timeseries-quantiles), beside the summary CSVs (the median
+# (GWI_timeseries-quantiles), beside the summary CSVs (the median
 # and the likely and very likely ranges, which are always written). They
 # show the whole distribution finely: the sampling studies compare them,
 # and exceedance probabilities in each year can be read off them. Taken in

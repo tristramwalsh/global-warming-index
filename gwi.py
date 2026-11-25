@@ -18,9 +18,9 @@ One run is a short pipeline (main, at the bottom):
                                 the observations
     members.Sample              stage C: the drawn members, rebuilt as each
                                 output needs them
-    calculate_attributed_percentiles, calculate_observed_percentiles,
-    calculate_prior_and_erf_percentiles
-                                the percentile summaries
+    attributed_percentiles, observed_percentiles,
+    prior_and_erf_percentiles   the percentiles: the summaries (CSV), and
+                                the quantiles (netCDF)
     write_inputs_and_interims   the inputs as used, the priors and the ERF
     write_outputs               each definition's timeseries and the
                                 headlines (CSV), and the quantiles
@@ -954,7 +954,7 @@ def get_headline_results_rows(name, timeseries, hl_years, headline_years):
         timeseries, years, [definition['label'](year) for year in years])
 
 
-def calculate_attributed_percentiles(sample, cfg):
+def attributed_percentiles(sample, cfg):
     """The attributed warming's percentiles: each warming definition's
     timeseries, summarised (SIGMAS) and as quantiles (cfg.quantile_levels),
     and the summary's rows at the headline years.
@@ -1047,7 +1047,7 @@ def calculate_attributed_percentiles(sample, cfg):
     return timeseries, headlines, quantiles
 
 
-def calculate_observed_percentiles(gmt, cfg):
+def observed_percentiles(gmt, cfg):
     """The observations' percentile summaries: each warming definition
     applied to every observed member, with percentiles across them (no
     rebuild), and their rows at the headline years.
@@ -1088,7 +1088,7 @@ def calculate_observed_percentiles(gmt, cfg):
     return timeseries, (pd.concat(rows, axis=0) if rows else None)
 
 
-def calculate_prior_and_erf_percentiles(T_mod, forcing_vars, member_index,
+def prior_and_erf_percentiles(T_mod, forcing_vars, member_index,
                                         cfg, inputs):
     """The interim results' percentile summaries: the prior warming and the
     forcing.
@@ -1140,7 +1140,7 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
         the inputs (see load_inputs)
     priors, erf:
         the prior warming's and the forcing's summaries (see
-        calculate_prior_and_erf_percentiles)
+        prior_and_erf_percentiles)
     folders:
         the output folders (see output_folders)
 
@@ -1167,27 +1167,27 @@ def write_inputs_and_interims(cfg, inputs, priors, erf, folders):
     # CSV row per year, one column per member
     results_layout.write_csv(
         inputs.gmt,
-        f'{folders.obs}Obs_timeseries_{inputs_name}_'
+        f'{folders.obs}Obs_timeseries-members_{inputs_name}_'
         f'ENSEMBLE-SIZE--{n_obs}.csv', year_heading='Year')
 
     # The piControl segments, after filtering: one CSV row per year, one
     # column per segment
     results_layout.write_csv(
         inputs.pic,
-        f'{folders.picontrol}PiControl_timeseries_{inputs_name}_'
-        f'ENSEMBLE-SIZE--{n_pic}.csv')
+        f'{folders.picontrol}PiControl_timeseries-members_'
+        f'{inputs_name}_ENSEMBLE-SIZE--{n_pic}.csv')
 
     # The prior warming's summary
     results_layout.write_csv(
         priors,
-        f'{folders.priors}PRIOR_results_timeseries_{inputs_name}_'
-        f'{variables_name}_ENSEMBLE-SIZE--{n_pairs}_.csv')
+        f'{folders.priors}PRIOR_timeseries-summary_{inputs_name}_'
+        f'{variables_name}_ENSEMBLE-SIZE--{n_pairs}.csv')
 
     # The forcing's summary
     results_layout.write_csv(
         erf,
-        f'{folders.erfs}ERF_results_timeseries_{inputs_name}_'
-        f'{variables_name}_ENSEMBLE-SIZE--{n_erf}_.csv')
+        f'{folders.erfs}ERF_timeseries-summary_{inputs_name}_'
+        f'{variables_name}_ENSEMBLE-SIZE--{n_erf}.csv')
 
 
 def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
@@ -1203,40 +1203,45 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         the observed members' number, for the observed outputs' names
     attributed:
         (timeseries, headlines, quantiles) (see
-        calculate_attributed_percentiles)
+        attributed_percentiles)
     observed:
-        (timeseries, headlines) (see calculate_observed_percentiles)
+        (timeseries, headlines) (see observed_percentiles)
     folders:
         the output folders (see output_folders)
 
-    The attributed outputs' names end in the time of the run, since
-    iterations of a configuration differ only in it; the observed ones are
-    the same for every iteration, so have no date.
+    Each name says which years the file covers and in what form (see
+    OUTPUT NAMES in src/postprocessing/results_layout.py): e.g.
+    GWI_timeseries-summary-AR6_, GWI_headlines-summary_,
+    GWI_timeseries-quantiles_.
+
+    The attributed outputs' names end in the sample (its design, size and
+    seed), which tells the iterations of a configuration apart: a run
+    repeated with the same seed draws the same members, and replaces its
+    files with the same results. The observed ones are the same for every
+    iteration.
     """
-    # The names: the inputs, the regression, the sample (its design, actual
-    # size and seed), and the time of the run, kept short since the names
-    # are close to the 255-byte limit (see results_layout.sample_name)
+    # The names: the inputs, the regression and the sample, kept short
+    # since the names are close to the 255-byte limit (see
+    # results_layout.sample_name)
     inputs_name = (f'ERF--{cfg.erf_id}_GMT--{cfg.gmt_id}_'
                    f'PREINDUSTRIAL--{cfg.preindustrial_str}'
                    f'{cfg.committed_str}')
-    run_time = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     sample_name = results_layout.sample_name(
         cfg.sampling_design, n_members, cfg.seed)
     gwi_name = (f'{inputs_name}_VARIABLES--{"-".join(cfg.regress_vars)}_'
                 f'{sample_name}_'
-                f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}_'
-                f'DATE--{run_time}')
+                f'REGRESSED-YEARS--{cfg.start_regress}-{cfg.end_regress}')
     obs_name = f'{inputs_name}_ENSEMBLE-SIZE--{n_observed_members}'
     # The attributed warming: each definition's timeseries, the headlines,
     # the quantiles
     gwi_timeseries, gwi_headlines, gwi_quantiles = attributed
     for file_name, table in gwi_timeseries.items():
         results_layout.write_csv(
-            table, f'{folders.gwi}GWI_results_timeseries-{file_name}_'
-            f'{gwi_name}.csv')
+            table, f'{folders.gwi}GWI_timeseries-summary-'
+            f'{file_name}_{gwi_name}.csv')
     if gwi_headlines is not None:
         results_layout.write_csv(
-            gwi_headlines, f'{folders.gwi}GWI_results_headlines_'
+            gwi_headlines, f'{folders.gwi}GWI_headlines-summary_'
             f'{gwi_name}.csv')
     if gwi_quantiles is not None:
         # What the file is, and the run's configuration
@@ -1251,18 +1256,18 @@ def write_outputs(cfg, n_members, n_observed_members, attributed, observed,
         # fit)
         quantiles = xr.Dataset(gwi_quantiles, attrs=attributes)
         distributions.write_netcdf(
-            quantiles, f'{folders.gwi}GWI_results_timeseries-quantiles_'
+            quantiles, f'{folders.gwi}GWI_timeseries-quantiles_'
             f'{gwi_name}.nc')
     # The observations: each definition's timeseries, the headlines
     obs_timeseries, obs_headlines = observed
     for file_name, table in obs_timeseries.items():
         results_layout.write_csv(
-            table, f'{folders.obs}Obs_results_timeseries-{file_name}_'
-            f'{obs_name}.csv')
+            table, f'{folders.obs}Obs_timeseries-summary-'
+            f'{file_name}_{obs_name}.csv')
     if obs_headlines is not None:
         results_layout.write_csv(
-            obs_headlines, f'{folders.obs_headlines}Obs_results_headlines_'
-            f'{obs_name}.csv')
+            obs_headlines, f'{folders.obs_headlines}'
+            f'Obs_headlines-summary_{obs_name}.csv')
 
 
 def main(argv):
@@ -1325,9 +1330,9 @@ def main(argv):
     # Stage E: rebuild the ensemble: the percentile summaries of every
     # definition, for the attributed warming and the observations, and of
     # the interim results (the prior warming and the forcing)
-    attributed = calculate_attributed_percentiles(sample, cfg)
-    observed = calculate_observed_percentiles(inputs.gmt, cfg)
-    priors, erf = calculate_prior_and_erf_percentiles(
+    attributed = attributed_percentiles(sample, cfg)
+    observed = observed_percentiles(inputs.gmt, cfg)
+    priors, erf = prior_and_erf_percentiles(
         T_mod, forcing_vars, member_index, cfg, inputs)
 
     # Stage F: Write

@@ -285,7 +285,7 @@ The following settings control the analysis. Every recipe sets each of them, nam
 - `$(seq -s, 1950 2024)` = all years in a range (expensive)
 
 
-**`QUANTILE_STEP`**: The quantiles: every definition's timeseries as percentiles every this many percent, from the 0th to the 100th, in one netCDF file (`GWI_results_timeseries-quantiles`; see **Output Structure**)
+**`QUANTILE_STEP`**: The quantiles: every definition's timeseries as percentiles every this many percent, from the 0th to the 100th, in one netCDF file (`GWI_timeseries-quantiles`; see **Output Structure**)
 - `0.1` = every 0.1 percentile, 1001 levels: the distribution finely, as the sampling studies compare it
 - `1` = every percentile, 101 levels
 - `none` (or empty) = no quantiles, only the summary CSVs (the median and likely and very likely ranges), which are always written
@@ -414,29 +414,39 @@ global-warming-index/
 │            └── ENSEMBLE-MEMBER--ERF-{member}_GMT-{member}/
 │                └── VARIABLES--{vars}/
 │                    └── REGRESSED-YEARS--{start}-{end}/
-│                        ├── GWI_results_timeseries-ANNUAL_*.csv
-│                        ├── GWI_results_timeseries-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
-│                        ├── GWI_results_headlines_*.csv
-│                        └── GWI_results_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
+│                        ├── GWI_timeseries-summary-ANNUAL_*.csv
+│                        ├── GWI_timeseries-summary-<DEFINITION>_*.csv  (SR15, AR6, CGWL, RATES: each definition asked for)
+│                        ├── GWI_headlines-summary_*.csv
+│                        └── GWI_timeseries-quantiles_*.nc  (if QUANTILE_STEP is set)
 ├── plots/        figures drawn by combine_results_iterations.py (see below)
 ├── logs_slurm/   one log per Slurm job, and a copy of each recipe run (slurm mode)
 └── logs_direct/  one log per configuration, and a copy of each recipe run (direct mode)
 ```
+
+**File names.** Each file's name starts with what it holds: `<source>_<years>-<form>[-<DEFINITION>]_`, then the configuration. The *source* is `GWI` for the results (the attributed warming), `PRIOR` for the interim prior warming (FaIR's, before the constraint), or `ERF`, `Obs` or `PiControl` for the inputs as the run used them (the forcing, the observed temperatures, the piControl segments), which are processed only to be plotted beside the results, by the combination script, on the website and in papers. The *years* are the whole `timeseries` or the `headlines` years; the *form* is how the distribution across the members is given. The results:
+
+| | **summary** (CSV): median, likely and very likely ranges | **quantiles** (netCDF): percentiles every `QUANTILE_STEP` | **members** (netCDF): representative members |
+| --- | --- | --- | --- |
+| **timeseries** (every year) | `GWI_timeseries-summary-<DEFINITION>` (one per definition) | `GWI_timeseries-quantiles` (every definition) | `GWI_timeseries-members` (the release; to come) |
+| **headlines** (the headline years) | `GWI_headlines-summary` (every definition) | – (select the years from the timeseries) | – (select the years from the timeseries) |
+
+The interim results and the inputs follow the same scheme: `PRIOR_timeseries-summary` (the prior warming), `ERF_timeseries-summary` (the forcing), `Obs_timeseries-members` (the observed members used), `Obs_timeseries-summary-<DEFINITION>` and `Obs_headlines-summary` (each definition applied to the observed members), and `PiControl_timeseries-members` (the piControl segments used, after filtering). The configuration that follows is the inputs, the regressed variables, the sample (`ENSEMBLE--<design>-<N>-seed<seed>`, which tells iterations apart: a run repeated with the same seed gives the same results, and replaces its files) and the regressed years, as each file needs.
 
 The top level names the run's inputs: the ERF and GMT dataset IDs and the pre-industrial period (`PREINDUSTRIAL--none` with no offset), plus `_COMMITTED--{start}-{end}` when `COMMITTED` is set; e.g. `ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900`. Below it, `ENSEMBLE-MEMBER--` gives the member selection, ERF first, e.g. `ERF-all_GMT-all` or `ERF-all_GMT-7`. Each file's name repeats these labels.
 
 `{category}` is one of:
 - `iterations/` = the results of each `gwi.py` run
 - `aggregated/` = those averaged across iterations by `combine_results_iterations.py`, plus the historical-only timeseries
-- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply (the ERFs and priors keep `VARIABLES--`, since their variables are the forcing variables the regressed ones give). The prior warming is FaIR's warming before the observational constraint: it depends only on the ERF ensemble and the FaIR parameters, not on the reference temperatures, and is summarised over every (FaIR parameter set, ERF member) pair, each counted once. Depending on the size of the GWI ensemble, those pairs can differ from the ones the GWI's members use; each run's log says how many it used. The priors, ERF, observed-timeseries and piControl files are the same for every iteration of a configuration, so they have no date in their name, and each run overwrites them in one step, so that runs writing them at the same time never leave a partial file. `observations/` also holds `Obs_timeseries_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots; and `Obs_results_timeseries-<DEFINITION>_*.csv`: each warming definition the run asks for, applied to every observed member, as percentiles across the members, in every year whose window lies within the observed years (the observed headlines, per regressed range, are the rows of all five definitions at the headline years, whatever the run asks for, so that runs sharing the observations write the same file). On observations the definitions keep the names they have for the attributed warming, although SR1.5's and the CGWL's meanings are strictly for attributed (human-induced, or projected) warming.
-- `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries_*.csv`, one per inputs folder), for the internal-variability figures.
+- `observations/`, `erfs/`, `priors/` = the observed temperatures, ERFs and prior warming for each selection, in the same hierarchy without the levels that do not apply (the ERFs and priors keep `VARIABLES--`, since their variables are the forcing variables the regressed ones give). The prior warming is FaIR's warming before the observational constraint: it depends only on the ERF ensemble and the FaIR parameters, not on the reference temperatures, and is summarised over every (FaIR parameter set, ERF member) pair, each counted once. Depending on the size of the GWI ensemble, those pairs can differ from the ones the GWI's members use; each run's log says how many it used. The priors, ERF, observed-timeseries and piControl files are the same for every iteration of a configuration, so they have no sample in their name, and each run overwrites them in one step, so that runs writing them at the same time never leave a partial file. `observations/` also holds `Obs_timeseries-members_*.csv`: the reference temperatures each run used (the selected members, with the pre-industrial offset removed), which `combine_results_iterations.py` plots; and `Obs_timeseries-summary-<DEFINITION>_*.csv`: each warming definition the run asks for, applied to every observed member, as percentiles across the members, in every year whose window lies within the observed years (the observed headlines, per regressed range, are the rows of all five definitions at the headline years, whatever the run asks for, so that runs sharing the observations write the same file). On observations the definitions keep the names they have for the attributed warming, although SR1.5's and the CGWL's meanings are strictly for attributed (human-induced, or projected) warming.
+- `picontrol/` = the piControl segments each set of inputs sampled internal variability from, after filtering (`PiControl_timeseries-members_*.csv`, one per inputs folder), for the internal-variability figures.
 
 **Output formats.** Summaries are CSV; distributions are netCDF (`src/outputs/distributions.py`):
 - A *summary* is the median and the likely and very likely ranges (the 50th, 17th–83rd and 5th–95th percentiles across the members) of every variable in every year: a small table, readable in a spreadsheet, whose configuration is in its folder and file names.
 - A *distribution* is the ensemble's distribution in full: its *quantiles* (the percentiles at many levels, e.g. every 0.1 from the 0th to the 100th), or members themselves. It is netCDF (float32, compressed), with named dimensions, and it carries its configuration as attributes, since a distribution file is often sent on by itself: the input datasets and their members, the pre-industrial era, the regressed variables and years, the output years, the sampling design, the ensemble size $N$ and the seed, the git commit and the `gwi.py` command, with a `long_name` and `units` for every variable (`K` for warming, a temperature difference, following the [CF conventions](https://cfconventions.org/), 1.11). Every netCDF file is written by one function, which refuses a file missing any of these.
+- The one exception: the inputs as the run used them (the observed members and the piControl segments), which are written only to be plotted beside the results, are member tables in CSV, as the inputs come.
 
 The CSVs are:
-- **Timeseries** (`timeseries-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
+- **Timeseries** (`timeseries-summary-ANNUAL`, `-SR15`, `-AR6`, `-CGWL`, `-RATES`): each warming definition's values for all variables and percentiles, in every year whose window fits (the annual values; the SR1.5 trend end point, equivalent to a 29-year mean centred using extrapolation; the AR6 lagged decade mean; the CGWL 19-year mean centred using constrained projections; the AR6 rate, in °C per year)
 - **Headlines**: every definition's values at the headline years, in one table
 
 The netCDF file is:

@@ -241,7 +241,7 @@ def figure_iteration_comparison(reg_range, df_avg, scen, ens, reg_vars,
     figure_timeseries.
     """
     dict_iterations, _ = iteration_averaging.load_iteration_dfs(
-        reg_range, 'timeseries-ANNUAL', scen, ens, reg_vars)
+        reg_range, 'timeseries-summary-ANNUAL', scen, ens, reg_vars)
 
     # The comparison is only meaningful where a configuration has been run
     # more than once.

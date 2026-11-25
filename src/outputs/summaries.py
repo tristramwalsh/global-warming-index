@@ -25,7 +25,8 @@ The terms, as used throughout:
                         axis
     headlines           the headline years (e.g. the latest, and the years
                         of IPCC assessments), whose values of every
-                        definition the GWI_results_headlines CSV gathers
+                        definition the GWI_headlines-summary CSV
+                        gathers
 
 Every warming definition so far is linear in time, so each member's value
 in each window is rebuilt from T_mod and T_obs with the definition applied
@@ -51,8 +52,9 @@ How the functions connect:
                                       levels and the quantiles' together
     select_levels                     those percentiles at some of the
                                       levels: the summary's, for the
-                                      GWI_results_timeseries-* CSVs (laid out
-                                      by percentiles_as_csv_table), or the
+                                      GWI_timeseries-summary-*
+                                      CSVs (laid out by
+                                      percentiles_as_csv_table), or the
                                       quantiles'
     quantiles_dataarray               the quantiles, labelled, for the
                                       quantiles netCDF
@@ -61,7 +63,8 @@ How the functions connect:
     observed_timeseries_table         a definition's timeseries for the
                                       observed temperatures: percentiles
                                       across the observed members, no
-                                      rebuild (Obs_results_timeseries-*)
+                                      rebuild
+                                      (Obs_timeseries-summary-*)
     prior_timeseries_table,           the prior warming (stage A's T_mod)
     erf_timeseries_table              and the forcing, over every
                                       (parameter set, ERF member) pair and
@@ -351,7 +354,7 @@ def quantiles_dataarray(percentiles, levels, years, output_vars, name,
 
 def headline_rows(timeseries, headline_years, labels):
     """A definition's timeseries at the headline years, labelled as the
-    GWI_results_headlines CSV labels them.
+    GWI_headlines-summary CSV labels them.
 
     timeseries:
         a DataFrame indexed by year, e.g. a timeseries CSV's table
@@ -389,7 +392,8 @@ def observed_timeseries_table(gmt, sigmas, definition, years_before,
         years after it
     Returns:
         a DataFrame indexed by year ('Year'), with a column for each ('Obs',
-        percentile), as the Obs_results_headlines CSV lays them out.
+        percentile), as the Obs_headlines-summary CSV lays them
+        out.
 
     The observations need no rebuild: the definition is applied to each
     observed member directly, and the percentiles taken across the members.
@@ -419,10 +423,10 @@ def observed_timeseries_table(gmt, sigmas, definition, years_before,
 
 
 def prior_timeseries_table(T_mod, forcing_vars, regress_vars, years, sigmas):
-    """The table of the PRIOR_results_timeseries CSV: the prior warming,
-    stage A's modelled warming itself (the warming before the observational
-    constraint, every scaling factor 1), with its percentiles over every
-    (parameter set, ERF member) pair, each counted once.
+    """The table of the PRIOR_timeseries-summary CSV: the prior
+    warming, stage A's modelled warming itself (the warming before the
+    observational constraint, every scaling factor 1), with its percentiles
+    over every (parameter set, ERF member) pair, each counted once.
 
     T_mod:
         array (p, e, t, v), stage A's modelled warming
@@ -449,8 +453,8 @@ def prior_timeseries_table(T_mod, forcing_vars, regress_vars, years, sigmas):
 
 
 def erf_timeseries_table(erf, forcing_vars, regress_vars, sigmas):
-    """The table of the ERF_results_timeseries CSV: the forcing of every
-    variable, with its percentiles over the ERF members.
+    """The table of the ERF_timeseries-summary CSV: the forcing of
+    every variable, with its percentiles over the ERF members.
 
     erf:
         the forcing, a DataArray (year, erf_member, forcing_variable)

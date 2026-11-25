@@ -18,17 +18,18 @@ def read_observations_timeseries(scen, ens):
         'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
     ens: the member selection, e.g. 'ERF-all_GMT-all'
     """
-    # The one Obs_timeseries file for these inputs and members
+    # The one file of the observed members for these inputs and members
     folder = (f'{results_layout.OBSERVATIONS_FOLDER}/{scen}/'
               f'ENSEMBLE-MEMBER--{ens}/')
     files = sorted(f for f in os.listdir(folder)
-                   if f.startswith('Obs_timeseries_'))
+                   if f.startswith('Obs_timeseries-members_'))
 
     # Stop if it isn't there (results made before gwi.py saved it)
     if len(files) != 1:
         raise FileNotFoundError(
-            f'Expected one Obs_timeseries_*.csv file in {folder}, but found '
-            f'{len(files)}. Rerun gwi.py for these inputs to save it.')
+            f'Expected one Obs_timeseries-members_*.csv file in '
+            f'{folder}, but found {len(files)}. Rerun gwi.py for these '
+            'inputs to save it.')
 
     return pd.read_csv(os.path.join(folder, files[0]), index_col=0)
 
@@ -41,12 +42,12 @@ def read_picontrol_timeseries(scen):
     scen: the inputs label, e.g.
         'ERF--IGCC-2025_GMT--HadCRUT-2025_PREINDUSTRIAL--1850-1900'
     """
-    # The one PiControl_timeseries file for these inputs
+    # The one file of the piControl segments for these inputs
     folder = f'{results_layout.PICONTROL_FOLDER}/{scen}/'
     if not os.path.exists(folder):
         return None
     files = sorted(f for f in os.listdir(folder)
-                   if f.startswith('PiControl_timeseries_'))
+                   if f.startswith('PiControl_timeseries-members_'))
     if len(files) != 1:
         return None
 
@@ -202,13 +203,13 @@ def load_gwi_priors_erf_obs():
                                  f'VARIABLES--{regressed_vars}/')
                 if os.path.exists(_path_prior_dir):
                     for f in os.listdir(_path_prior_dir):
-                        if f.startswith('PRIOR_results_timeseries_'):
+                        if f.startswith('PRIOR_timeseries-summary_'):
                             priors_files[scenario][ensemble_selection][
                                 regressed_vars]['timeseries'] = (
                                     os.path.join(_path_prior_dir, f))
                 if os.path.exists(_path_erf_dir):
                     for f in os.listdir(_path_erf_dir):
-                        if f.startswith('ERF_results_timeseries_'):
+                        if f.startswith('ERF_timeseries-summary_'):
                             erf_files[scenario][ensemble_selection][
                                 regressed_vars]['timeseries'] = (
                                     os.path.join(_path_erf_dir, f))
@@ -232,7 +233,7 @@ def load_gwi_priors_erf_obs():
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}/' +
                                 f'VARIABLES--{regressed_vars}/' +
                                 f'REGRESSED-YEARS--{regressed_years}/' +
-                                f'GWI_results_{res_type}_' +
+                                f'GWI_{res_type}_' +
                                 f'{scenario}_'
                                 f'ENSEMBLE-MEMBER--{ensemble_selection}_' +
                                 f'VARIABLES--{regressed_vars}_' +
@@ -240,9 +241,9 @@ def load_gwi_priors_erf_obs():
                                 'AVERAGE.csv'
                             )
                         for res_name, res_type in [
-                            ('timeseries', 'timeseries-ANNUAL'),
-                            ('headlines', 'headlines'),
-                            ('rates', 'timeseries-RATES')]
+                            ('timeseries', 'timeseries-summary-ANNUAL'),
+                            ('headlines', 'headlines-summary'),
+                            ('rates', 'timeseries-summary-RATES')]
                     }
                     results_files[scenario
                                   ][ensemble_selection
@@ -270,7 +271,8 @@ def load_gwi_priors_erf_obs():
                                                       ][regressed_years]:
                         if os.path.exists(_path_obs_dir):
                             for f in os.listdir(_path_obs_dir):
-                                if f.startswith('Obs_results_headlines_'):
+                                if f.startswith(
+                                        'Obs_headlines-summary_'):
                                     obs_files[scenario
                                               ][ensemble_selection
                                                 ][regressed_years
@@ -320,13 +322,14 @@ def load_historical_only_dfs(results_dfs):
                 # lines and legends differently.
                 hist_files = sorted([
                     f for f in os.listdir(_path)
-                    if f.startswith('GWI_results_')
+                    if f.startswith('GWI_timeseries-summary-')
                     and 'HISTORICAL-ONLY' in f])
 
                 for hist_file in hist_files:
                     _df = pd.read_csv(_path + hist_file,
                                       index_col=0, header=[0, 1], skiprows=0)
-                    headline_name = hist_file.split('GWI_results_')[1].split(
+                    headline_name = hist_file.split(
+                        'GWI_timeseries-summary-')[1].split(
                         '_HISTORICAL-ONLY')[0]
 
                     if 'HISTORICAL-ONLY' not in results_dfs[scen

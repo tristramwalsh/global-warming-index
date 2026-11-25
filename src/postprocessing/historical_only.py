@@ -211,7 +211,7 @@ def combine_historical_only(scen, ens, reg_vars, reg_ranges_all,
             f'{results_layout.AGGREGATED_FOLDER}/{scen}/' +
             f'ENSEMBLE-MEMBER--{ens}/' +
             f'VARIABLES--{reg_vars}/'
-            f'GWI_results_{headline}_HISTORICAL-ONLY_' +
+            f'GWI_timeseries-summary-{headline}_HISTORICAL-ONLY_' +
             f'{scen}_' +
             f'ENSEMBLE-MEMBER--{ens}_' +
             f'VARIABLES--{reg_vars}_' +

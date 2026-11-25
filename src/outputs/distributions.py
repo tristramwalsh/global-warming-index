@@ -29,6 +29,12 @@ In plain words:
    because a distribution file gets sent on by itself, away from the
    folder whose names describe it.
 
+   One exception: the inputs as the run used them, the observed members
+   and the piControl segments (Obs_timeseries-members,
+   PiControl_timeseries-members), are member tables in CSV, as the inputs
+   come. They are written only to be plotted beside the results, not as
+   products, and hold at most a few hundred members.
+
 3. So every netCDF file says, in its attributes (run_attributes):
    - which datasets it was made from, and which of their members;
    - the pre-industrial era, the regressed variables and years, and the

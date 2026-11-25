@@ -1,4 +1,59 @@
-"""Where results and figures are written.
+"""Where results and figures are written, and what the files are called.
+
+OUTPUT NAMES. Each file's name starts with what it holds:
+
+    <source>_<years>-<form>[-<DEFINITION>]_<configuration>
+
+    source       what it is of:
+                   GWI        the attributed warming: the results
+                   PRIOR      the prior warming, FaIR's before the
+                              constraint: an interim result
+                   ERF, Obs,  the inputs, as the run used them (the
+                   PiControl  forcing, the observed temperatures, the
+                              piControl segments), processed only so that
+                              they can be plotted beside the results (by
+                              the combine step, the website, papers); not
+                              products for anyone else
+    years        timeseries (every year) or headlines (the headline years)
+    form         how the distribution across the members is given:
+                   summary    the median and the likely and very likely
+                              ranges (CSV)
+                   quantiles  the percentiles at many levels, e.g. every
+                              0.1 (netCDF)
+                   members    the members themselves (netCDF; for the
+                              inputs, CSV: see distributions.py)
+    DEFINITION   the warming definition, for the summary timeseries, one
+                 file each (ANNUAL, SR15, AR6, CGWL, RATES); the netCDF
+                 files hold every definition
+
+The results, the attributed warming:
+
+                summary (CSV)        quantiles (netCDF)    members (netCDF)
+    timeseries  GWI_timeseries-      GWI_timeseries-       GWI_timeseries-
+                summary-<DEFINITION> quantiles             members (the
+                                                           release; to come)
+    headlines   GWI_headlines-       -                     -
+                summary
+
+(The headline years' quantiles and members are in the timeseries files:
+select the years.)
+
+The interim results and the inputs, in the same scheme:
+
+    PRIOR_timeseries-summary                    the prior warming
+    ERF_timeseries-summary                      the forcing
+    Obs_timeseries-members                      the observed members used
+    Obs_timeseries-summary-<DEFINITION>,        each definition applied to
+    Obs_headlines-summary                       the observed members
+    PiControl_timeseries-members                the piControl segments used,
+                                                after filtering
+
+The configuration follows: the inputs, the regressed variables, the sample
+(sample_name) and the regressed years, as each file needs. The combine
+step's averages keep the names, ending in AVERAGE, and its historical-only
+series are GWI_timeseries-summary-<DEFINITION>_HISTORICAL-ONLY_.
+The names are kept short: a file name has at most 255 bytes, a limit of
+the filesystem.
 """
 import os
 import re
@@ -111,8 +166,12 @@ def sample_name(sampling_design, n_members, seed):
 
     One field, not three (SAMPLING--, ENSEMBLE-SIZE--, SEED--), because the
     results files' names are close to the 255-byte limit on a file name:
-    with the longest dataset IDs and a drawn ten-digit seed, three fields
-    take a name to ~275 bytes, one to ~241.
+    with the longest dataset IDs (FutureVolc's), 1e8 members and a drawn
+    ten-digit seed, three fields take a name to ~260 bytes, one to ~229.
+
+    It also tells the iterations of a configuration apart, so the names
+    need no date: a run repeated with the same seed draws the same members,
+    and replaces its files with the same results.
     """
     return f'ENSEMBLE--{sampling_design}-{n_members}-seed{seed}'
 
